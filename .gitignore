@@ -31,7 +31,6 @@ Thumbs.db
 *.swo
 
 # Docker
-.dockerignore
 .env
 .env.*
 !/.env.example # if you have an example .env file you want to keep

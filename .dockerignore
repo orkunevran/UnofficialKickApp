@@ -1,0 +1,16 @@
+.git
+.gitignore
+venv
+__pycache__
+*.pyc
+*.pyo
+.env
+.env.*
+.DS_Store
+.claude
+.devcontainer
+.vscode
+*.md
+!requirements.txt
+chromecast_test.py
+kick-api.code-workspace

@@ -31,7 +31,7 @@ let currentCategoryFilter = '';
 const FEATURED_TABLE_REFRESH_INTERVAL_MS = 90_000;
 const FEATURED_DEFAULT_PAGE_SIZE = 14;
 const FEATURED_INITIAL_PAGES = [1, 2, 3];
-const FEATURED_LOOKAHEAD_PAGES = 2;
+const FEATURED_LOOKAHEAD_PAGES = 3;
 
 function getFeaturedRefreshLanguage(language = null) {
     return language || currentFeaturedLanguage || document.getElementById('languageSelector')?.value || 'en';
@@ -195,6 +195,21 @@ function commitFeaturedPageCache(nextPageCache, nextPageMetaCache, { resetVisibl
     rebuildFeaturedDataset({ resetVisible });
 }
 
+function preloadThumbnails(streams) {
+    if (!streams || !Array.isArray(streams)) return;
+    
+    // Yield to the main thread so initial rendering isn't blocked
+    setTimeout(() => {
+        streams.forEach(stream => {
+            const src = stream.thumbnail?.src;
+            if (src) {
+                const img = new Image();
+                img.src = src;
+            }
+        });
+    }, 50);
+}
+
 function applyFeaturedPageResult(pageCache, pageMetaCache, pageResult) {
     if (!pageResult) return;
 
@@ -203,6 +218,8 @@ function applyFeaturedPageResult(pageCache, pageMetaCache, pageResult) {
         hasNext: pageResult.hasNext,
         perPage: pageResult.perPage,
     });
+    
+    preloadThumbnails(pageResult.streams);
 }
 
 async function fetchFeaturedPageData(language, page, generation) {

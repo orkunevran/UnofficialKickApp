@@ -35,7 +35,7 @@ export async function castStream(streamUrl, title) {
             throw new Error(`HTTP ${response.status}`);
         }
         const data = await response.json();
-        console.log('Cast stream API response:', data);
+        // Removed console.log
         if (data.status === 'success') {
             showMessage('Casting started successfully.', 'success');
         } else {

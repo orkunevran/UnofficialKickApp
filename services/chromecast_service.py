@@ -4,7 +4,7 @@ import logging
 import time
 import traceback
 import zeroconf
-from concurrent.futures import ThreadPoolExecutor, Future
+from concurrent.futures import ThreadPoolExecutor
 from pychromecast.discovery import CastBrowser, SimpleCastListener
 from pychromecast.socket_client import ConnectionStatus
 
@@ -91,15 +91,7 @@ class ChromecastService:
                 self.media_controller = None
         logger.info("ChromecastService shutdown complete.")
 
-    def scan_for_devices(self, force=False):
-        """Scans the network for Chromecast devices. Uses cached results if within TTL."""
-        if not force and (time.time() - self._last_scan_time) < self._device_cache_seconds:
-            logger.debug("Using cached device list (within TTL).")
-            return
 
-        with self._lock:
-            self._scanning = True
-        self._do_scan()
 
     def _do_scan(self):
         """Internal blocking scan implementation.

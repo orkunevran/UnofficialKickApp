@@ -289,7 +289,7 @@ function startStatusPolling() {
             const response = await fetchWithTimeout('/api/chromecast/status', {}, 8000);
             const data = await response.json();
             if (data.status === 'success' && data.data.status === 'disconnected') {
-                console.log('Polling detected disconnected state. Updating UI.');
+                // Removed console.log
                 selectedDevice = null;
                 localStorage.removeItem('selectedChromecast');
                 updateIcon('inactive');

@@ -5,165 +5,131 @@
 </p>
 
 <p align="center">
-  <strong>A lightweight, self-hosted web application and proxy API for Kick.com.</strong>
+  <strong>A lightweight, self-hosted Flask web app and proxy API for Kick.com streams.</strong>
 </p>
 
 ---
 
-## Introduction
-
-This project provides a user-friendly web interface and a proxy API for interacting with Kick.com's live streams and VODs. It is designed to be lightweight, easy to deploy, and highly configurable. The application is built with Flask and vanilla JavaScript, and it can be run in a Docker container, making it ideal for deployment on a home server or a Raspberry Pi.
+Unofficial Kick App provides a web UI plus a REST API for Kick.com live streams, VODs, clips, featured streams, search, and Chromecast playback. It is designed to run locally, in Docker, or on a small home server such as a Raspberry Pi.
 
 ## Features
 
-*   **Web UI:** A clean and modern web interface for checking the status of Kick channels, browsing VODs, and watching featured live streams.
-*   **Proxy API:** A RESTful API that provides programmatic access to Kick's live stream and VOD data.
-*   **Cloudflare Bypass:** Built-in Cloudflare bypass using Cloudscraper to avoid 403 errors.
-*   **Caching:** In-memory caching for API responses to reduce the load on Kick's servers and improve performance.
-*   **Docker Support:** Comes with a `Dockerfile` and `docker-compose.yaml` for easy deployment.
-*   **Swagger Documentation:** Interactive API documentation powered by Swagger UI.
+- Live stream lookup with playback redirection
+- VOD browsing and direct VOD playback links
+- Recent clip browsing
+- Featured streams with language filtering
+- Channel search, avatar lookup, and current viewer counts
+- Chromecast device discovery and cast control
+- Swagger/OpenAPI docs at `/docs`
+- Docker and Docker Compose support
+- Cloudscraper-based Kick API access
 
-## Tech Stack
+## Quick Start
 
-*   **Backend:** Python, Flask, Flask-RESTX, Gunicorn
-*   **Frontend:** HTML, CSS, JavaScript
-*   **Deployment:** Docker, Docker Compose
+### Clone
 
-## Getting Started
+```bash
+git clone https://github.com/orkunevran/UnofficialKickApp.git
+cd UnofficialKickApp
+```
 
-### Prerequisites
+### Run with Docker
 
-*   Docker and Docker Compose
-*   Git
+```bash
+docker compose up --build
+```
 
-### Installation
+The app will be available at `http://localhost:8081`.
 
-1.  **Clone the repository:**
+## Local Development
 
-    ```bash
-    git clone https://github.com/<you>/kick-api.git
-    cd kick-api
-    ```
+```bash
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+python app.py
+```
 
-2.  **Run with Docker Compose:**
+The app will be available at `http://localhost:8081`.
 
-    ```bash
-    docker-compose up --build
-    ```
+## API Endpoints
 
-The application will be available at `http://localhost:8081`.
+### Stream Routes
 
-### Development
+| Method | Endpoint | Description |
+| --- | --- | --- |
+| `GET` | `/streams/play/<channel_slug>` | Get live stream data for a channel |
+| `GET` | `/streams/go/<channel_slug>` | Redirect to the live HLS playback URL |
+| `GET` | `/streams/vods/<channel_slug>` | List VODs for a channel |
+| `GET` | `/streams/vods/<channel_slug>/<vod_id>` | Redirect to a specific VOD |
+| `GET` | `/streams/clips/<channel_slug>` | List recent clips for a channel |
+| `GET` | `/streams/featured-livestreams?language=<code>&page=<n>` | Get featured streams for a language |
+| `GET` | `/streams/search?q=<query>` | Search Kick channels |
+| `GET` | `/streams/avatar/<channel_slug>` | Get the channel profile image URL |
+| `GET` | `/streams/viewers?id=<livestream_id>` | Get current viewer count for a live stream |
 
-If you want to run the application without Docker for development purposes, you can follow these steps:
+### Chromecast Routes
 
-1.  **Create and activate a virtual environment:**
-
-    ```bash
-    python -m venv .venv
-    source .venv/bin/activate
-    ```
-
-2.  **Install the dependencies:**
-
-    ```bash
-    pip install -r requirements.txt
-    ```
-
-3.  **Run the application:**
-
-    ```bash
-    python app.py
-    ```
-
-The application will be available at `http://localhost:8081`.
-
-## Usage
-
-### Web UI
-
-The web UI provides a simple and intuitive way to interact with the application. You can:
-
-*   Enter a Kick channel slug to check its live status and browse its VODs.
-*   View a list of featured live streams and filter them by language.
-*   Sort the VODs and featured streams by various criteria.
-*   Copy the stream URL to play it in a media player like VLC.
-
-### API
-
-The API provides programmatic access to the application's features. Here are the available endpoints:
-
-| Endpoint                          | Method | Description                                           |
-| --------------------------------- | ------ | ----------------------------------------------------- |
-| `/streams/play/{channel_slug}`    | GET    | Returns live stream data for a given channel.         |
-| `/streams/vods/{channel_slug}`    | GET    | Returns a list of VODs for a given channel.           |
-| `/streams/vods/{channel_slug}/{vod_id}` | GET    | Redirects to the M3U8 URL of a specific VOD.          |
-| `/streams/featured-livestreams`   | GET    | Returns a list of featured live streams.              |
-| `/streams/go/{channel_slug}`      | GET    | Redirects to the live stream URL for a given channel. |
-
-## API Documentation
-
-The API is fully documented using Swagger UI. You can access the interactive documentation at `/docs` when the application is running.
+| Method | Endpoint | Description |
+| --- | --- | --- |
+| `GET` | `/api/chromecast/devices` | Discover available Chromecast devices |
+| `POST` | `/api/chromecast/select` | Select a Chromecast device |
+| `POST` | `/api/chromecast/cast` | Start casting a stream |
+| `POST` | `/api/chromecast/stop` | Stop or disconnect casting |
+| `GET` | `/api/chromecast/last-device` | Get the last connected device |
+| `GET` | `/api/chromecast/status` | Get Chromecast connection status |
 
 ## Configuration
 
-The application can be configured using environment variables. Here is a list of the available variables:
+The application is configured with environment variables:
 
-| Variable                        | Default                                     | Description                                      |
-| ------------------------------- | ------------------------------------------- | ------------------------------------------------ |
-| `FLASK_DEBUG`                   | `False`                                     | Set to `True` for development mode.              |
-| `PORT`                          | `8081`                                      | The port the application listens on.             |
-| `LOG_LEVEL`                     | `INFO`                                      | The logging level.                               |
-| `DEFAULT_LANGUAGE_CODE`         | `tr`                                        | The default language for featured streams.       |
-| `KICK_API_BASE_URL`             | `https://kick.com/api/v2/channels/`         | The base URL for the Kick API.                   |
-| `KICK_FEATURED_LIVESTREAMS_URL` | `https://kick.com/stream/featured-livestreams/` | The URL for featured livestreams.                |
-| `CACHE_TYPE`                    | `SimpleCache`                               | The type of cache to use.                        |
-| `CACHE_DEFAULT_TIMEOUT`         | `300`                                       | The default cache timeout in seconds.            |
-| `LIVE_CACHE_DURATION_SECONDS`   | `30`                                        | The cache duration for live stream data.         |
-| `VOD_CACHE_DURATION_SECONDS`    | `300`                                       | The cache duration for VOD data.                 |
+| Variable | Default | Description |
+| --- | --- | --- |
+| `FLASK_DEBUG` | `False` | Enable Flask debug mode |
+| `PORT` | `8081` | Application port |
+| `LOG_LEVEL` | `INFO` | Logging level |
+| `DEFAULT_LANGUAGE_CODE` | `tr` | Default featured-stream language |
+| `KICK_API_BASE_URL` | `https://kick.com/api/v2/channels/` | Kick channel API base URL |
+| `KICK_FEATURED_LIVESTREAMS_URL` | `https://kick.com/stream/featured-livestreams/` | Featured livestreams URL |
+| `KICK_ALL_LIVESTREAMS_URL` | `https://kick.com/stream/livestreams/` | Public livestream discovery URL |
+| `CACHE_TYPE` | `SimpleCache` | Flask-Caching backend |
+| `LIVE_CACHE_DURATION_SECONDS` | `30` | Cache duration for live stream data |
+| `VOD_CACHE_DURATION_SECONDS` | `300` | Cache duration for VOD and clip data |
+| `FEATURED_CACHE_DURATION_SECONDS` | `60` | Cache duration for featured streams |
+| `CHROMECAST_SCAN_TIMEOUT` | `5` | Chromecast discovery timeout |
+| `CHROMECAST_DEVICE_CACHE_SECONDS` | `30` | Chromecast device cache lifetime |
 
 ## Docker
 
-### Building the Image
-
-You can build the Docker image using the following command:
+### Build an image
 
 ```bash
 docker build -t kick-api:latest .
 ```
 
-### Running with Docker Compose
-
-The easiest way to run the application is with Docker Compose:
-
-```bash
-docker-compose up --build
-```
-
-### Running with Docker
-
-You can also run the application with a `docker run` command:
+### Run the container
 
 ```bash
 docker run -d \
-    --name kick-api \
-    --restart unless-stopped \
-    -p 8081:8081 \
-    kick-api:latest
+  --name kick-api \
+  --restart unless-stopped \
+  -p 8081:8081 \
+  kick-api:latest
 ```
 
 ## Troubleshooting
 
-| Symptom                       | Fix                                                                                                                |
-| ----------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `403 Forbidden` from Kick     | Verify Cloudscraper patch is active (log shows `sitecustomize:` line). Check outbound network; try disabling IPv6. |
-| `gunicorn: command not found` | Ensure `gunicorn` is in `requirements.txt` and Docker image rebuilt without cache.                                 |
-| Container exits immediately   | Run `docker logs kick-api` for traceback; missing deps or port clash.                                              |
+| Symptom | Fix |
+| --- | --- |
+| `403 Forbidden` from Kick | Rebuild and check that the Cloudscraper patch is active |
+| `gunicorn: command not found` | Reinstall dependencies and rebuild the image |
+| Chromecast devices do not appear | Check the local network and re-run device discovery |
+| Container exits immediately | Inspect `docker logs kick-api` for the traceback |
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a pull request or open an issue.
+Pull requests and issues are welcome.
 
 ## License
 
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+MIT. See [LICENSE](LICENSE).

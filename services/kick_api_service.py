@@ -3,7 +3,6 @@ import time
 import threading
 import cloudscraper
 from urllib.parse import quote_plus
-from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import logging
 from config import Config
@@ -116,11 +115,11 @@ class KickAPIClient:
     )
 
     # Shared across all instances so the key isn't re-fetched per-request
-    _ts_key_cache: str | None = None
+    _ts_key_cache = None
     _ts_key_fetched_at: float = 0.0
     _ts_key_lock = threading.Lock()
 
-    def _fetch_typesense_key_from_bundle(self) -> str | None:
+    def _fetch_typesense_key_from_bundle(self):
         """Scrape Kick's Next.js JS chunks to find the current Typesense API key."""
         try:
             home = self.session.get("https://kick.com/", timeout=(3, 10))
@@ -253,23 +252,7 @@ class KickAPIClient:
 
         return []   # unreachable but satisfies type checkers
 
-    def search_channels(self, query: str, timeout: int = 8) -> list:
-        url = "https://search.kick.com/multi_search"
-        payload = {
-            "queries": [{
-                "indexUid": "channel",
-                "q": query,
-                "limit": 8,
-                "attributesToRetrieve": ["slug", "username", "profile_pic", "followers_count", "is_live"]
-            }]
-        }
-        logger.debug(f"Searching channels for query: {query}")
-        response = self.session.post(url, json=payload, timeout=(3, timeout))
-        response.raise_for_status()
-        data = response.json()
-        # Meilisearch multi_search returns {"results": [{"hits": [...]}]}
-        results = data.get("results", [])
-        return results[0].get("hits", []) if results else []
+
 
     def get_viewer_count(self, livestream_id: int, timeout: int = 5) -> int:
         url = f"https://kick.com/api/v1/current-viewers?ids[]={livestream_id}"

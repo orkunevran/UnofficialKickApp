@@ -358,7 +358,73 @@ function createFeaturedStreamRow(stream) {
 
 function updateFeaturedStreamRow(row, stream) {
     row.dataset.streamKey = getFeaturedStreamKey(stream);
-    row.innerHTML = buildFeaturedRowMarkup(stream);
+    
+    if (row.children.length === 0) {
+        row.innerHTML = buildFeaturedRowMarkup(stream);
+        return;
+    }
+
+    const safeSlug = encodeURIComponent(stream.channel?.slug || '');
+    const categoryName = stream.categories?.[0]?.name || 'N/A';
+    const newThumbSrc = stream.thumbnail?.src || '';
+    const newHref = `/streams/go/${safeSlug || '#'}`;
+
+    // Update Thumbnail smoothly
+    const imgWrapper = row.cells[0]?.querySelector('a');
+    if (imgWrapper) {
+        if (imgWrapper.getAttribute('href') !== newHref) imgWrapper.setAttribute('href', newHref);
+        
+        const img = imgWrapper.querySelector('img');
+        if (img && img.src !== newThumbSrc && img.dataset.loadingSrc !== newThumbSrc) {
+            img.dataset.loadingSrc = newThumbSrc;
+            const tempImg = new Image();
+            tempImg.onload = () => {
+                // Ensure we are applying to the latest requested source for this image
+                if (img.dataset.loadingSrc === newThumbSrc) {
+                    img.src = newThumbSrc;
+                    delete img.dataset.loadingSrc;
+                }
+            };
+            tempImg.onerror = () => {
+                if (img.dataset.loadingSrc === newThumbSrc) delete img.dataset.loadingSrc;
+            };
+            tempImg.src = newThumbSrc;
+        }
+    }
+
+    // Update Title
+    const titleA = row.cells[1]?.querySelector('a');
+    if (titleA) {
+        if (titleA.getAttribute('href') !== newHref) titleA.setAttribute('href', newHref);
+        const newTitle = stream.session_title || 'Untitled Stream';
+        if (titleA.textContent !== newTitle) titleA.textContent = newTitle;
+    }
+
+    // Update Channel
+    const newChannel = stream.channel?.user?.username || 'N/A';
+    if (row.cells[2] && row.cells[2].textContent !== newChannel) {
+        row.cells[2].textContent = newChannel;
+    }
+
+    // Update Viewers
+    const newViewers = stream.viewer_count?.toLocaleString('en-US') || 'N/A';
+    if (row.cells[3] && row.cells[3].textContent !== newViewers) {
+        row.cells[3].textContent = newViewers;
+    }
+
+    // Update Category
+    if (row.cells[4] && row.cells[4].textContent !== categoryName) {
+        row.cells[4].textContent = categoryName;
+    }
+
+    // Update Cast Button
+    const castBtn = row.cells[5]?.querySelector('.cast-button');
+    if (castBtn) {
+        const newPlaybackUrl = stream.playback_url || '';
+        const newCastTitle = stream.session_title || 'Kick Stream';
+        if (castBtn.dataset.streamUrl !== newPlaybackUrl) castBtn.dataset.streamUrl = newPlaybackUrl;
+        if (castBtn.dataset.streamTitle !== newCastTitle) castBtn.dataset.streamTitle = newCastTitle;
+    }
 }
 
 function renderFeaturedLoadState({
@@ -798,5 +864,3 @@ export function initButtonDelegation() {
     });
 }
 
-// Keep these for backward compatibility but they're now no-ops
-export function addCopyButtonListeners() {}

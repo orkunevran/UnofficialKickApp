@@ -12,12 +12,13 @@ Use it as the running diary for product behavior, deployment workflow, known con
 
 ## Current Product Snapshot
 
-`kick-api` is a self-hosted Flask application that provides:
+`kick-api` is a self-hosted FastAPI application that provides:
 
 - A web UI for checking whether a Kick channel is live
 - In-browser playback for live HLS streams
 - Browsing of recent VODs
 - Browsing of recent clips
+- Channel search, avatar lookup, and current viewer counts via dedicated API routes
 - A featured streams view with language filtering, category filtering, rolling lazy loading, sorting, and refresh behavior
 - A proxy-style API over Kick endpoints
 - Chromecast discovery, selection, cast, disconnect, and status handling
@@ -59,7 +60,7 @@ The actual development loop is Pi-centered, not CI-centered.
 3. Script syncs the local repository to the Raspberry Pi via `rsync`
 4. Script runs `docker compose down`
 5. Script runs `docker compose up --build -d`
-6. Script waits briefly, then health-checks `http://<pi>:8081/config/languages`
+6. Script waits briefly, then health-checks `http://<PI_HOST>:8081/config/languages`
 7. If health check fails, script tails Pi container logs
 8. If health check passes, script smoke-tests Chromecast endpoints
 
@@ -81,8 +82,8 @@ Reasons:
 
 - Loads Pi credentials from `~/.kick-api.env` if present
 - Falls back to SSH key auth if no password is provided
-- Deploys to `/home/pi/Desktop/kick-api-v4`
-- Assumes Pi host `192.168.1.3`
+- Deploys to the versioned directory defined by `DEPLOY_DIR`
+- Reads Pi host from `PI_HOST` in the environment or env file
 - Uses container name `kick-api-kick-proxy-1`
 - Shows container logs only on failed health checks
 
@@ -92,7 +93,7 @@ Reasons:
 - App listens on port `8081`
 - Restart policy is `always`
 - Health check uses `/config/languages`
-- Gunicorn runs with `--workers 1 --threads 4`
+- Uvicorn runs with `--workers 1`
 
 The single-worker setup is intentional because the Chromecast service is stateful and should not be split across multiple worker processes.
 
@@ -100,12 +101,12 @@ The single-worker setup is intentional because the Chromecast service is statefu
 
 ### Backend
 
-- `app.py` wires Flask, cache, namespaces, root page, config endpoint, and global error handler
-- `routes/stream_routes.py` contains stream, VOD, clip, featured, redirect, and viewer endpoints
-- `routes/chromecast_routes.py` contains Chromecast API endpoints
+- `app.py` wires FastAPI, cache, routers, root page, config endpoint, and global error handlers
+- `api/streams.py` contains stream, VOD, clip, featured, redirect, search, avatar, and viewer endpoints
+- `api/chromecast.py` contains Chromecast API endpoints
 - `services/kick_api_service.py` wraps Kick-facing HTTP calls using `cloudscraper`
 - `services/chromecast_service.py` maintains Chromecast discovery and selection state
-- `services/cache_service.py` initializes Flask-Caching
+- `services/cache_service.py` provides the transport-neutral in-memory cache adapter
 
 ### Frontend
 
@@ -117,7 +118,7 @@ The single-worker setup is intentional because the Chromecast service is statefu
 
 ## Known Constraints And Findings
 
-### 1. Local Search Is Feature-Pool Based
+### 1. Primary UI Search Is Feature-Pool Based
 
 The current UI search does not rely on a full backend channel search.
 It searches client-side over already loaded featured streams and extra featured pages.
@@ -127,14 +128,14 @@ Impact:
 - Search coverage depends on featured data, not all Kick channels
 - Search is fast, but incomplete by design
 
-### 2. Backend Search Route Looks Broken
+### 2. Backend Search Route Is Live
 
-`/streams/search` calls `kick_api_client.search_channels_typesense(q)`, but the client currently defines `search_channels(...)`, not `search_channels_typesense(...)`.
+`/streams/search` is wired to `kick_api_client.search_channels_typesense(q)` and returns merged live/offline channel matches.
 
 Impact:
 
-- The backend search route appears incomplete or stale
-- This route should be treated as suspect until fixed or removed
+- The backend search route is available and should be treated as a live API path
+- UI search still uses featured-page caches, so the two search paths have different coverage
 
 ### 3. Pi Is The Real Environment For Chromecast Work
 
@@ -193,7 +194,7 @@ Changes:
 
 Verification:
 - Deployed to the Raspberry Pi with `./deploy.sh`
-- Health check passed on `http://192.168.1.3:8081/config/languages`
+- Health check passed on `http://<PI_HOST>:8081/config/languages`
 - Chromecast smoke tests passed:
   - `/api/chromecast/status` returned `disconnected`
   - `/api/chromecast/devices` returned one discovered device and `scanning: false`
@@ -216,7 +217,7 @@ Changes:
 
 Verification:
 - Deployed to the Raspberry Pi with `./deploy.sh`
-- Health check passed on `http://192.168.1.3:8081/config/languages`
+- Health check passed on `http://<PI_HOST>:8081/config/languages`
 - Chromecast smoke tests passed:
   - `/api/chromecast/status` returned `disconnected`
   - `/api/chromecast/devices` returned one discovered device and `scanning: false`
@@ -245,7 +246,7 @@ Changes:
 
 Verification:
 - Deployed to the Raspberry Pi with `./deploy.sh`
-- Health check passed on `http://192.168.1.3:8081/config/languages`
+- Health check passed on `http://<PI_HOST>:8081/config/languages`
 - Chromecast smoke tests passed:
   - `/api/chromecast/status` returned `disconnected`
   - `/api/chromecast/devices` returned one discovered device and `scanning: false`
@@ -270,7 +271,7 @@ Changes:
 
 Verification:
 - Deployed to the Raspberry Pi with `./deploy.sh`
-- Health check passed on `http://192.168.1.3:8081/config/languages`
+- Health check passed on `http://<PI_HOST>:8081/config/languages`
 - Chromecast smoke tests passed:
   - `/api/chromecast/status` returned `disconnected`
   - `/api/chromecast/devices` returned one discovered device and `scanning: false`
@@ -296,7 +297,7 @@ Changes:
 
 Verification:
 - Deployed to the Raspberry Pi with `./deploy.sh`
-- Health check passed on `http://192.168.1.3:8081/config/languages`
+- Health check passed on `http://<PI_HOST>:8081/config/languages`
 - Chromecast smoke tests passed:
   - `/api/chromecast/status` returned `disconnected`
   - `/api/chromecast/devices` returned one discovered device and `scanning: false`
@@ -379,7 +380,7 @@ Context:
 - That was incomplete. The correct next step was container-side probing of Kick's live bundle and live discovery endpoints before finalizing selector behavior
 
 Evidence Gathered:
-- Inside `kick-api-v4-kick-proxy-1`, bundle chunk `3782-2cafe1acf82265d2.js` showed the public client helper for `/stream/livestreams/{lang}` accepts:
+- Inside `kick-api-vX-kick-proxy-1`, bundle chunk `3782-2cafe1acf82265d2.js` showed the public client helper for `/stream/livestreams/{lang}` accepts:
   - `page`
   - `limit`
   - `subcategory`
@@ -504,7 +505,7 @@ Verification:
 - Static code inspection confirms the active sort is now reapplied on every featured-stream fetch
 - This should preserve ordering for both timed refreshes and page changes in featured pagination
 - Deployed to the Raspberry Pi with `./deploy.sh`
-- Health check passed on `http://192.168.1.3:8081/config/languages`
+- Health check passed on `http://<PI_HOST>:8081/config/languages`
 - Chromecast smoke tests passed:
   - `/api/chromecast/status` returned `disconnected`
   - `/api/chromecast/devices` returned one discovered device and `scanning: false`

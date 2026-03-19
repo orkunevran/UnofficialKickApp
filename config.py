@@ -12,8 +12,7 @@ class Config:
     KICK_ALL_LIVESTREAMS_URL = os.environ.get('KICK_ALL_LIVESTREAMS_URL', "https://kick.com/stream/livestreams/")
 
     # Cache Settings
-    # Note: SimpleCache is generally thread-safe in recent versions of Flask-Caching,
-    # but for high-load production, consider RedisCache or FileSystemCache.
+    # The app now uses a transport-neutral in-memory cache adapter.
     CACHE_TYPE = os.environ.get('CACHE_TYPE', 'SimpleCache')
     CACHE_DEFAULT_TIMEOUT = int(os.environ.get('CACHE_DEFAULT_TIMEOUT', 300))
     LIVE_CACHE_DURATION_SECONDS = int(os.environ.get('LIVE_CACHE_DURATION_SECONDS', 30))
@@ -40,3 +39,7 @@ class Config:
     CHROMECAST_MAX_CONNECTION_FAILURES = int(os.environ.get('CHROMECAST_MAX_CONNECTION_FAILURES', 3))
     CHROMECAST_DEVICE_CACHE_SECONDS = int(os.environ.get('CHROMECAST_DEVICE_CACHE_SECONDS', 30))
     CHROMECAST_STOP_WAIT_SECONDS = float(os.environ.get('CHROMECAST_STOP_WAIT_SECONDS', 2.0))
+
+    @classmethod
+    def to_dict(cls):
+        return {name: getattr(cls, name) for name in dir(cls) if name.isupper()}

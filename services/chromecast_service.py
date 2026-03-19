@@ -30,7 +30,7 @@ class ChromecastService:
         self._select_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="cc-select")
         self._scan_future = None  # Track in-flight background scan
         # _scanning and _selecting are ALWAYS read/written under self._lock to prevent
-        # check-then-set races across concurrent Flask request threads.
+        # check-then-set races across concurrent request threads.
         self._scanning = False
         self._selecting = False
         self._shutdown_event = threading.Event()  # Signals _do_scan to abort early on shutdown
@@ -46,7 +46,7 @@ class ChromecastService:
         self._last_device_name = None
 
     def configure(self, config):
-        """Apply configuration from Flask app config."""
+        """Apply configuration from a mapping of application settings."""
         self._scan_timeout = config.get('CHROMECAST_SCAN_TIMEOUT', 5)
         self._select_max_retries = config.get('CHROMECAST_SELECT_MAX_RETRIES', 2)
         self._select_retry_delay = config.get('CHROMECAST_SELECT_RETRY_DELAY', 2)
@@ -211,7 +211,7 @@ class ChromecastService:
             return False
 
         # Check-and-set _scanning atomically under the lock to prevent two concurrent
-        # Flask request threads from each seeing _scanning=False and both submitting scans.
+        # request threads from each seeing _scanning=False and both submitting scans.
         with self._lock:
             if self._scanning or (self._scan_future and not self._scan_future.done()):
                 logger.debug("Background scan already in progress, skipping.")
@@ -282,7 +282,7 @@ class ChromecastService:
             (False, 'failed') if connection failed or timed out
         """
         # Atomically check and set _scanning / _selecting under self._lock.
-        # Without the lock, two simultaneous Flask request threads can both read
+        # Without the lock, two simultaneous request threads can both read
         # _selecting=False and both proceed, causing duplicate connection attempts.
         with self._lock:
             if self._scanning:

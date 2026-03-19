@@ -10,10 +10,10 @@ This is an internal engineering memo for the reverse-engineered public Kick surf
 - public search
 - public realtime/client config that may matter for data access
 
-All runtime findings in this document were gathered inside the active Raspberry Pi container `kick-api-v4-kick-proxy-1` via the existing CloudScraper-backed session in `services.kick_api_service.kick_api_client.session`. That matters because the app's deployed container already has the working Cloudflare-bypass path.
+All runtime findings in this document were gathered inside the active Raspberry Pi container used by the deployed app via the existing CloudScraper-backed session in `services.kick_api_service.kick_api_client.session`. That matters because the app's deployed container already has the working Cloudflare-bypass path.
 
 This document uses three evidence labels:
-- `Observed Live In Container`: runtime probe executed inside `kick-api-v4-kick-proxy-1`
+- `Observed Live In Container`: runtime probe executed inside the deployed Pi container
 - `Observed In Live Bundle`: value or endpoint extracted from live Kick Next.js assets served from `assets.kick.com`
 - `Official Kick Source`: public `dev.kick.com` material
 
@@ -26,8 +26,8 @@ Goal:
 - explain why the current Typesense key extraction is stale
 
 Method:
-- inspected current implementation in [services/kick_api_service.py](/Users/humanleague/Desktop/kick-api/services/kick_api_service.py)
-- ran live probes inside `kick-api-v4-kick-proxy-1` using `kick_api_client.session`
+- inspected current implementation in [services/kick_api_service.py](services/kick_api_service.py)
+- ran live probes inside the deployed Pi container using `kick_api_client.session`
 - mined live Next.js chunks from `https://assets.kick.com/main/_next/static/chunks/...`
 - checked official developer-program language from:
   - [dev.kick.com](https://dev.kick.com/)
@@ -65,7 +65,7 @@ Not confirmed today:
 ## Current Key Extraction Algorithm
 
 Relevant current code:
-- [services/kick_api_service.py](/Users/humanleague/Desktop/kick-api/services/kick_api_service.py)
+- [services/kick_api_service.py](services/kick_api_service.py)
 
 Current behavior:
 - `_fetch_typesense_key_from_bundle()` fetches `https://kick.com/`
@@ -546,7 +546,7 @@ If realtime becomes a future task:
 
 ## Reproduction Commands
 
-All commands below are intended to run inside `kick-api-v4-kick-proxy-1`.
+All commands below are intended to run inside the deployed Pi container.
 
 ### 1. Confirm CloudScraper-backed session
 

@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>A lightweight, self-hosted Flask web app and proxy API for Kick.com streams.</strong>
+  <strong>A lightweight, self-hosted FastAPI web app and proxy API for Kick.com streams.</strong>
 </p>
 
 ---
@@ -48,6 +48,7 @@ python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 python app.py
+# or: uvicorn app:app --reload
 ```
 
 The app will be available at `http://localhost:8081`.
@@ -85,14 +86,14 @@ The application is configured with environment variables:
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `FLASK_DEBUG` | `False` | Enable Flask debug mode |
+| `FLASK_DEBUG` | `False` | Enable reload mode for local development |
 | `PORT` | `8081` | Application port |
 | `LOG_LEVEL` | `INFO` | Logging level |
 | `DEFAULT_LANGUAGE_CODE` | `tr` | Default featured-stream language |
 | `KICK_API_BASE_URL` | `https://kick.com/api/v2/channels/` | Kick channel API base URL |
 | `KICK_FEATURED_LIVESTREAMS_URL` | `https://kick.com/stream/featured-livestreams/` | Featured livestreams URL |
 | `KICK_ALL_LIVESTREAMS_URL` | `https://kick.com/stream/livestreams/` | Public livestream discovery URL |
-| `CACHE_TYPE` | `SimpleCache` | Flask-Caching backend |
+| `CACHE_TYPE` | `SimpleCache` | In-memory cache adapter backend |
 | `LIVE_CACHE_DURATION_SECONDS` | `30` | Cache duration for live stream data |
 | `VOD_CACHE_DURATION_SECONDS` | `300` | Cache duration for VOD and clip data |
 | `FEATURED_CACHE_DURATION_SECONDS` | `60` | Cache duration for featured streams |
@@ -122,7 +123,7 @@ docker run -d \
 | Symptom | Fix |
 | --- | --- |
 | `403 Forbidden` from Kick | Rebuild and check that the Cloudscraper patch is active |
-| `gunicorn: command not found` | Reinstall dependencies and rebuild the image |
+| `uvicorn: command not found` | Reinstall dependencies and rebuild the image |
 | Chromecast devices do not appear | Check the local network and re-run device discovery |
 | Container exits immediately | Inspect `docker logs kick-api` for the traceback |
 

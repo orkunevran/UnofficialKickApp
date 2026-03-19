@@ -2,7 +2,9 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="description" content="Check live status and browse VODs from your favorite Kick.com channels. Unofficial Kick proxy app.">
     <title>Unofficial Kick App</title>
     <link rel="icon" href="{{ url_for('static', filename='Kick_logo.svg') }}">
@@ -18,7 +20,7 @@
             <h1>
                 <a href="/" class="main-title">
                     <img src="{{ url_for('static', filename='Kick_logo.svg') }}" alt="Kick Logo">
-                    Unofficial Kick App
+                    <span class="main-title-text">Unofficial Kick App</span>
                 </a>
             </h1>
             <div class="header-icons">
@@ -27,7 +29,7 @@
                 </button>
             </div>
         </header>
-        <p class="subtitle">Enter a Kick channel slug to check live status and browse VODs.</p>
+        <p class="subtitle">Explore live streams, VODs, and clips from any Kick.com channel.</p>
         
         <div class="input-section">
             <label for="channelSlugInput" class="sr-only">Channel slug or search term</label>

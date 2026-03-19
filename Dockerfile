@@ -26,6 +26,5 @@ COPY --chown=${USER} . .
 USER ${USER}
 
 EXPOSE 8081
-# Note: --workers 1 --threads 4 is required so that the ChromecastService singleton 
-# doesn't get split across multiple worker processes.
-CMD ["gunicorn", "--bind", "0.0.0.0:8081", "--workers", "1", "--threads", "4", "--timeout", "60", "app:app"]
+# Run a single ASGI worker so the Chromecast singleton stays in-process.
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8081", "--workers", "1"]

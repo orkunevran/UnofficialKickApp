@@ -114,10 +114,14 @@ class KickAPIClient:
         r'(?:TYPESENSE_API_KEY|typesenseApiKey|apiKey)[^\w"\']{0,10}["\']([A-Za-z0-9]{20,50})["\']'
     )
 
-    # Shared across all instances so the key isn't re-fetched per-request
+    # Shared across all instances so the key isn't re-fetched per-request.
+    # Two-lock pattern: _ts_key_lock guards cache reads/writes (held briefly);
+    # _ts_fetch_lock serializes the expensive bundle scrape so only one thread
+    # fetches at a time while concurrent cache-hit readers are never blocked.
     _ts_key_cache = None
     _ts_key_fetched_at: float = 0.0
     _ts_key_lock = threading.Lock()
+    _ts_fetch_lock = threading.Lock()
 
     def _fetch_typesense_key_from_bundle(self):
         """Scrape Kick's Next.js JS chunks to find the current Typesense API key."""
@@ -154,10 +158,16 @@ class KickAPIClient:
         """
         Return a valid Typesense key.
         Priority: in-memory cache (24 h TTL) → fresh bundle scrape → hard fallback.
-        Thread-safe via class-level lock.
+
+        Two-lock design:
+          _ts_key_lock  – held only for brief cache reads/writes (never during I/O).
+          _ts_fetch_lock – serializes the expensive bundle scrape so only one thread
+                          fetches at a time. Threads that lose the race recheck the
+                          cache inside _ts_fetch_lock and return early if it's warm.
         """
+        now = time.time()
+        # Fast path: concurrent cache hits never touch _ts_fetch_lock
         with self._ts_key_lock:
-            now = time.time()
             if (
                 not force_refresh
                 and KickAPIClient._ts_key_cache
@@ -165,21 +175,35 @@ class KickAPIClient:
             ):
                 return KickAPIClient._ts_key_cache
 
+        # Slow path: serialize fetches so only one thread hits the network
+        with self._ts_fetch_lock:
+            # Second check — another thread may have fetched while we waited
+            now = time.time()
+            with self._ts_key_lock:
+                if (
+                    not force_refresh
+                    and KickAPIClient._ts_key_cache
+                    and (now - KickAPIClient._ts_key_fetched_at) < self._TYPESENSE_KEY_TTL
+                ):
+                    return KickAPIClient._ts_key_cache
+
             logger.info("Refreshing Typesense API key from Kick JS bundle…")
             fresh = self._fetch_typesense_key_from_bundle()
-            # Always update the timestamp so we don't hammer the bundle on failures
-            KickAPIClient._ts_key_fetched_at = now
-            if fresh:
-                KickAPIClient._ts_key_cache = fresh
-                logger.info("Typesense key refreshed successfully.")
-                return fresh
-            # Keep the old cached value if present, otherwise use hard fallback
-            if KickAPIClient._ts_key_cache:
-                logger.warning("Bundle scrape returned nothing — keeping previous key.")
-                return KickAPIClient._ts_key_cache
-            logger.warning("Using hard-coded Typesense fallback key.")
-            KickAPIClient._ts_key_cache = self.TYPESENSE_KEY_FALLBACK
-            return self.TYPESENSE_KEY_FALLBACK
+
+            with self._ts_key_lock:
+                # Always update the timestamp so we don't hammer the bundle on failures
+                KickAPIClient._ts_key_fetched_at = time.time()
+                if fresh:
+                    KickAPIClient._ts_key_cache = fresh
+                    logger.info("Typesense key refreshed successfully.")
+                    return fresh
+                # Keep the old cached value if present, otherwise use hard fallback
+                if KickAPIClient._ts_key_cache:
+                    logger.warning("Bundle scrape returned nothing — keeping previous key.")
+                    return KickAPIClient._ts_key_cache
+                logger.warning("Using hard-coded Typesense fallback key.")
+                KickAPIClient._ts_key_cache = self.TYPESENSE_KEY_FALLBACK
+                return self.TYPESENSE_KEY_FALLBACK
 
     def search_channels_typesense(self, query: str, timeout: int = 8) -> list:
         """

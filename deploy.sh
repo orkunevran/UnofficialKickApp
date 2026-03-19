@@ -17,8 +17,18 @@ else
   echo "Create it with: printf 'PI_HOST=\"your.pi.host\"\\nPI_USER=\"pi\"\\n' > $ENV_FILE && chmod 600 $ENV_FILE"
 fi
 
-: "${PI_HOST:?Set PI_HOST in your environment or $ENV_FILE before running deploy.sh}"
-PI_USER="${PI_USER:-pi}"
+# Allow positional arguments as a convenience:
+#   ./deploy.sh <pi_host> [pi_user] [pi_pass]
+PI_HOST="${PI_HOST:-${1:-}}"
+PI_USER="${PI_USER:-${2:-pi}}"
+PI_PASS="${PI_PASS:-${3:-}}"
+
+if [ -z "${PI_HOST:-}" ]; then
+  echo "Error: PI_HOST is required."
+  echo "Set PI_HOST in your environment, add it to $ENV_FILE, or run: ./deploy.sh <pi_host> [pi_user] [pi_pass]"
+  exit 1
+fi
+
 DEPLOY_DIR="${DEPLOY_DIR:-/home/pi/Desktop/kick-api-v4}"
 CONTAINER_NAME="${CONTAINER_NAME:-kick-api-kick-proxy-1}"
 

@@ -10,11 +10,15 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from api.cache import (
     cache_json_response,
     cached_value_to_response,
+    claim_inflight,
+    dedup_get,
+    dedup_set,
+    extract_channel_data_from_live_cache,
     extract_redirect_location,
     extract_vods_from_cached_response,
     request_cache_key,
 )
-from api.errors import error_json, requests_exception_to_api_error, success_json, sanitize_log_value
+from api.errors import ApiError, error_json, requests_exception_to_api_error, success_json, sanitize_log_value
 from config import Config
 
 logger = logging.getLogger(__name__)
@@ -114,6 +118,57 @@ async def _kick_call(func, *args, safe_value: str = "unknown", **kwargs):
         raise requests_exception_to_api_error(exc, safe_value) from exc
 
 
+def _build_featured_response(raw: Any, page_int: int) -> dict:
+    """Build the featured-livestreams response body from a raw Kick API response."""
+    streams = raw.get("data", []) if isinstance(raw, dict) else []
+    pagination = {
+        "current_page": raw.get("current_page", page_int) if isinstance(raw, dict) else page_int,
+        "per_page": raw.get("per_page", 14) if isinstance(raw, dict) else 14,
+        "has_next": raw.get("next_page_url") is not None if isinstance(raw, dict) else False,
+        "has_prev": raw.get("prev_page_url") is not None if isinstance(raw, dict) else False,
+    }
+    return {"status": "success", "message": "", "data": streams, "pagination": pagination}
+
+
+async def _refresh_featured(
+    cache,
+    client,
+    stale_key: str,
+    fresh_key: str,
+    language: str,
+    page_int: int,
+    category: str,
+    subcategory: str,
+    subcategories: str,
+    sort: str,
+    strict_bool: bool,
+) -> None:
+    """
+    Background task: refresh the featured-streams cache without blocking the caller.
+    Cleans up the _inflight slot via dedup_set() regardless of success or failure.
+    """
+    try:
+        if category or subcategory or subcategories:
+            raw = await _kick_call(
+                client.get_all_livestreams,
+                language, page_int,
+                category=category, subcategory=subcategory,
+                subcategories=subcategories, sort=sort, strict=strict_bool,
+                safe_value=language,
+            )
+        else:
+            raw = await _kick_call(client.get_featured_livestreams, language, page_int, safe_value=language)
+
+        response_body = _build_featured_response(raw, page_int)
+        cache.set(stale_key, (response_body, 200), timeout=Config.FEATURED_STALE_TTL_SECONDS)
+        cache.set(fresh_key, True, timeout=Config.FEATURED_CACHE_DURATION_SECONDS)
+        logger.info("Background refresh complete for featured streams: %s", stale_key)
+    except Exception as exc:
+        logger.warning("Background refresh failed for %s: %s", stale_key, exc)
+    finally:
+        dedup_set(stale_key)
+
+
 @router.get("/play/{channel_slug}")
 async def play_stream(channel_slug: str, request: Request):
     if not _validate_slug(channel_slug):
@@ -121,41 +176,51 @@ async def play_stream(channel_slug: str, request: Request):
 
     logger.info("Fetching live stream data for: %s", channel_slug)
     key = request_cache_key(request, prefix="live")
-    cached = _cache(request).get(key)
+    cached = await dedup_get(_cache(request), key)
     if cached is not None:
         return cached_value_to_response(cached)
 
-    data = await _kick_call(_client(request).get_channel_data, channel_slug, safe_value=channel_slug)
-    profile = _build_channel_profile(data, channel_slug)
-    livestream_data = data.get("livestream")
+    try:
+        data = await _kick_call(_client(request).get_channel_data, channel_slug, safe_value=channel_slug)
+        profile = _build_channel_profile(data, channel_slug)
+        livestream_data = data.get("livestream")
 
-    if livestream_data is None:
-        payload = {**profile, "status": "offline"}
-        response_payload = {"status": "success", "message": "", "data": payload}
-        cache_json_response(_cache(request), key, response_payload, 200, timeout=Config.LIVE_CACHE_DURATION_SECONDS)
-        return success_json(payload)
+        if livestream_data is None:
+            payload = {**profile, "status": "offline"}
+            response_payload = {"status": "success", "message": "", "data": payload}
+            cache_json_response(_cache(request), key, response_payload, 200, timeout=Config.LIVE_CACHE_DURATION_SECONDS)
+            return success_json(payload)
 
-    playback_url = data.get("playback_url")
-    if not playback_url:
-        return error_json("Live playback URL not found in API response.", 500)
+        playback_url = data.get("playback_url")
+        if not playback_url:
+            return error_json("Live playback URL not found in API response.", 500)
 
-    thumbnail = livestream_data.get("thumbnail")
-    categories = livestream_data.get("categories")
-    profile_pic = data.get("user", {}).get("profile_pic")
+        thumbnail = livestream_data.get("thumbnail")
+        categories = livestream_data.get("categories")
+        profile_pic = data.get("user", {}).get("profile_pic")
 
-    response_data = {
-        **profile,
-        "status": "live",
-        "playback_url": playback_url,
-        "livestream_id": livestream_data.get("id"),
-        "livestream_thumbnail_url": (thumbnail.get("url") if thumbnail else None) or profile_pic,
-        "livestream_title": livestream_data.get("session_title"),
-        "livestream_viewer_count": livestream_data.get("viewer_count"),
-        "livestream_category": categories[0].get("name") if categories else None,
-    }
-    payload = {"status": "success", "message": "", "data": response_data}
-    cache_json_response(_cache(request), key, payload, 200, timeout=Config.LIVE_CACHE_DURATION_SECONDS)
-    return success_json(response_data)
+        response_data = {
+            **profile,
+            "status": "live",
+            "playback_url": playback_url,
+            "livestream_id": livestream_data.get("id"),
+            "livestream_thumbnail_url": (thumbnail.get("url") if thumbnail else None) or profile_pic,
+            "livestream_title": livestream_data.get("session_title"),
+            "livestream_viewer_count": livestream_data.get("viewer_count"),
+            "livestream_category": categories[0].get("name") if categories else None,
+        }
+        payload = {"status": "success", "message": "", "data": response_data}
+        cache_json_response(_cache(request), key, payload, 200, timeout=Config.LIVE_CACHE_DURATION_SECONDS)
+        return success_json(response_data)
+    except ApiError as exc:
+        # Cache error responses briefly so repeated requests for invalid/rate-limited
+        # slugs don't hammer Kick's API on every call.
+        if exc.status_code in (404, 429):
+            err_payload = {"status": "error", "message": exc.message, "data": {}}
+            _cache(request).set(key, (err_payload, exc.status_code), timeout=Config.NEGATIVE_CACHE_DURATION_SECONDS)
+        raise
+    finally:
+        dedup_set(key)
 
 
 @router.get("/vods/{channel_slug}")
@@ -247,47 +312,54 @@ async def featured_livestreams(
     if sort not in {"", "asc", "desc", "featured"}:
         sort = ""
 
-    key = request_cache_key(request, prefix="featured-livestreams", include_query=True)
-    cached = _cache(request).get(key)
-    if cached is not None:
-        return cached_value_to_response(cached)
+    stale_key = request_cache_key(request, prefix="featured-livestreams", include_query=True)
+    fresh_key  = request_cache_key(request, prefix="featured-fresh",        include_query=True)
 
-    if category or subcategory or subcategories:
-        logger.info(
-            "Fetching category-filtered livestreams: lang=%s, page=%s, category=%r, subcategory=%r, subcategories=%r, sort=%r, strict=%r",
-            language,
-            page_int,
-            category,
-            subcategory,
-            subcategories,
-            sort,
-            strict_bool,
-        )
-        raw = await _kick_call(
-            _client(request).get_all_livestreams,
-            language,
-            page_int,
-            category=category,
-            subcategory=subcategory,
-            subcategories=subcategories,
-            sort=sort,
-            strict=strict_bool,
-            safe_value=language,
-        )
-    else:
-        logger.info("Fetching featured livestreams for language: %s, page: %s", language, page_int)
-        raw = await _kick_call(_client(request).get_featured_livestreams, language, page_int, safe_value=language)
+    stale_cached = _cache(request).get(stale_key)
+    fresh_cached  = _cache(request).get(fresh_key)
 
-    streams = raw.get("data", []) if isinstance(raw, dict) else []
-    pagination = {
-        "current_page": raw.get("current_page", page_int) if isinstance(raw, dict) else page_int,
-        "per_page": raw.get("per_page", 14) if isinstance(raw, dict) else 14,
-        "has_next": raw.get("next_page_url") is not None if isinstance(raw, dict) else False,
-        "has_prev": raw.get("prev_page_url") is not None if isinstance(raw, dict) else False,
-    }
-    response_body = {"status": "success", "message": "", "data": streams, "pagination": pagination}
-    cache_json_response(_cache(request), key, response_body, 200, timeout=Config.FEATURED_CACHE_DURATION_SECONDS)
-    return JSONResponse(content=response_body, status_code=200)
+    if stale_cached is not None:
+        if fresh_cached is not None:
+            # Data is fully fresh — return immediately, no API call needed
+            return cached_value_to_response(stale_cached)
+        # Data is stale but usable — serve it and trigger exactly one background refresh
+        if claim_inflight(stale_key):
+            asyncio.create_task(_refresh_featured(
+                _cache(request), _client(request),
+                stale_key, fresh_key,
+                language, page_int, category, subcategory, subcategories, sort, strict_bool,
+            ))
+        return cached_value_to_response(stale_cached)
+
+    # Cold cache — fetch synchronously with in-flight dedup so concurrent requests
+    # don't all hit Kick simultaneously
+    dedup_cached = await dedup_get(_cache(request), stale_key)
+    if dedup_cached is not None:
+        return cached_value_to_response(dedup_cached)
+
+    try:
+        if category or subcategory or subcategories:
+            logger.info(
+                "Fetching category-filtered livestreams: lang=%s, page=%s, category=%r, subcategory=%r, subcategories=%r, sort=%r, strict=%r",
+                language, page_int, category, subcategory, subcategories, sort, strict_bool,
+            )
+            raw = await _kick_call(
+                _client(request).get_all_livestreams,
+                language, page_int,
+                category=category, subcategory=subcategory,
+                subcategories=subcategories, sort=sort, strict=strict_bool,
+                safe_value=language,
+            )
+        else:
+            logger.info("Fetching featured livestreams for language: %s, page: %s", language, page_int)
+            raw = await _kick_call(_client(request).get_featured_livestreams, language, page_int, safe_value=language)
+
+        response_body = _build_featured_response(raw, page_int)
+        _cache(request).set(stale_key, (response_body, 200), timeout=Config.FEATURED_STALE_TTL_SECONDS)
+        _cache(request).set(fresh_key, True,                 timeout=Config.FEATURED_CACHE_DURATION_SECONDS)
+        return JSONResponse(content=response_body, status_code=200)
+    finally:
+        dedup_set(stale_key)
 
 
 @router.get("/go/{channel_slug}")
@@ -300,6 +372,17 @@ async def go_to_live_stream(channel_slug: str, request: Request):
     redirect_url = extract_redirect_location(cached)
     if redirect_url:
         return RedirectResponse(redirect_url, status_code=307)
+
+    # Piggyback on play_stream's live: cache to avoid a duplicate API call
+    live_key = f"live:/streams/play/{channel_slug}"
+    live_data = extract_channel_data_from_live_cache(_cache(request).get(live_key))
+    if live_data is not None:
+        if live_data.get("status") == "offline":
+            return error_json(f"Channel '{channel_slug}' is currently offline.", 404)
+        playback_url = live_data.get("playback_url")
+        if playback_url:
+            _cache(request).set(key, playback_url, timeout=Config.LIVE_CACHE_DURATION_SECONDS)
+            return RedirectResponse(playback_url, status_code=307)
 
     logger.info("Fetching live stream redirect for: %s", channel_slug)
     data = await _kick_call(_client(request).get_channel_data, channel_slug, safe_value=channel_slug)
@@ -350,7 +433,7 @@ async def channel_search(request: Request, q: str = Query("")):
     logger.info("Searching channels with query: %s", sanitize_log_value(query))
     results = await _kick_call(_client(request).search_channels_typesense, query, safe_value=query)
     payload = {"status": "success", "message": "", "data": results}
-    cache_json_response(_cache(request), key, payload, 200, timeout=30)
+    cache_json_response(_cache(request), key, payload, 200, timeout=Config.SEARCH_CACHE_DURATION_SECONDS)
     return success_json(results)
 
 
@@ -364,10 +447,19 @@ async def channel_avatar(channel_slug: str, request: Request):
     if cached is not None:
         return cached_value_to_response(cached)
 
+    # Piggyback on play_stream's live: cache to avoid a duplicate API call
+    live_key = f"live:/streams/play/{channel_slug}"
+    live_data = extract_channel_data_from_live_cache(_cache(request).get(live_key))
+    if live_data is not None and "profile_picture" in live_data:
+        pic = live_data.get("profile_picture")
+        payload = {"status": "success", "message": "", "data": {"profile_picture": pic}}
+        cache_json_response(_cache(request), key, payload, 200, timeout=Config.AVATAR_CACHE_DURATION_SECONDS)
+        return success_json({"profile_picture": pic})
+
     data = await _kick_call(_client(request).get_channel_data, channel_slug, safe_value=channel_slug)
     pic = data.get("user", {}).get("profile_pic")
     payload = {"status": "success", "message": "", "data": {"profile_picture": pic}}
-    cache_json_response(_cache(request), key, payload, 200, timeout=604800)
+    cache_json_response(_cache(request), key, payload, 200, timeout=Config.AVATAR_CACHE_DURATION_SECONDS)
     return success_json({"profile_picture": pic})
 
 
@@ -388,5 +480,5 @@ async def viewer_count(request: Request, id: str = Query("")):
 
     viewers = await _kick_call(_client(request).get_viewer_count, livestream_id, safe_value=str(livestream_id))
     payload = {"status": "success", "message": "", "data": {"viewer_count": viewers}}
-    cache_json_response(_cache(request), key, payload, 200, timeout=10)
+    cache_json_response(_cache(request), key, payload, 200, timeout=Config.VIEWER_CACHE_DURATION_SECONDS)
     return success_json({"viewer_count": viewers})

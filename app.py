@@ -1,5 +1,6 @@
 import logging
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlencode
@@ -59,6 +60,16 @@ async def lifespan(fastapi_app: FastAPI):
     fastapi_app.state.cache = cache
     fastapi_app.state.kick_api_client = kick_api_client
     fastapi_app.state.chromecast_service = chromecast_service
+
+    if Config.ASYNCIO_THREAD_WORKERS > 0:
+        loop = asyncio.get_event_loop()
+        loop.set_default_executor(
+            ThreadPoolExecutor(
+                max_workers=Config.ASYNCIO_THREAD_WORKERS,
+                thread_name_prefix="kick-worker",
+            )
+        )
+        logger.info("asyncio default executor set to %d workers.", Config.ASYNCIO_THREAD_WORKERS)
 
     cache.init_app(settings)
     chromecast_service.configure(settings)

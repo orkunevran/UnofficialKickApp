@@ -88,14 +88,13 @@ app.py                          # FastAPI app initialization, lifespan, router r
 │   ├── kick_api_service.py     # HTTP client for Kick.com API
 │   ├── cache_service.py        # Transport-neutral in-memory cache adapter
 │   └── chromecast_service.py   # Chromecast protocol/communication
-├── helpers/
-│   └── response_helper.py      # JSON response formatting
 ├── config.py                   # Configuration from environment variables
 ├── templates/                  # HTML templates (Jinja2)
 ├── static/                     # CSS, JavaScript, images
 └── tests/                      # pytest test suite
     ├── conftest.py             # Shared fixtures (cache clearing, sample API data)
     ├── test_fastapi_parity.py  # Contract tests for all API endpoints
+    ├── test_kick_api_service.py    # Typesense key concurrency & fallback tests
     ├── test_chromecast_service.py
     └── test_lifespan.py
 ```

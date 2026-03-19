@@ -578,7 +578,7 @@ button:disabled {
     height: 190px;
     background-color: rgba(20, 24, 32, 0.9);
     background-size: cover;
-    background-position: center top;
+    background-position: center center;
     flex-shrink: 0;
 }
 

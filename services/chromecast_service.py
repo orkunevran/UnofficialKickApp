@@ -104,6 +104,13 @@ class ChromecastService:
         # acts as a fresh interruptible sleep.  (If a previous shutdown cycle already
         # set it and the service was restarted without recreating the instance, the
         # event would remain set and the scan sleep would skip instantly.)
+        # Guard against a shutdown signal that arrived between executor.submit()
+        # and this thread actually starting — clear only if shutdown hasn't been requested.
+        if self._shutdown_event.is_set():
+            logger.info("Scan aborted: shutdown was requested before scan started.")
+            with self._lock:
+                self._scanning = False
+            return
         self._shutdown_event.clear()
         logger.info("Scanning for Chromecast devices...")
         try:

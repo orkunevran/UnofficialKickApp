@@ -1,7 +1,56 @@
+import asyncio
 from typing import Optional
 from urllib.parse import urlencode
 
 from fastapi.responses import JSONResponse
+
+# ---------------------------------------------------------------------------
+# In-flight deduplication
+# ---------------------------------------------------------------------------
+# Keyed by cache key. When a cache miss is detected, the fetching coroutine
+# inserts an Event here before awaiting the API call. Subsequent coroutines
+# that see the same key wait on the Event instead of making their own API
+# call (thundering-herd protection). Pure asyncio — single event loop only.
+_inflight: dict[str, asyncio.Event] = {}
+
+
+async def dedup_get(cache, key: str):
+    """
+    Cache-aware get with in-flight deduplication.
+
+    - Cache hit  → return cached value immediately.
+    - In-flight  → await the existing Event, return cache result (may be None
+                   if the in-flight fetch failed; caller handles that).
+    - Cold       → insert a new Event in _inflight, return None. The caller
+                   MUST call dedup_set(key) in a finally block.
+    """
+    val = cache.get(key)
+    if val is not None:
+        return val
+    if key in _inflight:
+        await _inflight[key].wait()
+        return cache.get(key)
+    _inflight[key] = asyncio.Event()
+    return None
+
+
+def dedup_set(key: str) -> None:
+    """Unblock all coroutines waiting on key and remove the in-flight marker."""
+    event = _inflight.pop(key, None)
+    if event:
+        event.set()
+
+
+def claim_inflight(key: str) -> bool:
+    """
+    Try to claim key as the sole background fetcher.
+    Returns True if the caller should proceed (slot was free), False if another
+    coroutine already holds the slot. Used by stale-while-revalidate refresh.
+    """
+    if key in _inflight:
+        return False
+    _inflight[key] = asyncio.Event()
+    return True
 
 
 def request_cache_key(request, prefix: Optional[str] = None, include_query: bool = False) -> str:
@@ -80,4 +129,19 @@ def extract_redirect_location(cached_value):
             if location:
                 return location
 
+    return None
+
+
+def extract_channel_data_from_live_cache(cached_value) -> Optional[dict]:
+    """
+    Extract the 'data' dict from a cached play_stream response.
+    Returns None if the cache entry is absent or malformed.
+    Allows go_to_live_stream and channel_avatar to piggyback on the live: key
+    populated by play_stream and skip a redundant get_channel_data() call.
+    """
+    if cached_value is None:
+        return None
+    payload = cached_value[0] if isinstance(cached_value, tuple) and len(cached_value) == 2 else cached_value
+    if isinstance(payload, dict):
+        return payload.get("data")
     return None

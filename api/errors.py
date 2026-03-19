@@ -3,8 +3,6 @@ import re
 import requests
 from fastapi.responses import JSONResponse
 
-from helpers.response_helper import error_response, success_response
-
 
 class ApiError(Exception):
     def __init__(self, message: str, status_code: int = 500):
@@ -18,13 +16,13 @@ def sanitize_log_value(value) -> str:
 
 
 def success_json(data=None, message: str = "", status_code: int = 200) -> JSONResponse:
-    payload, status = success_response(data, message, status_code)
-    return JSONResponse(content=payload, status_code=status)
+    payload = {"status": "success", "message": message, "data": data if data is not None else {}}
+    return JSONResponse(content=payload, status_code=status_code)
 
 
 def error_json(message: str, status_code: int) -> JSONResponse:
-    payload, status = error_response(message, status_code)
-    return JSONResponse(content=payload, status_code=status)
+    payload = {"status": "error", "message": message}
+    return JSONResponse(content=payload, status_code=status_code)
 
 
 def requests_exception_to_api_error(exc: Exception, safe_value: str = "unknown") -> ApiError:

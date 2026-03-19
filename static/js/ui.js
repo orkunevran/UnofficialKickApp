@@ -427,145 +427,46 @@ function updateFeaturedStreamRow(row, stream) {
     }
 }
 
-function renderFeaturedLoadState({
-    currentPage = 1,
-    totalPages = 0,
-    totalCount = 0,
-    loadedCount = 0,
-    loadedPageCount = 0,
-    hasMorePages = false,
-    canGoPrev = false,
-    canGoNext = false,
-    canLoadMoreResults = false,
-    isRefreshing = false,
-    isPaging = false,
-} = {}) {
-    const loadMoreEl = document.getElementById('featuredLoadMore');
-    const loadHint = document.getElementById('featuredLoadHint');
-    const paginationControls = document.getElementById('featuredPaginationControls');
-
-    if (!loadMoreEl || !loadHint || !paginationControls) return;
-
-    const isBusy = isRefreshing || isPaging;
-
-    if (totalCount === 0 && loadedCount === 0) {
-        loadMoreEl.style.display = 'none';
-        loadHint.textContent = '';
-        paginationControls.innerHTML = '';
-        return;
-    }
-
-    loadMoreEl.style.display = 'flex';
-    paginationControls.innerHTML = '';
-
-    if (totalCount === 0) {
-        loadHint.textContent = hasMorePages
-            ? `No matching streams in ${loadedCount} loaded streams yet. Load more live pages to keep searching.`
-            : `No matching streams were found in the loaded live dataset.`;
-
-        if (canLoadMoreResults) {
-            paginationControls.innerHTML = `
-                <button type="button" class="featured-pagination-button" data-featured-page-action="load-more"${isBusy ? ' disabled' : ''}>
-                    ${isBusy ? 'Loading…' : 'Load More Live Pages'}
-                </button>
-            `;
-        }
-        return;
-    }
-
-    loadHint.textContent = isBusy
-        ? `Page ${currentPage} of ${totalPages}. ${totalCount} streams loaded from ${loadedPageCount} live pages. Fetching ahead…`
-        : hasMorePages
-            ? `Page ${currentPage} of ${totalPages}. ${totalCount} streams loaded from ${loadedPageCount} live pages. The next pages are prefetched ahead of you.`
-            : `Page ${currentPage} of ${totalPages}. Showing all ${totalCount} loaded streams.`;
-
-    if (totalPages <= 1 && !hasMorePages) {
-        return;
-    }
-
-    const pageTokens = [];
-    const addPageToken = (token) => {
-        const lastToken = pageTokens[pageTokens.length - 1];
-        if (lastToken !== token) {
-            pageTokens.push(token);
-        }
-    };
-
-    if (totalPages <= 7) {
-        for (let page = 1; page <= totalPages; page += 1) {
-            addPageToken(page);
-        }
-    } else {
-        const windowStart = Math.max(2, currentPage - 1);
-        const windowEnd = Math.min(totalPages - 1, currentPage + 1);
-
-        addPageToken(1);
-        if (windowStart > 2) addPageToken('ellipsis-start');
-        for (let page = windowStart; page <= windowEnd; page += 1) {
-            addPageToken(page);
-        }
-        if (windowEnd < totalPages - 1) addPageToken('ellipsis-end');
-        addPageToken(totalPages);
-    }
-
-    const buttonsMarkup = pageTokens.map(token => {
-        if (String(token).startsWith('ellipsis')) {
-            return '<span class="featured-pagination-ellipsis">…</span>';
-        }
-
-        const page = Number(token);
-        const isCurrentPage = page === currentPage;
-        return `
-            <button
-                type="button"
-                class="featured-pagination-button${isCurrentPage ? ' is-current' : ''}"
-                data-featured-page="${page}"
-                ${isCurrentPage || isBusy ? 'disabled' : ''}
-                aria-current="${isCurrentPage ? 'page' : 'false'}"
-            >
-                ${page}
-            </button>
-        `;
-    }).join('');
-
-    paginationControls.innerHTML = `
-        <button type="button" class="featured-pagination-button" data-featured-page-action="prev"${canGoPrev ? '' : ' disabled'}>
-            Previous
-        </button>
-        ${buttonsMarkup}
-        <button type="button" class="featured-pagination-button" data-featured-page-action="next"${canGoNext ? '' : ' disabled'}>
-            ${isBusy && canGoNext ? 'Loading…' : 'Next'}
-        </button>
-    `;
-}
-
-function animateFeaturedRows(nextRows, previousRects, insertedRows) {
+function animateFeaturedRows(nextRows, previousRects, insertedRows, renderMode = 'full') {
     if (prefersReducedMotion()) return;
 
     const insertedRowsSet = new Set(insertedRows);
+    const STAGGER_DELAY_MS = 30;
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+    // In append mode, existing rows haven't moved — skip FLIP calculations
+    const skipFlipForExisting = renderMode === 'append';
 
+    let insertIndex = 0;
     nextRows.forEach(row => {
         if (typeof row.animate !== 'function') return;
 
-        const previousRect = previousRects.get(row.dataset.streamKey);
-        const currentRect = row.getBoundingClientRect();
-
         if (insertedRowsSet.has(row)) {
-            row.animate(
-                [
-                    { opacity: 0, transform: 'translateY(10px)' },
-                    { opacity: 1, transform: 'translateY(0)' },
-                ],
-                {
-                    duration: FEATURED_ROW_ENTRY_DURATION_MS,
-                    easing: FEATURED_ROW_MOVE_EASING,
-                }
-            );
+            // Only animate rows near the viewport
+            const rect = row.getBoundingClientRect();
+            if (rect.top < viewportHeight + 200) {
+                row.animate(
+                    [
+                        { opacity: 0, transform: 'translateY(12px)' },
+                        { opacity: 1, transform: 'translateY(0)' },
+                    ],
+                    {
+                        duration: FEATURED_ROW_ENTRY_DURATION_MS,
+                        easing: FEATURED_ROW_MOVE_EASING,
+                        delay: insertIndex * STAGGER_DELAY_MS,
+                        fill: 'backwards',
+                    }
+                );
+            }
+            insertIndex++;
             return;
         }
 
+        if (skipFlipForExisting) return;
+
+        const previousRect = previousRects.get(row.dataset.streamKey);
         if (!previousRect) return;
 
+        const currentRect = row.getBoundingClientRect();
         const deltaX = previousRect.left - currentRect.left;
         const deltaY = previousRect.top - currentRect.top;
 
@@ -590,14 +491,19 @@ export function renderFeaturedStreamsTable(streams, meta = {}) {
 
     if (!featuredStreamsTableBody) return;
 
+    const renderMode = meta.renderMode || 'full';
+    const skipAnimation = renderMode === 'refresh';
+
     const existingRows = new Map();
     const previousRects = new Map();
 
     Array.from(featuredStreamsTableBody.children).forEach(row => {
-        cancelFeaturedRowAnimations(row);
+        if (!skipAnimation) cancelFeaturedRowAnimations(row);
         if (row.dataset.streamKey) {
             existingRows.set(row.dataset.streamKey, row);
-            previousRects.set(row.dataset.streamKey, row.getBoundingClientRect());
+            if (!skipAnimation) {
+                previousRects.set(row.dataset.streamKey, row.getBoundingClientRect());
+            }
         }
     });
 
@@ -627,13 +533,13 @@ export function renderFeaturedStreamsTable(streams, meta = {}) {
             featuredStreamsTableBody.appendChild(row);
         });
 
-        void featuredStreamsTableBody.offsetHeight;
-        animateFeaturedRows(nextRows, previousRects, insertedRows);
-        renderFeaturedLoadState(meta);
+        if (!skipAnimation) {
+            void featuredStreamsTableBody.offsetHeight;
+            animateFeaturedRows(nextRows, previousRects, insertedRows, renderMode);
+        }
     } else {
         existingRows.forEach(row => row.remove());
         if (noFeaturedStreamsMessage) noFeaturedStreamsMessage.style.display = 'block';
-        renderFeaturedLoadState(meta);
     }
     updateSortIndicators('featuredLivestreams', featuredSortState);
 }

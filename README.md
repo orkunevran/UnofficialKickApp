@@ -17,9 +17,13 @@ Unofficial Kick App provides a web UI plus a REST API for Kick.com live streams,
 - Live stream lookup with playback redirection
 - VOD browsing and direct VOD playback links
 - Recent clip browsing
-- Featured streams with language filtering
-- Channel search, avatar lookup, and current viewer counts
+- Featured streams with infinite scroll, language and category filtering
+- Smart prefetching: next page is cached in the background before you scroll to it
+- Seamless auto-refresh: viewer counts and stream data update silently every 90 seconds
+- Two-tier channel search: instant local results + full Typesense server-side search
+- Avatar lookup and current viewer counts
 - Chromecast device discovery and cast control
+- Glassmorphism UI with smooth staggered animations
 - Swagger/OpenAPI docs at `/docs`
 - Docker and Docker Compose support
 - Cloudscraper-based Kick API access
@@ -117,6 +121,22 @@ docker run -d \
   -p 8081:8081 \
   kick-api:latest
 ```
+
+## Frontend Architecture
+
+The web UI uses a custom infinite scroll system with three render modes for optimal performance:
+
+| Mode | Trigger | Behavior |
+| --- | --- | --- |
+| **full** | Initial load, language/category switch, sort | Full DOM diff with FLIP reorder animations |
+| **append** | Scroll-triggered page load, background prefetch | Entry animations for new rows only; existing rows untouched |
+| **refresh** | 90-second auto-refresh | Silent cell-level updates; zero animation overhead |
+
+Key design decisions:
+- **1-page-ahead prefetch** — after each scroll load, the next page is silently fetched so it is ready instantly when the user scrolls further
+- **Page-1-only auto-refresh** — the 90-second timer re-fetches only page 1 (most dynamic data) instead of all loaded pages, keeping API usage minimal
+- **Observer self-re-triggering** — if the scroll sentinel is still visible after a page loads, the next page loads immediately without waiting for the IntersectionObserver frame delay
+- **Server-side stale-while-revalidate** — each page response is cached with a short fresh TTL and a longer stale TTL; stale responses are served instantly while a single background refresh runs
 
 ## Troubleshooting
 

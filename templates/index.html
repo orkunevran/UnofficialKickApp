@@ -79,9 +79,12 @@
                     <!-- Featured streams will be rendered here by JavaScript -->
                 </tbody>
             </table>
-            <div id="featuredLoadMore" class="featured-load-more" style="display:none;">
-                <p id="featuredLoadHint" class="featured-load-hint"></p>
-                <div id="featuredPaginationControls" class="featured-pagination-controls"></div>
+            <div id="featuredScrollSentinel" class="featured-scroll-sentinel" style="display:none;">
+                <div id="featuredSentinelSpinner" class="sentinel-spinner" style="display:none;">
+                    <span class="sentinel-spinner-ring"></span>
+                    <span class="sentinel-spinner-text">Loading more streams...</span>
+                </div>
+                <p id="featuredEndMessage" class="featured-end-message" style="display:none;">All streams loaded</p>
             </div>
             <p id="noFeaturedStreamsMessage" style="display: none;">No featured livestreams available at the moment.</p>
         </div>

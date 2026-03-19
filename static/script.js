@@ -18,20 +18,19 @@ let isFeaturedFocusWithin = false;
 let featuredPageCache = new Map();
 let featuredPageMetaCache = new Map();
 let featuredLoadedPageCount = 0;
-let featuredCurrentPage = 1;
 let featuredPageSize = 14;
 let featuredHasNextPage = true;
 let featuredActiveGeneration = 0;
 let featuredRefreshGeneration = 0;
-let featuredPageNavigationInFlight = false;
 let featuredPrefetchInFlightPages = new Map();
+let featuredScrollObserver = null;
+let featuredScrollLoadInFlight = false;
 // '' = featured mode; non-empty slug = server-side filtered category mode
 let currentCategoryFilter = '';
 
 const FEATURED_TABLE_REFRESH_INTERVAL_MS = 90_000;
 const FEATURED_DEFAULT_PAGE_SIZE = 14;
-const FEATURED_INITIAL_PAGES = [1, 2, 3];
-const FEATURED_LOOKAHEAD_PAGES = 3;
+const FEATURED_INITIAL_PAGES = [1];
 
 function getFeaturedRefreshLanguage(language = null) {
     return language || currentFeaturedLanguage || document.getElementById('languageSelector')?.value || 'en';
@@ -141,63 +140,137 @@ function getFeaturedServerSort() {
     return 'featured';
 }
 
-function getFilteredFeaturedPageCount(filteredStreams = getFilteredFeaturedStreams()) {
-    if (!featuredPageSize) return 0;
-    return Math.ceil(filteredStreams.length / featuredPageSize);
-}
+// ── Sentinel state management ─────────────────────────────────────────────
+function updateFeaturedSentinel() {
+    const sentinel = document.getElementById('featuredScrollSentinel');
+    const spinner = document.getElementById('featuredSentinelSpinner');
+    const endMsg = document.getElementById('featuredEndMessage');
+    if (!sentinel) return;
 
-function renderVisibleFeaturedStreams({ resetPage = false } = {}) {
-    const filteredStreams = getFilteredFeaturedStreams();
-    const totalPages = getFilteredFeaturedPageCount(filteredStreams);
+    const hasStreams = appState.featuredStreams.length > 0;
 
-    if (resetPage || totalPages === 0) {
-        featuredCurrentPage = 1;
-    } else {
-        featuredCurrentPage = Math.max(1, Math.min(featuredCurrentPage, totalPages));
+    if (!hasStreams) {
+        sentinel.style.display = 'none';
+        return;
     }
 
-    const startIndex = totalPages > 0 ? (featuredCurrentPage - 1) * featuredPageSize : 0;
-    const visibleStreams = totalPages > 0
-        ? filteredStreams.slice(startIndex, startIndex + featuredPageSize)
-        : [];
-    const isBusy = featuredRefreshInFlight || featuredPageNavigationInFlight || !hasFreshFeaturedCache();
+    sentinel.style.display = 'flex';
 
-    renderFeaturedStreamsTable(visibleStreams, {
-        currentPage: totalPages > 0 ? featuredCurrentPage : 1,
-        totalPages,
-        totalCount: filteredStreams.length,
-        loadedCount: appState.featuredStreams.length,
-        loadedPageCount: featuredLoadedPageCount,
-        hasMorePages: featuredHasNextPage,
-        canGoPrev: !isBusy && totalPages > 0 && featuredCurrentPage > 1,
-        canGoNext: !isBusy && (featuredCurrentPage < totalPages || featuredHasNextPage),
-        canLoadMoreResults: !isBusy && totalPages === 0 && featuredHasNextPage,
-        isRefreshing: featuredRefreshInFlight || !hasFreshFeaturedCache(),
-        isPaging: featuredPageNavigationInFlight,
-    });
+    if (featuredHasNextPage) {
+        spinner.style.display = featuredScrollLoadInFlight ? 'flex' : 'none';
+        endMsg.style.display = 'none';
+    } else {
+        spinner.style.display = 'none';
+        endMsg.style.display = 'block';
+        endMsg.textContent = `All ${appState.featuredStreams.length} streams loaded`;
+    }
 }
 
-function rebuildFeaturedDataset({ resetVisible = false } = {}) {
+// ── IntersectionObserver for infinite scroll ──────────────────────────────
+function initFeaturedScrollObserver() {
+    if (featuredScrollObserver) {
+        featuredScrollObserver.disconnect();
+    }
+
+    const sentinel = document.getElementById('featuredScrollSentinel');
+    if (!sentinel) return;
+
+    featuredScrollObserver = new IntersectionObserver((entries) => {
+        const entry = entries[0];
+        if (!entry.isIntersecting) return;
+        if (featuredScrollLoadInFlight || featuredRefreshInFlight || !featuredHasNextPage || !hasFreshFeaturedCache()) return;
+
+        void loadNextFeaturedScrollPage();
+    }, {
+        root: null,
+        rootMargin: '200px',
+        threshold: 0,
+    });
+
+    featuredScrollObserver.observe(sentinel);
+}
+
+async function loadNextFeaturedScrollPage() {
+    if (featuredScrollLoadInFlight || !featuredHasNextPage || !currentFeaturedLanguage || featuredRefreshInFlight) {
+        return;
+    }
+
+    featuredScrollLoadInFlight = true;
+    updateFeaturedSentinel();
+
+    try {
+        const nextPage = featuredLoadedPageCount + 1;
+        await prefetchFeaturedPage(nextPage);
+    } finally {
+        featuredScrollLoadInFlight = false;
+        updateFeaturedSentinel();
+
+        // Self-re-trigger if sentinel still visible (eliminates spinner flash)
+        if (featuredHasNextPage && !featuredRefreshInFlight && hasFreshFeaturedCache()) {
+            const sentinel = document.getElementById('featuredScrollSentinel');
+            if (sentinel) {
+                const rect = sentinel.getBoundingClientRect();
+                const vh = window.innerHeight || document.documentElement.clientHeight;
+                if (rect.top < vh + 200) {
+                    void loadNextFeaturedScrollPage();
+                    return;
+                }
+            }
+        }
+        // Otherwise prefetch 1 page ahead in background
+        backgroundPrefetchNextPage();
+    }
+}
+
+function backgroundPrefetchNextPage() {
+    if (!featuredHasNextPage || featuredRefreshInFlight || !currentFeaturedLanguage) return;
+    const aheadPage = featuredLoadedPageCount + 1;
+    if (featuredPageCache.has(aheadPage) || featuredPrefetchInFlightPages.has(aheadPage)) return;
+    void prefetchFeaturedPage(aheadPage);
+}
+
+// ── Render all loaded streams (no page slicing) ──────────────────────────
+function renderVisibleFeaturedStreams({ resetScroll = false, renderMode = 'full' } = {}) {
+    const allStreams = getFilteredFeaturedStreams();
+
+    renderFeaturedStreamsTable(allStreams, {
+        totalCount: allStreams.length,
+        loadedPageCount: featuredLoadedPageCount,
+        hasMorePages: featuredHasNextPage,
+        isRefreshing: featuredRefreshInFlight || !hasFreshFeaturedCache(),
+        isLoadingMore: featuredScrollLoadInFlight,
+        renderMode,
+    });
+
+    updateFeaturedSentinel();
+
+    if (resetScroll) {
+        const section = document.getElementById('featuredLivestreams');
+        if (section) section.scrollIntoView({ behavior: 'instant', block: 'start' });
+    }
+}
+
+function rebuildFeaturedDataset({ resetScroll = false, renderMode = 'full' } = {}) {
     const mergedStreams = mergeFeaturedPageCache(featuredPageCache, featuredLoadedPageCount);
     appState.featuredStreams = applyFeaturedStreamsSort(mergedStreams, featuredSortState);
     syncFeaturedSearchPool();
     if (!currentCategoryFilter) {
         populateCategorySelector(appState.featuredStreams);
     }
-    renderVisibleFeaturedStreams({ resetPage: resetVisible });
+    renderVisibleFeaturedStreams({ resetScroll, renderMode });
 }
 
-function commitFeaturedPageCache(nextPageCache, nextPageMetaCache, { resetVisible = false } = {}) {
+function commitFeaturedPageCache(nextPageCache, nextPageMetaCache, { resetScroll = false } = {}) {
     featuredPageCache = nextPageCache;
     featuredPageMetaCache = nextPageMetaCache;
     featuredActiveGeneration = featuredRefreshGeneration;
     syncFeaturedLoadedRange();
-    rebuildFeaturedDataset({ resetVisible });
+    rebuildFeaturedDataset({ resetScroll });
 }
 
 function preloadThumbnails(streams) {
     if (!streams || !Array.isArray(streams)) return;
-    
+
     // Yield to the main thread so initial rendering isn't blocked
     setTimeout(() => {
         streams.forEach(stream => {
@@ -218,7 +291,7 @@ function applyFeaturedPageResult(pageCache, pageMetaCache, pageResult) {
         hasNext: pageResult.hasNext,
         perPage: pageResult.perPage,
     });
-    
+
     preloadThumbnails(pageResult.streams);
 }
 
@@ -278,8 +351,7 @@ async function prefetchFeaturedPage(page) {
 
             applyFeaturedPageResult(featuredPageCache, featuredPageMetaCache, pageResult);
             syncFeaturedLoadedRange();
-            rebuildFeaturedDataset();
-            void ensureFeaturedLookahead();
+            rebuildFeaturedDataset({ renderMode: 'append' });
         } catch (error) {
             console.error(`Error prefetching featured page ${page}:`, error);
         } finally {
@@ -292,111 +364,11 @@ async function prefetchFeaturedPage(page) {
     return prefetchPromise;
 }
 
-async function prefetchFeaturedCoverage(targetLoadedPageCount, { wait = false } = {}) {
-    if (featuredRefreshInFlight || !currentFeaturedLanguage || !hasFreshFeaturedCache()) {
-        return false;
-    }
-
-    const fetchPromises = [];
-    for (let page = featuredLoadedPageCount + 1; page <= targetLoadedPageCount; page += 1) {
-        const pagePromise = prefetchFeaturedPage(page);
-        if (wait && pagePromise) {
-            fetchPromises.push(pagePromise);
-        }
-    }
-
-    if (wait && fetchPromises.length > 0) {
-        await Promise.allSettled(fetchPromises);
-    }
-
-    return featuredLoadedPageCount >= targetLoadedPageCount || !featuredHasNextPage;
-}
-
-async function ensureFeaturedLookahead(targetPage = featuredCurrentPage) {
-    if (featuredRefreshInFlight || !currentFeaturedLanguage || !featuredHasNextPage || !hasFreshFeaturedCache()) {
-        return;
-    }
-
-    const targetLoadedPageCount = Math.max(
-        targetPage + FEATURED_LOOKAHEAD_PAGES,
-        FEATURED_INITIAL_PAGES.length
-    );
-    void prefetchFeaturedCoverage(targetLoadedPageCount);
-}
-
-async function ensureFeaturedPageAvailable(targetPage) {
-    if (getFilteredFeaturedPageCount() >= targetPage) {
-        void ensureFeaturedLookahead(targetPage);
-        return true;
-    }
-
-    while (!featuredRefreshInFlight && hasFreshFeaturedCache() && currentFeaturedLanguage) {
-        if (!featuredHasNextPage) {
-            return getFilteredFeaturedPageCount() >= targetPage;
-        }
-
-        const previousLoadedPageCount = featuredLoadedPageCount;
-        const targetLoadedPageCount = Math.max(
-            targetPage + FEATURED_LOOKAHEAD_PAGES,
-            featuredLoadedPageCount + FEATURED_LOOKAHEAD_PAGES
-        );
-
-        await prefetchFeaturedCoverage(targetLoadedPageCount, { wait: true });
-
-        if (getFilteredFeaturedPageCount() >= targetPage) {
-            void ensureFeaturedLookahead(targetPage);
-            return true;
-        }
-
-        if (featuredLoadedPageCount === previousLoadedPageCount) {
-            return false;
-        }
-    }
-
-    return getFilteredFeaturedPageCount() >= targetPage;
-}
-
-async function navigateToFeaturedPage(page) {
-    const targetPage = Math.max(1, Number(page) || 1);
-    const availablePages = getFilteredFeaturedPageCount();
-
-    if (availablePages >= targetPage) {
-        featuredCurrentPage = targetPage;
-        renderVisibleFeaturedStreams();
-        void ensureFeaturedLookahead(targetPage);
-        return;
-    }
-
-    if (!featuredHasNextPage || featuredRefreshInFlight || !hasFreshFeaturedCache()) {
-        return;
-    }
-
-    featuredPageNavigationInFlight = true;
-    renderVisibleFeaturedStreams();
-
-    try {
-        const pageAvailable = await ensureFeaturedPageAvailable(targetPage);
-        const nextAvailablePages = getFilteredFeaturedPageCount();
-
-        if (pageAvailable && nextAvailablePages > 0) {
-            featuredCurrentPage = Math.min(targetPage, nextAvailablePages);
-        } else if (nextAvailablePages > 0) {
-            featuredCurrentPage = Math.min(featuredCurrentPage, nextAvailablePages);
-        } else {
-            featuredCurrentPage = 1;
-        }
-    } finally {
-        featuredPageNavigationInFlight = false;
-        renderVisibleFeaturedStreams();
-        void ensureFeaturedLookahead(featuredCurrentPage);
-    }
-}
-
-function queueFeaturedRefresh(language, { background = false, resetVisible = false } = {}) {
+function queueFeaturedRefresh(language, { background = false, resetScroll = false } = {}) {
     const nextRefresh = {
         language: getFeaturedRefreshLanguage(language),
         background,
-        resetVisible,
+        resetScroll,
         refreshLoadedRange: background,
     };
 
@@ -417,7 +389,7 @@ function startFeaturedAutoRefresh(language) {
     stopFeaturedAutoRefresh();
     currentFeaturedLanguage = language;
     featuredTableRefreshTimer = setInterval(() => {
-        queueFeaturedRefresh(language, { background: true, resetVisible: false });
+        queueFeaturedRefresh(language, { background: true, resetScroll: false });
     }, FEATURED_TABLE_REFRESH_INTERVAL_MS);
 }
 
@@ -450,18 +422,18 @@ document.addEventListener('DOMContentLoaded', () => {
     // Initial setup for featured streams
     populateLanguageSelector().then(() => {
         currentFeaturedLanguage = languageSelector.value;
-        queueFeaturedRefresh(languageSelector.value, { resetVisible: true });
+        queueFeaturedRefresh(languageSelector.value, { resetScroll: true });
         startFeaturedAutoRefresh(languageSelector.value);
     });
     addSortEventListeners('featuredLivestreams', () => {
         if (currentCategoryFilter && featuredSortState.column === 'viewer_count') {
-            queueFeaturedRefresh(currentFeaturedLanguage, { resetVisible: true });
+            queueFeaturedRefresh(currentFeaturedLanguage, { resetScroll: true });
             return;
         }
         filterAndRenderFeaturedStreams();
     });
 
-    // Featured table interactions and pagination
+    // Featured table interactions
     const featuredSection = document.getElementById('featuredLivestreams');
     if (featuredSection) {
         featuredSection.addEventListener('mouseenter', () => {
@@ -483,36 +455,6 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         });
         featuredSection.addEventListener('click', (event) => {
-            const paginationButton = event.target.closest('[data-featured-page], [data-featured-page-action]');
-            if (paginationButton) {
-                event.preventDefault();
-
-                if (paginationButton.disabled) {
-                    return;
-                }
-
-                const { featuredPageAction, featuredPage } = paginationButton.dataset;
-                if (featuredPageAction === 'prev') {
-                    void navigateToFeaturedPage(featuredCurrentPage - 1);
-                    return;
-                }
-
-                if (featuredPageAction === 'next') {
-                    void navigateToFeaturedPage(featuredCurrentPage + 1);
-                    return;
-                }
-
-                if (featuredPageAction === 'load-more') {
-                    void navigateToFeaturedPage(Math.max(1, featuredCurrentPage));
-                    return;
-                }
-
-                if (featuredPage) {
-                    void navigateToFeaturedPage(Number(featuredPage));
-                    return;
-                }
-            }
-
             // Channel cell click — load channel data
             const cell = event.target.closest('td[data-label="Channel"]');
             if (cell) {
@@ -539,7 +481,7 @@ document.addEventListener('DOMContentLoaded', () => {
         currentCategoryFilter = '';
         categorySelector.value = '';
         updateFeaturedSectionTitle(categorySelector);
-        queueFeaturedRefresh(languageSelector.value, { resetVisible: true });
+        queueFeaturedRefresh(languageSelector.value, { resetScroll: true });
         startFeaturedAutoRefresh(languageSelector.value);
     });
 
@@ -547,7 +489,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const slug = categorySelector.value;
         currentCategoryFilter = slug;
         updateFeaturedSectionTitle(categorySelector);
-        queueFeaturedRefresh(currentFeaturedLanguage, { resetVisible: true });
+        queueFeaturedRefresh(currentFeaturedLanguage, { resetScroll: true });
     });
 
     checkChannelBtn.addEventListener('click', handleFetchChannelData);
@@ -711,7 +653,7 @@ async function populateLanguageSelector() {
 }
 
 async function handleFetchFeaturedStreams(language = 'en', options = {}) {
-    const { background = false, resetVisible = false, refreshLoadedRange = background } = options;
+    const { background = false, resetScroll = false, refreshLoadedRange = background } = options;
     currentFeaturedLanguage = language;
     const generation = ++featuredRefreshGeneration;
     featuredRefreshInFlight = true;
@@ -719,9 +661,26 @@ async function handleFetchFeaturedStreams(language = 'en', options = {}) {
     beginFeaturedNetworkActivity();
 
     try {
-        const pagesToFetch = refreshLoadedRange && featuredLoadedPageCount > 0
-            ? buildFeaturedPageRange(featuredLoadedPageCount)
-            : [...FEATURED_INITIAL_PAGES];
+        // Background auto-refresh: only fetch page 1, merge into existing cache
+        if (refreshLoadedRange && featuredLoadedPageCount > 0) {
+            const pageResults = await Promise.allSettled(
+                [1].map(page => fetchFeaturedPageData(language, page, generation))
+            );
+
+            if (generation !== featuredRefreshGeneration) return;
+
+            pageResults.forEach(result => {
+                if (result.status === 'fulfilled' && result.value) {
+                    applyFeaturedPageResult(featuredPageCache, featuredPageMetaCache, result.value);
+                }
+            });
+            featuredActiveGeneration = featuredRefreshGeneration;
+            rebuildFeaturedDataset({ renderMode: 'refresh' });
+            return;
+        }
+
+        // Initial load or language/category switch: fresh cache
+        const pagesToFetch = [...FEATURED_INITIAL_PAGES];
         const nextPageCache = new Map();
         const nextPageMetaCache = new Map();
 
@@ -735,7 +694,7 @@ async function handleFetchFeaturedStreams(language = 'en', options = {}) {
 
         const hasSupersedingQueuedRefresh = queuedFeaturedRefresh && (
             queuedFeaturedRefresh.language !== language
-            || queuedFeaturedRefresh.resetVisible
+            || queuedFeaturedRefresh.resetScroll
             || !queuedFeaturedRefresh.background
         );
 
@@ -758,20 +717,18 @@ async function handleFetchFeaturedStreams(language = 'en', options = {}) {
 
         const nextLoadedPageCount = getContiguousFeaturedPageCount(nextPageCache);
         if (successfulPages > 0 && nextLoadedPageCount > 0) {
-            commitFeaturedPageCache(nextPageCache, nextPageMetaCache, { resetVisible });
-            if (!featuredRefreshInFlight) {
-                void ensureFeaturedLookahead();
-            }
+            commitFeaturedPageCache(nextPageCache, nextPageMetaCache, { resetScroll });
+            initFeaturedScrollObserver();
             return;
         }
 
         if (!background) {
-            showMessage('Failed to load featured livestreams.', 'error', () => queueFeaturedRefresh(language, { resetVisible }));
+            showMessage('Failed to load featured livestreams.', 'error', () => queueFeaturedRefresh(language, { resetScroll }));
         }
     } catch (error) {
         console.error('Error fetching featured livestreams:', error);
         if (!background) {
-            showMessage('Failed to load featured livestreams.', 'error', () => queueFeaturedRefresh(language, { resetVisible }));
+            showMessage('Failed to load featured livestreams.', 'error', () => queueFeaturedRefresh(language, { resetScroll }));
         }
     } finally {
         if (generation === featuredRefreshGeneration) {
@@ -793,7 +750,6 @@ async function handleFetchFeaturedStreams(language = 'en', options = {}) {
         flushDeferredFeaturedRefresh();
         if (!featuredRefreshInFlight) {
             renderVisibleFeaturedStreams();
-            void ensureFeaturedLookahead();
         }
     }
 }
@@ -847,9 +803,6 @@ function updateFeaturedSectionTitle(categorySelector) {
 
 function filterAndRenderFeaturedStreams(options = {}) {
     renderVisibleFeaturedStreams(options);
-    if (!featuredRefreshInFlight) {
-        void ensureFeaturedLookahead();
-    }
 }
 
 // --- Viewer count auto-refresh ---

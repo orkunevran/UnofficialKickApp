@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  kick-proxy:
+    build: .
+    network_mode: "host"
+    restart: always
+    environment:
+      # Application Settings
+      FLASK_DEBUG: "False" 
+      PORT: "8081"
+      LOG_LEVEL: "INFO"
+      DEFAULT_LANGUAGE_CODE: "tr"
+
+      # API Settings
+      KICK_API_BASE_URL: "https://kick.com/api/v2/channels/"
+      KICK_FEATURED_LIVESTREAMS_URL: "https://kick.com/stream/featured-livestreams/"
+
+      # Cache Settings
+      CACHE_TYPE: "SimpleCache"
+      CACHE_DEFAULT_TIMEOUT: "300"
+      LIVE_CACHE_DURATION_SECONDS: "30"
+      VOD_CACHE_DURATION_SECONDS: "300"
+
+      # Chromecast Settings
+      CHROMECAST_SCAN_TIMEOUT: "5"
+      CHROMECAST_SELECT_MAX_RETRIES: "2"
+      CHROMECAST_SELECT_RETRY_DELAY: "2"
+      CHROMECAST_MAX_CONNECTION_FAILURES: "3"
+      CHROMECAST_DEVICE_CACHE_SECONDS: "30"
+      CHROMECAST_STOP_WAIT_SECONDS: "2.0"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/config/languages"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+    # Optional: Mount the current directory for hot-reloading during development
+    # volumes:
+    #   - .:/home/appuser/app

@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python/
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-arg.txt
+.tox/
+.coverage
+.pytest_cache/
+nosetests.xml
+dist/
+build/
+*.egg-info/
+.ipynb_checkpoints/
+
+# OS specific
+.DS_Store
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+*.swo
+
+# Docker
+.dockerignore
+.env
+.env.*
+!/.env.example # if you have an example .env file you want to keep
+
+# IDE specific (if any)
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+.claude/
+
+# Other
+node_modules/ # if you add npm packages later

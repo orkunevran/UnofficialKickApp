@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Check live status and browse VODs from your favorite Kick.com channels. Unofficial Kick proxy app.">
+    <title>Unofficial Kick App</title>
+    <link rel="icon" href="{{ url_for('static', filename='Kick_logo.svg') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="background-glows">
+        <div class="glow glow-1"></div>
+        <div class="glow glow-2"></div>
+    </div>
+    <main class="container">
+        <header class="header-container">
+            <h1>
+                <a href="/" class="main-title">
+                    <img src="{{ url_for('static', filename='Kick_logo.svg') }}" alt="Kick Logo">
+                    Unofficial Kick App
+                </a>
+            </h1>
+            <div class="header-icons">
+                <button id="chromecast-button" class="chromecast-button" title="Connect a Chromecast device to cast streams">
+                    <img id="chromecast-icon" src="{{ url_for('static', filename='icons/chromecast.svg') }}" alt="Chromecast">
+                </button>
+            </div>
+        </header>
+        <p class="subtitle">Enter a Kick channel slug to check live status and browse VODs.</p>
+        
+        <div class="input-section">
+            <label for="channelSlugInput" class="sr-only">Channel slug or search term</label>
+            <input type="text" id="channelSlugInput" placeholder="Search or enter channel slug…" maxlength="255" autofocus autocomplete="off">
+            <button id="checkChannelBtn">Check Channel</button>
+            <button id="clearSearchBtn" class="secondary-button">Clear</button>
+        </div>
+        <div id="searchSuggestions" class="search-suggestions" style="display:none;"></div>
+
+        <div id="statusMessage" class="message"></div>
+
+        <div id="loading-indicator" style="display: none;">
+            <div class="spinner"></div>
+        </div>
+        
+        <div id="liveStreamInfo" class="info-box"></div>
+
+        <div id="vodsList" class="info-box"></div>
+
+        <div id="clipsList" class="info-box"></div>
+
+        <div class="api-docs-link">
+            <p>Explore the API directly: <a href="/docs" target="_blank">Swagger UI Documentation</a></p>
+        </div>
+
+        <div id="featuredLivestreams" class="info-box" style="display: block;">
+            <div class="featured-header">
+                <h3 id="featuredSectionTitle">Featured Streams</h3>
+                <label for="languageSelector" class="sr-only">Language</label>
+                <select id="languageSelector"></select>
+                <label for="categorySelector" class="sr-only">Category</label>
+                <select id="categorySelector"><option value="">All Categories</option></select>
+                <span id="featured-spinner" class="inline-spinner" aria-hidden="true"></span>
+            </div>
+            <table class="vods-table">
+                <thead>
+                    <tr>
+                        <th>Thumbnail</th>
+                        <th class="sortable" data-sort-column="session_title" data-sort-type="string"><span>Title</span><span class="sort-indicator"></span></th>
+                        <th class="sortable" data-sort-column="channel.user.username" data-sort-type="string"><span>Channel</span><span class="sort-indicator"></span></th>
+                        <th class="sortable" data-sort-column="viewer_count" data-sort-type="number"><span>Viewers</span><span class="sort-indicator"></span></th>
+                        <th class="sortable" data-sort-column="categories.0.name" data-sort-type="string"><span>Category</span><span class="sort-indicator"></span></th>
+                        <th class="cast-header">Cast</th>
+                    </tr>
+                </thead>
+                <tbody id="featuredStreamsTableBody">
+                    <!-- Featured streams will be rendered here by JavaScript -->
+                </tbody>
+            </table>
+            <div id="featuredLoadMore" class="featured-load-more" style="display:none;">
+                <p id="featuredLoadHint" class="featured-load-hint"></p>
+                <div id="featuredPaginationControls" class="featured-pagination-controls"></div>
+            </div>
+            <p id="noFeaturedStreamsMessage" style="display: none;">No featured livestreams available at the moment.</p>
+        </div>
+    </main>
+
+    <!-- Chromecast Modal -->
+    <div id="chromecast-modal" class="modal" role="dialog" aria-labelledby="chromecast-modal-title">
+        <div class="modal-content">
+            <span class="close-button" role="button" aria-label="Close" tabindex="0">&times;</span>
+            <h2 id="chromecast-modal-title">Select a Chromecast Device</h2>
+            <div id="modal-spinner" class="spinner" style="display: none;"></div>
+            <div id="chromecast-device-list"></div>
+            <div class="modal-actions">
+                <button id="rescan-devices-btn" class="secondary-button">Rescan</button>
+                <button id="disconnect-device-btn" class="secondary-button" style="display: none;">Disconnect</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.15/dist/hls.min.js"></script>
+    <script type="module" src="{{ url_for('static', filename='script.js', v='1.0.10') }}"></script>
+</body>
+</html>

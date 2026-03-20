@@ -1,12 +1,16 @@
-import { formatDuration, formatDate, copyToClipboard, escapeHtml, initialsAvatar } from "./utils.js";
-import { sortVodsTable, sortFeaturedStreamsTable } from './sorting.js';
-import { appState, vodsSortState, featuredSortState } from './state.js';
-import { castStream } from './chromecast_logic.js';
-import { fetchChannelData } from './api.js';
+import { formatDuration, formatDate, copyToClipboard, escapeHtml, initialsAvatar } from "./utils.js?v=1.1.0";
+import { sortVodsTable, sortFeaturedStreamsTable } from './sorting.js?v=1.1.0';
+import { appState, vodsSortState, featuredSortState } from './state.js?v=1.1.0';
+import { castStream } from './chromecast_logic.js?v=1.1.0';
+import { fetchChannelData } from './api.js?v=1.1.0';
 
 // Module-level state for clips search
 let currentClips = [];
 let currentClipsChannelSlug = '';
+
+// Search suggestion keyboard navigation state
+let suggestionSelectedIndex = -1;
+let suggestionOnSelect = null;
 
 // Stop the shimmer animation the instant a thumbnail finishes loading.
 // load events on <img> don't bubble, so we use the capture phase.
@@ -55,6 +59,44 @@ export function destroyVideoPlayer() {
     if (video) { video.pause(); video.src = ''; video.load(); }
 }
 
+// ── Skeleton loaders ──────────────────────────────────────────────────────
+export function renderFeaturedSkeleton(rowCount = 5) {
+    const tbody = document.getElementById('featuredStreamsTableBody');
+    if (!tbody || tbody.children.length > 0) return;
+    for (let i = 0; i < rowCount; i++) {
+        const row = document.createElement('tr');
+        row.className = 'skeleton-row';
+        row.innerHTML = `
+            <td><div class="skeleton-thumb" style="animation-delay:${i * 0.1}s"></div></td>
+            <td><div class="skeleton-bar skeleton-bar--wide" style="animation-delay:${i * 0.1}s"></div><div class="skeleton-bar skeleton-bar--medium" style="animation-delay:${i * 0.1 + 0.05}s"></div></td>
+            <td><div class="skeleton-bar skeleton-bar--short" style="animation-delay:${i * 0.1}s"></div></td>
+            <td><div class="skeleton-bar skeleton-bar--short" style="animation-delay:${i * 0.1}s"></div></td>
+            <td><div class="skeleton-bar skeleton-bar--medium" style="animation-delay:${i * 0.1}s"></div></td>
+            <td></td>`;
+        tbody.appendChild(row);
+    }
+}
+
+export function renderProfileSkeleton() {
+    const el = document.getElementById('liveStreamInfo');
+    if (!el) return;
+    el.innerHTML = `
+        <div class="skeleton-banner"></div>
+        <div class="profile-card-header" style="margin-top:-52px;position:relative;z-index:1">
+            <div class="skeleton-avatar" style="border:4px solid var(--bg-color);flex-shrink:0"></div>
+            <div style="flex:1;padding-bottom:6px">
+                <div class="skeleton-bar skeleton-bar--medium" style="height:20px;margin-top:36px"></div>
+                <div class="skeleton-bar skeleton-bar--short" style="margin-top:10px"></div>
+            </div>
+        </div>
+        <div style="padding:20px 24px">
+            <div class="skeleton-bar skeleton-bar--wide"></div>
+            <div class="skeleton-bar skeleton-bar--medium"></div>
+            <div class="skeleton-bar skeleton-bar--short"></div>
+        </div>`;
+    el.style.display = 'block';
+}
+
 let messageTimer = null;
 
 export function showMessage(message, type, retryCallback = null) {
@@ -78,7 +120,11 @@ export function showMessage(message, type, retryCallback = null) {
     // Don't auto-dismiss errors with retry buttons
     if (!retryCallback || type !== 'error') {
         messageTimer = setTimeout(() => {
-            statusMessage.style.display = 'none';
+            statusMessage.classList.add('fade-out');
+            setTimeout(() => {
+                statusMessage.style.display = 'none';
+                statusMessage.classList.remove('fade-out');
+            }, 300);
         }, 5000);
     }
 }
@@ -166,17 +212,15 @@ export function renderLiveStreamInfo(response, channelSlug) {
             <div class="live-stream-details">
                 <div class="live-text-details">
                     <p><strong>Title:</strong> ${escapeHtml(d.livestream_title || 'Untitled')}</p>
-                    <p><strong>Viewers:</strong> <span id="liveViewerCount" data-livestream-id="${d.livestream_id || ''}"${initialViewerData}>${initialViewerLabel}</span></p>
+                    <p><strong>Viewers:</strong> <span id="liveViewerCount" class="live-viewer-count" data-livestream-id="${d.livestream_id || ''}"${initialViewerData}>${initialViewerLabel}</span> <span class="viewer-live-dot" title="Updates automatically"></span></p>
                     <p><strong>Category:</strong> ${escapeHtml(d.livestream_category || 'N/A')}</p>
                 </div>
             </div>
-            <div class="stream-url-container">
-                <code class="stream-url" title="${escapeHtml(d.playback_url || '')}">${escapeHtml(d.playback_url || '')}</code>
-                <button class="copy-button" data-url="${escapeHtml(d.playback_url || '')}">Copy</button>
-                <button class="cast-button" data-stream-url="${escapeHtml(d.playback_url || '')}" data-stream-title="${escapeHtml(d.livestream_title || 'Kick Stream')}">Cast</button>
+            <div class="stream-actions">
+                <button class="copy-button" data-url="${escapeHtml(d.playback_url || '')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy Stream URL</button>
+                <button class="cast-button" data-stream-url="${escapeHtml(d.playback_url || '')}" data-stream-title="${escapeHtml(d.livestream_title || 'Kick Stream')}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 16.1A5 5 0 0 1 5.9 20M2 12.05A9 9 0 0 1 9.95 20M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6"/><line x1="2" y1="20" x2="2.01" y2="20"/></svg> Cast</button>
             </div>
-            <p class="note">Copy the URL to play in a media player like VLC.</p>
-            ${!document.body.classList.contains('chromecast-active') ? '<p class="chromecast-hint">Tip: Connect a Chromecast device using the icon in the header to cast streams.</p>' : ''}
+            <p class="chromecast-hint">Tip: Connect a Chromecast device using the icon in the header to cast streams.</p>
             <a href="/streams/go/${encodeURIComponent(channelSlug)}" target="_blank" class="redirect-link">Open Live Stream</a>
         ` : `
             <a href="https://kick.com/${encodeURIComponent(channelSlug)}" target="_blank" rel="noopener noreferrer" class="redirect-link">View on Kick.com</a>
@@ -491,6 +535,9 @@ export function renderFeaturedStreamsTable(streams, meta = {}) {
 
     if (!featuredStreamsTableBody) return;
 
+    // Remove skeleton placeholder rows
+    featuredStreamsTableBody.querySelectorAll('.skeleton-row').forEach(r => r.remove());
+
     const renderMode = meta.renderMode || 'full';
     const skipAnimation = renderMode === 'refresh';
 
@@ -572,8 +619,9 @@ export function renderClipsInfo(response, channelSlug) {
             }, 300);
         });
     } else {
-        // No clips or error — hide section silently (clips are optional)
-        clipsList.style.display = 'none';
+        // No clips — show subtle empty message
+        clipsList.innerHTML = '<h3>Clips</h3><p class="no-results-message">No clips available for this channel.</p>';
+        clipsList.style.display = 'block';
     }
 }
 
@@ -627,6 +675,20 @@ export function renderClipsTable(clips) {
     clipsList.insertAdjacentHTML('beforeend', tableHTML);
 }
 
+export function renderSearchLoading() {
+    const container = document.getElementById('searchSuggestions');
+    if (!container) return;
+    container.innerHTML = '<div class="search-suggestions-spinner"><span class="sentinel-spinner-ring"></span> Searching channels...</div>';
+    container.style.display = 'block';
+}
+
+export function renderSearchEmpty() {
+    const container = document.getElementById('searchSuggestions');
+    if (!container) return;
+    container.innerHTML = '<div class="search-suggestions-empty">No channels found</div>';
+    container.style.display = 'block';
+}
+
 export function renderSearchResults(results, onSelect) {
     const container = document.getElementById('searchSuggestions');
     if (!container) return;
@@ -636,11 +698,15 @@ export function renderSearchResults(results, onSelect) {
         return;
     }
 
+    suggestionSelectedIndex = -1;
+    suggestionOnSelect = onSelect;
+
     container.innerHTML = '';
-    results.forEach(r => {
+    results.forEach((r, idx) => {
         const item = document.createElement('div');
         item.className = 'search-suggestion-item';
         item.dataset.slug = r.slug;
+        item.dataset.index = idx;
 
         const liveBadge = r.is_live ? '<span class="suggestion-live">LIVE</span>' : '';
         // Prefer live viewer count; fall back to followers if no viewer count available
@@ -768,5 +834,45 @@ export function initButtonDelegation() {
             castStream(streamUrl, streamTitle);
         }
     });
+}
+
+// ── Search suggestion keyboard navigation ─────────────────────────────────
+export function handleSuggestionKeydown(event) {
+    const container = document.getElementById('searchSuggestions');
+    if (!container || container.style.display === 'none') return false;
+
+    const items = container.querySelectorAll('.search-suggestion-item');
+    if (items.length === 0) return false;
+
+    if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        suggestionSelectedIndex = Math.min(suggestionSelectedIndex + 1, items.length - 1);
+        updateSuggestionHighlight(items);
+        return true;
+    }
+    if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        suggestionSelectedIndex = Math.max(suggestionSelectedIndex - 1, -1);
+        updateSuggestionHighlight(items);
+        return true;
+    }
+    if (event.key === 'Enter' && suggestionSelectedIndex >= 0 && suggestionSelectedIndex < items.length) {
+        event.preventDefault();
+        const slug = items[suggestionSelectedIndex].dataset.slug;
+        if (slug && suggestionOnSelect) {
+            suggestionOnSelect(slug);
+        }
+        return true;
+    }
+    return false;
+}
+
+function updateSuggestionHighlight(items) {
+    items.forEach((item, idx) => {
+        item.classList.toggle('highlighted', idx === suggestionSelectedIndex);
+    });
+    if (suggestionSelectedIndex >= 0 && items[suggestionSelectedIndex]) {
+        items[suggestionSelectedIndex].scrollIntoView({ block: 'nearest' });
+    }
 }
 

@@ -1,8 +1,8 @@
-import { fetchFeaturedStreams, fetchChannelData, fetchSearchResults, fetchChannelSearch, fetchChannelAvatar, fetchViewerCount } from './js/api.js';
-import { showMessage, clearPreviousData, renderLiveStreamInfo, renderVodsInfo, renderClipsInfo, renderFeaturedStreamsTable, renderSearchResults, showLoadingIndicator, hideLoadingIndicator, addSortEventListeners, initButtonDelegation } from './js/ui.js';
-import { appState, featuredSortState } from './js/state.js';
-import { initializeChromecast } from './js/chromecast.js';
-import { applyFeaturedStreamsSort } from './js/sorting.js';
+import { fetchFeaturedStreams, fetchChannelData, fetchSearchResults, fetchChannelSearch, fetchChannelAvatar, fetchViewerCount } from './js/api.js?v=1.1.0';
+import { showMessage, clearPreviousData, renderLiveStreamInfo, renderVodsInfo, renderClipsInfo, renderFeaturedStreamsTable, renderSearchResults, renderSearchLoading, renderSearchEmpty, showLoadingIndicator, hideLoadingIndicator, addSortEventListeners, initButtonDelegation, renderFeaturedSkeleton, renderProfileSkeleton, handleSuggestionKeydown } from './js/ui.js?v=1.1.0';
+import { appState, featuredSortState } from './js/state.js?v=1.1.0';
+import { initializeChromecast } from './js/chromecast.js?v=1.1.0';
+import { applyFeaturedStreamsSort } from './js/sorting.js?v=1.1.0';
 
 // Viewer count auto-refresh timer
 let viewerRefreshTimer = null;
@@ -242,6 +242,9 @@ function renderVisibleFeaturedStreams({ resetScroll = false, renderMode = 'full'
         renderMode,
     });
 
+    // Update stream count in section title
+    updateFeaturedStreamCount(allStreams.length);
+
     updateFeaturedSentinel();
 
     if (resetScroll) {
@@ -419,6 +422,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const languageSelector = document.getElementById('languageSelector');
     const categorySelector = document.getElementById('categorySelector');
 
+    // Show skeleton while featured streams load
+    renderFeaturedSkeleton();
+
     // Initial setup for featured streams
     populateLanguageSelector().then(() => {
         currentFeaturedLanguage = languageSelector.value;
@@ -534,6 +540,8 @@ document.addEventListener('DOMContentLoaded', () => {
             const localRes = fetchSearchResults(q, pool);
             if (localRes.data.length > 0) {
                 renderSearchResults(localRes.data, onSelect);
+            } else {
+                renderSearchLoading();
             }
 
             // Tier 2: upgrade with full Typesense server-side results
@@ -599,6 +607,8 @@ document.addEventListener('DOMContentLoaded', () => {
                         // No pic → initials avatar already shown, nothing to do
                     });
                 }
+            } else if (localRes.data.length === 0) {
+                renderSearchEmpty();
             }
         }, 300);
     });
@@ -611,6 +621,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
     channelSlugInput.addEventListener('keydown', (e) => {
+        // Keyboard navigation for search suggestions (ArrowUp/Down/Enter)
+        if (handleSuggestionKeydown(e)) return;
         if (e.key === 'Escape') {
             const sugg = document.getElementById('searchSuggestions');
             if (sugg) sugg.style.display = 'none';
@@ -801,6 +813,13 @@ function updateFeaturedSectionTitle(categorySelector) {
     }
 }
 
+function updateFeaturedStreamCount(count) {
+    const title = document.getElementById('featuredSectionTitle');
+    if (!title || count === 0) return;
+    const base = title.textContent.replace(/\s*\(\d+\)$/, '');
+    title.textContent = `${base} (${count})`;
+}
+
 function filterAndRenderFeaturedStreams(options = {}) {
     renderVisibleFeaturedStreams(options);
 }
@@ -823,10 +842,17 @@ function getLastKnownViewerCount(el) {
 function updateLiveViewerCountDisplay(el, viewerCount) {
     if (!el) return;
 
+    const previousText = el.textContent;
     const numericViewerCount = Number(viewerCount);
     if (Number.isFinite(numericViewerCount) && numericViewerCount > 0) {
         el.dataset.lastKnownViewerCount = String(numericViewerCount);
         el.textContent = numericViewerCount.toLocaleString('en-US');
+        // Pulse animation if value changed
+        if (el.textContent !== previousText) {
+            el.classList.remove('viewer-updated');
+            void el.offsetWidth; // force reflow
+            el.classList.add('viewer-updated');
+        }
         return;
     }
 
@@ -892,7 +918,7 @@ async function handleFetchChannelData() {
 
     stopViewerRefresh();
     clearPreviousData();
-    showMessage('Fetching data...', 'info');
+    renderProfileSkeleton();
     showLoadingIndicator();
 
     try {

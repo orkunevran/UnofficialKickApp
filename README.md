@@ -20,10 +20,10 @@ Unofficial Kick App provides a web UI plus a REST API for Kick.com live streams,
 - Featured streams with infinite scroll, language and category filtering
 - Smart prefetching: next page is cached in the background before you scroll to it
 - Seamless auto-refresh: viewer counts and stream data update silently every 90 seconds
-- Two-tier channel search: instant local results + full Typesense server-side search
+- Two-tier channel search: instant local results + full Typesense server-side search, with loading/empty states and keyboard navigation
 - Avatar lookup and current viewer counts
 - Chromecast device discovery and cast control
-- Glassmorphism UI with smooth staggered animations
+- Glassmorphism UI with skeleton loaders, smooth staggered animations, and responsive polish
 - Swagger/OpenAPI docs at `/docs`
 - Docker and Docker Compose support
 - Cloudscraper-based Kick API access

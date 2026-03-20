@@ -24,6 +24,7 @@
                 </a>
             </h1>
             <div class="header-icons">
+                <a href="/docs" target="_blank" class="header-api-link" title="API Documentation">API</a>
                 <button id="chromecast-button" class="chromecast-button" title="Connect a Chromecast device to cast streams">
                     <img id="chromecast-icon" src="{{ url_for('static', filename='icons/chromecast.svg') }}" alt="Chromecast">
                 </button>
@@ -34,7 +35,7 @@
         <div class="input-section">
             <label for="channelSlugInput" class="sr-only">Channel slug or search term</label>
             <input type="text" id="channelSlugInput" placeholder="Search or enter channel slug…" maxlength="255" autofocus autocomplete="off">
-            <button id="checkChannelBtn">Check Channel</button>
+            <button id="checkChannelBtn">Search</button>
             <button id="clearSearchBtn" class="secondary-button">Clear</button>
         </div>
         <div id="searchSuggestions" class="search-suggestions" style="display:none;"></div>
@@ -50,10 +51,6 @@
         <div id="vodsList" class="info-box"></div>
 
         <div id="clipsList" class="info-box"></div>
-
-        <div class="api-docs-link">
-            <p>Explore the API directly: <a href="/docs" target="_blank">Swagger UI Documentation</a></p>
-        </div>
 
         <div id="featuredLivestreams" class="info-box" style="display: block;">
             <div class="featured-header">
@@ -105,6 +102,6 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.15/dist/hls.min.js"></script>
-    <script type="module" src="{{ url_for('static', filename='script.js', v='1.0.10') }}"></script>
+    <script type="module" src="{{ url_for('static', filename='script.js', v='1.1.0') }}"></script>
 </body>
 </html>

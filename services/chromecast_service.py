@@ -1,6 +1,7 @@
 import pychromecast
 import ipaddress
 import re
+import ssl
 import threading
 import logging
 import socket
@@ -13,22 +14,21 @@ from pychromecast.dial import get_device_info
 from pychromecast.models import CastInfo
 from pychromecast.socket_client import ConnectionStatus
 
+# pychromecast API changed across versions:
+#   Python 3.11+ / newer pychromecast: HostServiceInfo(host, port) dataclass in models
+#   Python 3.9  / older pychromecast:  ServiceInfo("host", (host, port)) namedtuple in models
 try:
-    from pychromecast.discovery import HostServiceInfo as _HostServiceInfo
+    from pychromecast.models import HostServiceInfo as _HostServiceInfo
+    _HOST_SERVICE_NEW_API = True
 except ImportError:
-    try:
-        from pychromecast.models import ServiceInfo as _HostServiceInfo
-    except ImportError:
-        _HostServiceInfo = None
+    from pychromecast.models import ServiceInfo as _HostServiceInfo
+    _HOST_SERVICE_NEW_API = False
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_FALLBACK_SCAN_SUBNETS = (
-    "192.168.0.0/24,192.168.1.0/24,192.168.2.0/24,"
-    "10.0.0.0/24,10.0.1.0/24,10.0.2.0/24"
-)
-DEFAULT_FALLBACK_SCAN_WORKERS = 96
-DEFAULT_FALLBACK_SCAN_PROBE_TIMEOUT = 0.25
+DEFAULT_FALLBACK_SCAN_SUBNETS = "192.168.0.0/24,192.168.1.0/24,192.168.2.0/24"
+DEFAULT_FALLBACK_SCAN_WORKERS = 32
+DEFAULT_FALLBACK_SCAN_PROBE_TIMEOUT = 0.5
 DEFAULT_FALLBACK_DEVICE_INFO_TIMEOUT = 3.0
 
 
@@ -123,10 +123,9 @@ class ChromecastService:
         except OSError:
             return False
 
-    def _make_host_service_info(self, host):
-        if _HostServiceInfo is None:
-            raise RuntimeError("No Chromecast host service info class available.")
-        if getattr(_HostServiceInfo, "__name__", "") == "HostServiceInfo":
+    @staticmethod
+    def _make_host_service_info(host):
+        if _HOST_SERVICE_NEW_API:
             return _HostServiceInfo(host, 8009)
         return _HostServiceInfo("host", (host, 8009))
 
@@ -145,7 +144,7 @@ class ChromecastService:
         return pychromecast.get_chromecast_from_cast_info(cast_info, self._zc)
 
     def _scan_private_networks_for_chromecasts(self):
-        if not self._fallback_scan_enabled or not self._fallback_scan_networks:
+        if not self._fallback_scan_enabled or not self._fallback_scan_networks or self._zc is None:
             return []
 
         candidate_hosts = []
@@ -183,7 +182,12 @@ class ChromecastService:
                 seen_hosts.add(host)
 
                 try:
-                    device_status = get_device_info(host, timeout=self._fallback_device_info_timeout)
+                    ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                    ssl_ctx.check_hostname = False
+                    ssl_ctx.verify_mode = ssl.CERT_NONE
+                    device_status = get_device_info(
+                        host, timeout=self._fallback_device_info_timeout, context=ssl_ctx,
+                    )
                 except Exception as e:
                     logger.debug("Unable to fetch Chromecast status from %s: %s", host, e)
                     continue

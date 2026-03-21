@@ -2,10 +2,10 @@
  * Settings view — preferences for language, view mode, etc.
  */
 
-import { preferences, savePreferences } from '../state.js?v=2.3.5';
-import { toast } from '../toast.js?v=2.3.5';
-import { clearHistory } from '../history.js?v=2.3.5';
-import { clearFavorites } from '../favorites.js?v=2.3.5';
+import { preferences, savePreferences } from '../state.js?v=2.3.7';
+import { toast } from '../toast.js?v=2.3.7';
+import { clearHistory } from '../history.js?v=2.3.7';
+import { clearFavorites } from '../favorites.js?v=2.3.7';
 
 export async function mount(params, contentEl) {
     // Fetch languages for the selector
@@ -77,21 +77,8 @@ export async function mount(params, contentEl) {
             </div>
         </div>`;
 
-    // Language change
-    contentEl.querySelector('#settings-language')?.addEventListener('change', (e) => {
-        preferences.language = e.target.value;
-        savePreferences();
-        toast('Default language updated', 'success');
-    });
-
-    // View mode
-    contentEl.querySelector('#settings-viewmode')?.addEventListener('change', (e) => {
-        preferences.viewMode = e.target.value;
-        savePreferences();
-        toast('Default view updated', 'success');
-    });
-
     // Double-click-to-confirm helper
+    const confirmTimers = [];
     function confirmAction(btn, action) {
         if (btn.dataset.confirming === 'true') {
             action();
@@ -103,30 +90,63 @@ export async function mount(params, contentEl) {
         btn.dataset.confirming = 'true';
         btn.textContent = 'Are you sure?';
         btn.classList.add('btn-danger');
-        setTimeout(() => {
+        const timer = setTimeout(() => {
             if (btn.dataset.confirming === 'true') {
                 btn.dataset.confirming = '';
                 btn.textContent = 'Clear';
                 btn.classList.remove('btn-danger');
             }
         }, 3000);
+        confirmTimers.push(timer);
     }
 
+    // Language change
+    const onLangChange = (e) => {
+        preferences.language = e.target.value;
+        savePreferences();
+        toast('Default language updated', 'success');
+    };
+
+    // View mode
+    const onViewChange = (e) => {
+        preferences.viewMode = e.target.value;
+        savePreferences();
+        toast('Default view updated', 'success');
+    };
+
     // Clear history
-    contentEl.querySelector('#settings-clear-history')?.addEventListener('click', (e) => {
+    const onClearHistory = (e) => {
         confirmAction(e.currentTarget, () => {
             clearHistory();
             toast('Watch history cleared', 'success');
         });
-    });
+    };
 
     // Clear favorites
-    contentEl.querySelector('#settings-clear-favorites')?.addEventListener('click', (e) => {
+    const onClearFavorites = (e) => {
         confirmAction(e.currentTarget, () => {
             clearFavorites();
             toast('Favorites cleared', 'success');
             const badge = document.getElementById('favorites-badge');
             if (badge) { badge.textContent = '0'; badge.classList.add('hidden'); }
         });
-    });
+    };
+
+    const langEl = contentEl.querySelector('#settings-language');
+    const viewEl = contentEl.querySelector('#settings-viewmode');
+    const clearHistBtn = contentEl.querySelector('#settings-clear-history');
+    const clearFavBtn = contentEl.querySelector('#settings-clear-favorites');
+
+    langEl?.addEventListener('change', onLangChange);
+    viewEl?.addEventListener('change', onViewChange);
+    clearHistBtn?.addEventListener('click', onClearHistory);
+    clearFavBtn?.addEventListener('click', onClearFavorites);
+
+    return () => {
+        langEl?.removeEventListener('change', onLangChange);
+        viewEl?.removeEventListener('change', onViewChange);
+        clearHistBtn?.removeEventListener('click', onClearHistory);
+        clearFavBtn?.removeEventListener('click', onClearFavorites);
+        confirmTimers.forEach(t => clearTimeout(t));
+    };
 }

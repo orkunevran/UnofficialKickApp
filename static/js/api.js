@@ -130,3 +130,48 @@ export async function fetchViewerCount(livestreamId) {
         return null; // Silent fail — viewer count refresh is non-critical
     }
 }
+
+// ── Chromecast API ───────────────────────────────────────────────────────
+
+export async function fetchChromecastDevices(force = false, knownHosts = null) {
+    const url = new URL('/api/chromecast/devices', window.location.origin);
+    if (force) url.searchParams.set('force', 'true');
+    if (knownHosts) url.searchParams.set('known_hosts', knownHosts);
+    const response = await fetchWithTimeout(url, {}, 10000);
+    if (!response.ok) throw new Error('Failed to discover devices');
+    return await response.json();
+}
+
+export async function postChromecastSelect(uuid) {
+    const response = await fetchWithTimeout('/api/chromecast/select', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uuid }),
+    }, 10000);
+    return { data: await response.json(), status: response.status };
+}
+
+export async function postChromecastCast(streamUrl, title) {
+    const response = await fetchWithTimeout('/api/chromecast/cast', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stream_url: streamUrl, title }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return await response.json();
+}
+
+export async function postChromecastStop(uuid) {
+    const response = await fetchWithTimeout('/api/chromecast/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ uuid }),
+    });
+    return await response.json();
+}
+
+export async function fetchChromecastStatus() {
+    const response = await fetchWithTimeout('/api/chromecast/status', {}, 8000);
+    if (!response.ok) return null;
+    return await response.json();
+}

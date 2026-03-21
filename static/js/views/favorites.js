@@ -2,11 +2,11 @@
  * Favorites view — shows favorited channels with live status.
  */
 
-import { getFavorites, removeFavorite } from '../favorites.js?v=2.3.5';
-import { fetchChannelData } from '../api.js?v=2.3.5';
-import { escapeHtml, initialsAvatar, formatViewerCount } from '../utils.js?v=2.3.5';
-import { navigate } from '../router.js?v=2.3.5';
-import { renderCardSkeleton, updateFavoritesBadge } from '../ui.js?v=2.3.5';
+import { getFavorites, removeFavorite } from '../favorites.js?v=2.3.7';
+import { fetchChannelData } from '../api.js?v=2.3.7';
+import { escapeHtml, initialsAvatar, formatViewerCount } from '../utils.js?v=2.3.7';
+import { navigate } from '../router.js?v=2.3.7';
+import { renderCardSkeleton, updateFavoritesBadge } from '../ui.js?v=2.3.7';
 
 function renderFavoriteCard(fav, liveStatus = null) {
     const isLive = liveStatus?.data?.status === 'live';
@@ -83,11 +83,16 @@ export async function mount(params, contentEl) {
             return bLive - aLive;
         });
 
-    grid.innerHTML = `<div class="stream-grid">${resolved.map(r => renderFavoriteCard(r.fav, r.liveData)).join('')}</div>`;
+    // Keep resolved data for re-renders
+    let currentResolved = resolved;
+
+    function renderGrid() {
+        grid.innerHTML = `<div class="stream-grid">${currentResolved.map(r => renderFavoriteCard(r.fav, r.liveData)).join('')}</div>`;
+    }
+    renderGrid();
 
     // Click to navigate or unfavorite
-    grid.addEventListener('click', (e) => {
-        // Unfavorite button
+    const handleGridClick = (e) => {
         const unfavBtn = e.target.closest('[data-action="unfavorite"]');
         if (unfavBtn) {
             e.stopPropagation();
@@ -95,24 +100,42 @@ export async function mount(params, contentEl) {
             if (slug) {
                 removeFavorite(slug);
                 updateFavoritesBadge();
-                mount(params, contentEl);
+                currentResolved = currentResolved.filter(r => r.fav.slug !== slug);
+                renderGrid();
+                // Update header count
+                const countEl = contentEl.querySelector('.section-count');
+                if (countEl) countEl.textContent = currentResolved.length > 0 ? `(${currentResolved.length})` : '';
+                if (currentResolved.length === 0) {
+                    contentEl.querySelector('.section-count')?.remove();
+                    grid.innerHTML = `<div class="empty-state">
+                        <div class="empty-state-icon"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg></div>
+                        <div class="empty-state-title">No favorites yet</div>
+                        <div class="empty-state-text">Browse streams and click the heart icon to add channels to your favorites.</div>
+                        <a href="#/browse" class="btn-primary" style="margin-top:16px;display:inline-flex">Browse Streams</a>
+                    </div>`;
+                }
             }
             return;
         }
         const card = e.target.closest('.stream-card');
         if (card) navigate(`/channel/${card.dataset.slug}`);
-    });
+    };
+    grid.addEventListener('click', handleGridClick);
 
     // Listen for favorites changes (e.g. removed from another view)
     const onFavChange = () => {
         const newFavs = getFavorites();
-        if (newFavs.length !== favorites.length) {
-            mount(params, contentEl);
+        if (newFavs.length !== currentResolved.length) {
+            // Filter out removed favorites
+            const slugs = new Set(newFavs.map(f => f.slug));
+            currentResolved = currentResolved.filter(r => slugs.has(r.fav.slug));
+            renderGrid();
         }
     };
     window.addEventListener('favorites-changed', onFavChange);
 
     return () => {
+        grid.removeEventListener('click', handleGridClick);
         window.removeEventListener('favorites-changed', onFavChange);
     };
 }

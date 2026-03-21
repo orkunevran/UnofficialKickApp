@@ -17,21 +17,33 @@ def _service(request: Request):
     return request.app.state.chromecast_service
 
 
+_HOST_RE = re.compile(r"^[a-zA-Z0-9._:-]{1,255}$")
+
+
 def _parse_known_hosts(raw_value: Optional[str]):
     if not raw_value:
         return None
-    hosts = [part.strip() for part in re.split(r"[,\s]+", raw_value) if part.strip()]
+    hosts = []
+    for part in re.split(r"[,\s]+", raw_value):
+        part = part.strip()
+        if not part:
+            continue
+        if _HOST_RE.match(part):
+            hosts.append(part)
+        else:
+            logger.warning("Ignoring invalid known_hosts entry: %s", part)
     return hosts or None
 
 
 @router.get("/devices")
 async def chromecast_devices(request: Request):
-    logger.info("Received request to discover Chromecast devices.")
     force = request.query_params.get("force", "false").lower() == "true"
     known_hosts = _parse_known_hosts(request.query_params.get("known_hosts"))
+    if force or known_hosts:
+        logger.info("Chromecast device discovery requested (force=%s, known_hosts=%s).", force, known_hosts)
     scanning = _service(request).scan_for_devices_async(force=force or bool(known_hosts), known_hosts=known_hosts)
     devices = _service(request).get_devices()
-    logger.info("Returning %s devices (background scan: %s).", len(devices), scanning)
+    logger.debug("Returning %s devices (background scan: %s).", len(devices), scanning)
     return success_json({"devices": devices, "scanning": scanning or _service(request).is_scanning()})
 
 

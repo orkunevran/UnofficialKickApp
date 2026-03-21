@@ -60,6 +60,22 @@ export function formatRelativeTime(dateString) {
     }
 }
 
+export function formatUptime(startTime) {
+    if (!startTime) return '';
+    try {
+        const start = new Date(startTime.replace(' ', 'T') + 'Z');
+        const diffMs = Date.now() - start.getTime();
+        if (diffMs < 0) return '';
+        const mins = Math.floor(diffMs / 60000);
+        if (mins < 60) return `${mins}m`;
+        const h = Math.floor(mins / 60);
+        const m = mins % 60;
+        return `${h}h ${m}m`;
+    } catch {
+        return '';
+    }
+}
+
 export function formatViewerCount(n) {
     if (n === null || n === undefined) return 'N/A';
     n = Number(n);

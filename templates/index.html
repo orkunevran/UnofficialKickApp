@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="color-scheme" content="dark">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="description" content="Check live status and browse VODs from your favorite Kick.com channels. Unofficial Kick proxy app.">
@@ -29,7 +30,7 @@
             },
         }
     </script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='2.3.5') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='2.3.7') }}">
 </head>
 <body class="bg-void text-white font-sans min-h-screen overflow-hidden">
     <div id="app" class="flex h-screen">
@@ -96,6 +97,9 @@
                     <button id="chromecast-button" class="chromecast-btn" title="Chromecast">
                         <img id="chromecast-icon" src="{{ url_for('static', filename='icons/chromecast.svg') }}" alt="Chromecast" class="w-5 h-5">
                     </button>
+                    <button id="chromecast-disconnect-quick" class="chromecast-disconnect-quick" title="Disconnect Chromecast" style="display:none" aria-label="Disconnect Chromecast">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
                 </div>
             </header>
 
@@ -151,49 +155,41 @@
     <div id="chromecast-modal" class="modal" role="dialog" aria-labelledby="chromecast-modal-title">
         <div class="modal-content">
             <div class="modal-header">
-                <h2 id="chromecast-modal-title">Chromecast</h2>
+                <h2 id="chromecast-modal-title">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-3px;margin-right:6px;opacity:0.6"><path d="M2 16.1A5 5 0 015.9 20M2 12.05A9 9 0 019.95 20M2 8V6a2 2 0 012-2h16a2 2 0 012 2v12a2 2 0 01-2 2h-6"/><line x1="2" y1="20" x2="2.01" y2="20"/></svg>Cast to device
+                </h2>
                 <button class="close-button" role="button" aria-label="Close">&times;</button>
             </div>
-            <p class="chromecast-modal-help">Search your local network, or add a Chromecast IP/hostname if discovery fails.</p>
-            <div class="chromecast-search-container">
-                <svg class="chromecast-search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <circle cx="11" cy="11" r="8"></circle>
-                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
-                </svg>
-                <label for="chromecast-device-search" class="sr-only">Search Chromecast devices</label>
-                <input
-                    type="search"
-                    id="chromecast-device-search"
-                    placeholder="Search by device name or UUID..."
-                    autocomplete="off"
-                    class="search-input chromecast-search-input"
-                >
-            </div>
-            <div class="chromecast-host-container">
-                <label for="chromecast-host-input" class="sr-only">Chromecast IP or hostname</label>
-                <input
-                    type="text"
-                    id="chromecast-host-input"
-                    placeholder="Add by IP or hostname..."
-                    autocomplete="off"
-                    class="search-input chromecast-host-input"
-                >
-                <button id="chromecast-host-discover-btn" class="btn-secondary chromecast-host-btn">Discover host</button>
-            </div>
-            <div id="chromecast-device-summary" class="chromecast-device-summary" aria-live="polite"></div>
-            <div id="modal-spinner" class="spinner" style="display: none;"></div>
-            <div id="chromecast-device-list"></div>
+            <div id="chromecast-device-list" aria-live="polite"></div>
             <div class="modal-actions">
-                <button id="rescan-devices-btn" class="btn-secondary">Rescan</button>
-                <button id="disconnect-device-btn" class="btn-secondary" style="display: none;">Disconnect</button>
+                <button id="rescan-devices-btn" class="btn-secondary">
+                    <svg class="rescan-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+                    <span class="rescan-label">Rescan</span>
+                </button>
+                <button id="disconnect-device-btn" class="btn-secondary btn-danger" style="display: none;">Disconnect</button>
             </div>
+            <details id="chromecast-advanced" class="cc-advanced">
+                <summary>Troubleshooting</summary>
+                <p class="cc-advanced-help">If automatic discovery fails, enter your Chromecast's IP address or hostname.</p>
+                <div class="cc-advanced-row">
+                    <label for="chromecast-host-input" class="sr-only">Chromecast IP or hostname</label>
+                    <input
+                        type="text"
+                        id="chromecast-host-input"
+                        placeholder="e.g. 192.168.1.100"
+                        autocomplete="off"
+                        class="search-input cc-advanced-input"
+                    >
+                    <button id="chromecast-host-discover-btn" class="btn-secondary">Discover</button>
+                </div>
+            </details>
         </div>
     </div>
 
     <!-- Toast container -->
     <div id="toast-container" class="toast-container"></div>
 
-    <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.15/dist/hls.min.js"></script>
-    <script type="module" src="{{ url_for('static', filename='script.js', v='2.3.5') }}"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/hls.js@1.5.15/dist/hls.min.js"></script>
+    <script type="module" src="{{ url_for('static', filename='script.js', v='2.3.7') }}"></script>
 </body>
 </html>

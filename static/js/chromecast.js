@@ -1,74 +1,95 @@
-import { toast } from './toast.js?v=2.3.5';
-import { castStream } from './chromecast_logic.js?v=2.3.5';
+/**
+ * Chromecast modal — device discovery, selection, and casting UI.
+ */
 
-const FETCH_TIMEOUT_MS = 10000;
+import { toast } from './toast.js?v=2.3.7';
+import { castStream } from './chromecast_logic.js?v=2.3.7';
+import { escapeHtml } from './utils.js?v=2.3.7';
+import { preferences, updatePreference } from './state.js?v=2.3.7';
+import { fetchChromecastDevices, postChromecastSelect, postChromecastStop, fetchChromecastStatus } from './api.js?v=2.3.7';
 
-function fetchWithTimeout(url, options = {}, timeoutMs = FETCH_TIMEOUT_MS) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer));
-}
+// ── SVG Icons ────────────────────────────────────────────────────────────
+
+const ICON_TV = '<svg class="device-item-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="7" width="20" height="15" rx="2" ry="2"/><polyline points="17 2 12 7 7 2"/></svg>';
+const ICON_RECONNECT = '<svg class="device-item-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>';
+
+// ── State ────────────────────────────────────────────────────────────────
 
 let selectedDevice = null;
-let statusPollInterval = null;
+let statusPollTimer = null;
 let isDiscovering = false;
 let scanPollTimer = null;
 let isScanActive = false;
 let isSelecting = false;
 let discoveredDevices = [];
-let deviceSearchQuery = '';
 let pendingCastRequest = null;
 let chromecastListenersBound = false;
+let focusTrapHandler = null;
+let silentRefreshTimer = null;
+
+// ── Init ─────────────────────────────────────────────────────────────────
 
 export function initializeChromecast() {
     if (chromecastListenersBound) return;
 
     const chromecastButton = document.getElementById('chromecast-button');
     const chromecastModal = document.getElementById('chromecast-modal');
-    const closeButton = chromecastModal?.querySelector('.close-button');
-    const rescanButton = document.getElementById('rescan-devices-btn');
-    const disconnectButton = document.getElementById('disconnect-device-btn');
-    const deviceSearchInput = document.getElementById('chromecast-device-search');
-    const hostDiscoverButton = document.getElementById('chromecast-host-discover-btn');
-    const hostInput = document.getElementById('chromecast-host-input');
-
     if (!chromecastButton || !chromecastModal) return;
 
     chromecastListenersBound = true;
-    chromecastButton.addEventListener('click', openModal);
-    closeButton?.addEventListener('click', closeModal);
-    window.addEventListener('click', (event) => {
-        if (event.target === chromecastModal) closeModal();
-    });
-    rescanButton?.addEventListener('click', () => discoverDevices(true));
-    disconnectButton?.addEventListener('click', disconnectDevice);
-    deviceSearchInput?.addEventListener('input', handleDeviceSearchInput);
-    deviceSearchInput?.addEventListener('keydown', handleDeviceSearchKeydown);
-    hostDiscoverButton?.addEventListener('click', handleHostDiscoveryClick);
-    hostInput?.addEventListener('keydown', handleHostInputKeydown);
-    document.addEventListener('chromecast:request-device', handleChromecastRequestDevice);
 
-    document.addEventListener('keydown', (event) => {
-        if (event.key !== 'Escape' || chromecastModal.style.display !== 'block') return;
-        const targetTag = event.target?.tagName;
-        if (targetTag === 'INPUT' || targetTag === 'TEXTAREA' || targetTag === 'SELECT' || event.target?.isContentEditable) {
-            return;
+    chromecastButton.addEventListener('click', openModal);
+    chromecastModal.querySelector('.close-button')?.addEventListener('click', closeModal);
+    window.addEventListener('click', (e) => { if (e.target === chromecastModal) closeModal(); });
+
+    document.getElementById('rescan-devices-btn')?.addEventListener('click', () => discoverDevices(true));
+    document.getElementById('disconnect-device-btn')?.addEventListener('click', disconnectDevice);
+    document.getElementById('chromecast-host-discover-btn')?.addEventListener('click', handleHostDiscovery);
+    document.getElementById('chromecast-host-input')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); handleHostDiscovery(); }
+    });
+
+    // Quick disconnect from header
+    document.getElementById('chromecast-disconnect-quick')?.addEventListener('click', disconnectDevice);
+
+    // Device list click delegation
+    document.getElementById('chromecast-device-list')?.addEventListener('click', handleDeviceListClick);
+    document.getElementById('chromecast-device-list')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+            const item = e.target.closest('.device-item');
+            if (item) { e.preventDefault(); item.click(); }
         }
+    });
+
+    document.addEventListener('chromecast:request-device', (event) => {
+        const detail = event?.detail || {};
+        if (detail.streamUrl) {
+            pendingCastRequest = { streamUrl: detail.streamUrl, title: detail.title || 'Kick Stream' };
+        }
+        openModal();
+    });
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape' || chromecastModal.style.display !== 'block') return;
+        const tag = e.target?.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
         closeModal();
     });
 
     window.addEventListener('beforeunload', stopStatusPolling);
 
-    // Check for saved device
-    const savedDevice = localStorage.getItem('selectedChromecast');
-    if (savedDevice) {
+    // Restore saved device
+    const saved = localStorage.getItem('selectedChromecast');
+    if (saved) {
         try {
-            const parsed = JSON.parse(savedDevice);
+            const parsed = JSON.parse(saved);
             if (parsed?.uuid && parsed?.name) {
                 selectedDevice = parsed;
                 updateIcon('active');
                 document.body.classList.add('chromecast-active');
-                if (disconnectButton) disconnectButton.style.display = 'block';
+                showQuickDisconnect(true);
+                const dcBtn = document.getElementById('disconnect-device-btn');
+                if (dcBtn) dcBtn.style.display = 'block';
                 startStatusPolling();
             } else {
                 localStorage.removeItem('selectedChromecast');
@@ -78,10 +99,27 @@ export function initializeChromecast() {
         }
     }
 
+    // Pre-fetch devices silently so the modal always has devices ready
+    silentFetchDevices();
+    silentRefreshTimer = setInterval(silentFetchDevices, 60000);
+
     renderDeviceList(discoveredDevices);
 }
 
-let focusTrapHandler = null;
+// ── Silent background fetch ─────────────────────────────────────────────
+
+async function silentFetchDevices() {
+    try {
+        const data = await fetchChromecastDevices(false);
+        if (data.status === 'success' && Array.isArray(data.data?.devices)) {
+            discoveredDevices = data.data.devices;
+        }
+    } catch {
+        // Silent — don't toast on background fetch failures
+    }
+}
+
+// ── Modal lifecycle ──────────────────────────────────────────────────────
 
 function openModal() {
     const modal = document.getElementById('chromecast-modal');
@@ -92,234 +130,83 @@ function openModal() {
     // Focus trap
     const content = modal.querySelector('.modal-content');
     if (content) {
-        const firstFocusable = content.querySelector('#chromecast-device-search') || content.querySelector('button');
-        if (firstFocusable) firstFocusable.focus();
+        if (focusTrapHandler) modal.removeEventListener('keydown', focusTrapHandler);
         focusTrapHandler = (e) => {
             if (e.key !== 'Tab') return;
-            const focusable = content.querySelectorAll('button, [href], input, select, [tabindex]:not([tabindex="-1"])');
-            if (focusable.length === 0) return;
-            const first = focusable[0];
-            const last = focusable[focusable.length - 1];
-            if (e.shiftKey) {
-                if (document.activeElement === first) { e.preventDefault(); last.focus(); }
-            } else {
-                if (document.activeElement === last) { e.preventDefault(); first.focus(); }
-            }
+            const els = content.querySelectorAll('button, [href], input, select, [tabindex]:not([tabindex="-1"])');
+            if (!els.length) return;
+            const first = els[0], last = els[els.length - 1];
+            if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+            else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
         };
         modal.addEventListener('keydown', focusTrapHandler);
     }
 
-    discoverDevices(false);
-
-    const searchInput = document.getElementById('chromecast-device-search');
-    if (searchInput) {
-        requestAnimationFrame(() => searchInput.focus());
+    // Render cached devices immediately; fetch latest in background (no spinner if we have devices)
+    renderDeviceList(discoveredDevices);
+    if (discoveredDevices.length > 0) {
+        // Silently refresh in background — no scanning state shown
+        silentFetchDevices().then(() => renderDeviceList(discoveredDevices));
+    } else {
+        discoverDevices(false);
     }
 }
 
 function closeModal() {
     const modal = document.getElementById('chromecast-modal');
     if (!modal) return;
-    if (focusTrapHandler) {
-        modal.removeEventListener('keydown', focusTrapHandler);
-        focusTrapHandler = null;
-    }
+    if (focusTrapHandler) { modal.removeEventListener('keydown', focusTrapHandler); focusTrapHandler = null; }
     modal.classList.remove('visible');
     setTimeout(() => { modal.style.display = 'none'; }, 200);
     if (scanPollTimer) { clearTimeout(scanPollTimer); scanPollTimer = null; }
     pendingCastRequest = null;
-    deviceSearchQuery = '';
-    const searchInput = document.getElementById('chromecast-device-search');
-    if (searchInput) searchInput.value = '';
     const hostInput = document.getElementById('chromecast-host-input');
     if (hostInput) hostInput.value = '';
-    renderDeviceList(discoveredDevices);
 }
 
-function handleChromecastRequestDevice(event) {
-    const detail = event?.detail || {};
-    if (detail.streamUrl) {
-        pendingCastRequest = {
-            streamUrl: detail.streamUrl,
-            title: detail.title || 'Kick Stream',
-        };
-    }
-    openModal();
+// ── Host discovery (advanced) ────────────────────────────────────────────
+
+function handleHostDiscovery() {
+    const host = document.getElementById('chromecast-host-input')?.value.trim() || '';
+    if (!host) { toast('Enter a Chromecast IP or hostname.', 'info'); return; }
+    if (isDiscovering) { toast('Scan in progress, please wait.', 'info'); return; }
+    discoverDevices(true, host);
 }
 
-function handleDeviceSearchInput(event) {
-    deviceSearchQuery = event.target?.value?.trim() || '';
-    renderDeviceList(discoveredDevices);
-}
-
-function handleDeviceSearchKeydown(event) {
-    if (event.key !== 'Enter') return;
-    const deviceList = document.getElementById('chromecast-device-list');
-    const firstSelectable = deviceList?.querySelector('.device-item[role="button"]');
-    if (!firstSelectable) return;
-    event.preventDefault();
-    firstSelectable.click();
-}
-
-function handleHostDiscoveryClick() {
-    const hostInput = document.getElementById('chromecast-host-input');
-    const host = hostInput?.value.trim() || '';
-    if (!host) {
-        toast('Enter a Chromecast IP or hostname first.', 'info');
-        return;
-    }
-    if (isDiscovering) {
-        toast('Wait for the current scan to finish, then try the host again.', 'info');
-        return;
-    }
-    void discoverDevices(true, host);
-}
-
-function handleHostInputKeydown(event) {
-    if (event.key !== 'Enter') return;
-    event.preventDefault();
-    handleHostDiscoveryClick();
-}
-
-function getFilteredDevices(devices) {
-    const query = deviceSearchQuery.toLowerCase();
-    if (!query) return devices || [];
-    return (devices || []).filter((device) => {
-        const name = String(device?.name || '').toLowerCase();
-        const uuid = String(device?.uuid || '').toLowerCase();
-        return name.includes(query) || uuid.includes(query);
-    });
-}
-
-function shouldShowReconnectItem(filteredDevices) {
-    const lastUUID = localStorage.getItem('lastChromecastUUID');
-    const lastName = localStorage.getItem('lastChromecastName');
-    if (selectedDevice || !lastUUID || !lastName) return false;
-    if ((filteredDevices || []).some(device => device?.uuid === lastUUID)) return false;
-    return getFilteredDevices([{ name: lastName, uuid: lastUUID }]).length > 0;
-}
-
-function updateDeviceSummary(visibleCount, hasReconnect) {
-    const summary = document.getElementById('chromecast-device-summary');
-    if (!summary) return;
-
-    if (isScanActive) {
-        summary.textContent = 'Scanning for Chromecast devices...';
-        return;
-    }
-
-    const query = deviceSearchQuery.trim();
-    if (query) {
-        summary.textContent = visibleCount === 0
-            ? `No devices match "${query}".`
-            : `${visibleCount} device${visibleCount === 1 ? '' : 's'} match "${query}".`;
-        return;
-    }
-
-    if (selectedDevice?.name) {
-        summary.textContent = visibleCount === 0
-            ? `Connected to ${selectedDevice.name} • no other devices discovered`
-            : `Connected to ${selectedDevice.name} • ${visibleCount} device${visibleCount === 1 ? '' : 's'} available`;
-        return;
-    }
-
-    if (visibleCount === 0) {
-        summary.textContent = hasReconnect
-            ? 'No devices currently visible. Reconnect your last device or click Rescan.'
-            : 'No devices discovered yet. If you know the IP or hostname, use the field above.';
-        return;
-    }
-
-    summary.textContent = hasReconnect
-        ? `${visibleCount} device${visibleCount === 1 ? '' : 's'} available • last device can be reconnected`
-        : `${visibleCount} device${visibleCount === 1 ? '' : 's'} available`;
-}
-
-function createDeviceItem(device, { selected = false, reconnect = false } = {}) {
-    const deviceName = String(device?.name || 'Unknown device');
-    const deviceUuid = String(device?.uuid || '');
-    const el = document.createElement('div');
-    el.classList.add('device-item');
-    if (reconnect) el.classList.add('reconnect-item');
-    if (selected) el.classList.add('selected');
-    el.setAttribute('tabindex', '0');
-    el.setAttribute('role', 'button');
-    el.dataset.uuid = deviceUuid;
-
-    const main = document.createElement('div');
-    main.className = 'device-item-main';
-
-    const name = document.createElement('span');
-    name.className = 'device-item-name';
-    name.textContent = reconnect ? `Reconnect ${deviceName}` : deviceName;
-
-    const uuid = document.createElement('span');
-    uuid.className = 'device-item-uuid';
-    uuid.textContent = deviceUuid;
-
-    main.appendChild(name);
-    main.appendChild(uuid);
-    el.appendChild(main);
-
-    if (selected) {
-        const badge = document.createElement('span');
-        badge.className = 'device-item-selected-badge';
-        badge.textContent = 'Selected';
-        el.appendChild(badge);
-    }
-
-    const doSelect = () => selectDevice(device);
-    el.addEventListener('click', doSelect);
-    el.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            doSelect();
-        }
-    });
-
-    return el;
-}
+// ── Device discovery ─────────────────────────────────────────────────────
 
 function setRescanState(scanning) {
     isScanActive = scanning;
-    const rescanButton = document.getElementById('rescan-devices-btn');
-    const hostButton = document.getElementById('chromecast-host-discover-btn');
+    const btn = document.getElementById('rescan-devices-btn');
+    const icon = btn?.querySelector('.rescan-icon');
+    const label = btn?.querySelector('.rescan-label');
+    const hostBtn = document.getElementById('chromecast-host-discover-btn');
     const hostInput = document.getElementById('chromecast-host-input');
-    const modalSpinner = document.getElementById('modal-spinner');
-    const deviceList = document.getElementById('chromecast-device-list');
 
     if (scanning) {
-        if (rescanButton) { rescanButton.disabled = true; rescanButton.textContent = 'Scanning...'; }
-        if (hostButton) hostButton.disabled = true;
+        if (btn) btn.disabled = true;
+        if (label) label.textContent = 'Scanning...';
+        if (icon) icon.classList.add('spinning');
+        if (hostBtn) hostBtn.disabled = true;
         if (hostInput) hostInput.disabled = true;
-        if (modalSpinner) modalSpinner.style.display = 'block';
-        deviceList?.classList.add('scanning-disabled');
     } else {
-        if (rescanButton) { rescanButton.disabled = false; rescanButton.textContent = 'Rescan'; }
-        if (hostButton) hostButton.disabled = false;
+        if (btn) btn.disabled = false;
+        if (label) label.textContent = 'Rescan';
+        if (icon) icon.classList.remove('spinning');
+        if (hostBtn) hostBtn.disabled = false;
         if (hostInput) hostInput.disabled = false;
-        if (modalSpinner) modalSpinner.style.display = 'none';
-        deviceList?.classList.remove('scanning-disabled');
     }
-
-    const filteredDevices = getFilteredDevices(discoveredDevices);
-    const reconnectVisible = shouldShowReconnectItem(filteredDevices);
-    updateDeviceSummary(filteredDevices.length + (reconnectVisible ? 1 : 0), reconnectVisible);
 }
 
 async function discoverDevices(force = false, knownHosts = null) {
     if (isDiscovering) return;
     isDiscovering = true;
     setRescanState(true);
-
+    renderDeviceList(discoveredDevices); // update empty state to show scanning
     if (scanPollTimer) { clearTimeout(scanPollTimer); scanPollTimer = null; }
 
     try {
-        const url = new URL('/api/chromecast/devices', window.location.origin);
-        if (force) url.searchParams.set('force', 'true');
-        if (knownHosts) url.searchParams.set('known_hosts', knownHosts);
-        const response = await fetchWithTimeout(url);
-        const data = await response.json();
+        const data = await fetchChromecastDevices(force, knownHosts);
         if (data.status === 'success') {
             renderDeviceList(data.data?.devices || []);
             if (knownHosts && (!data.data?.devices || data.data.devices.length === 0)) {
@@ -334,145 +221,191 @@ async function discoverDevices(force = false, knownHosts = null) {
             toast('Failed to discover devices.', 'error');
         }
     } catch (error) {
-        toast(error.name === 'AbortError' ? 'Device discovery timed out.' : 'Error discovering devices.', 'error');
-        console.error('Error discovering devices:', error);
+        toast(error.name === 'AbortError' ? 'Discovery timed out.' : 'Error discovering devices.', 'error');
     }
 
     setRescanState(false);
     isDiscovering = false;
 }
 
-function renderDeviceList(devices) {
-    const deviceList = document.getElementById('chromecast-device-list');
-    if (!deviceList) return;
-    discoveredDevices = Array.isArray(devices) ? devices : [];
-    const filteredDevices = getFilteredDevices(discoveredDevices);
-    deviceList.innerHTML = '';
+// ── Rendering ────────────────────────────────────────────────────────────
 
-    const lastUUID = localStorage.getItem('lastChromecastUUID');
-    const lastName = localStorage.getItem('lastChromecastName');
-    const showReconnect = shouldShowReconnectItem(filteredDevices);
+function getLastDevice() {
+    const cc = preferences.chromecast || {};
+    return {
+        uuid: cc.lastDeviceUUID || localStorage.getItem('lastChromecastUUID') || null,
+        name: cc.lastDeviceName || localStorage.getItem('lastChromecastName') || null,
+    };
+}
+
+function shouldShowReconnect() {
+    const last = getLastDevice();
+    if (selectedDevice || !last.uuid || !last.name) return false;
+    return !discoveredDevices.some(d => d?.uuid === last.uuid);
+}
+
+function renderDeviceItem(device, { selected = false, reconnect = false } = {}) {
+    const name = escapeHtml(device?.name || 'Unknown device');
+    const uuid = escapeHtml(device?.uuid || '');
+    const classes = ['device-item', selected ? 'selected' : '', reconnect ? 'reconnect-item' : ''].filter(Boolean).join(' ');
+    const icon = reconnect ? ICON_RECONNECT : ICON_TV;
+    const badge = selected ? '<span class="device-item-badge">Connected</span>' : '';
+    const label = reconnect ? `Reconnect ${name}` : name;
+
+    return `<div class="${classes}" tabindex="0" role="button" data-uuid="${uuid}" title="${uuid}">
+        ${icon}
+        <span class="device-item-name">${label}</span>
+        <span class="device-item-status"></span>
+        ${badge}
+    </div>`;
+}
+
+function renderDeviceList(devices) {
+    const list = document.getElementById('chromecast-device-list');
+    if (!list) return;
+    discoveredDevices = Array.isArray(devices) ? devices : [];
+    const showReconnect = shouldShowReconnect();
+
+    let html = '';
 
     if (showReconnect) {
-        const reconnectEl = document.createElement('div');
-        reconnectEl.classList.add('device-item', 'reconnect-item');
-        reconnectEl.setAttribute('tabindex', '0');
-        reconnectEl.setAttribute('role', 'button');
-        reconnectEl.dataset.uuid = lastUUID;
-
-        const main = document.createElement('div');
-        main.className = 'device-item-main';
-
-        const name = document.createElement('span');
-        name.className = 'device-item-name';
-        name.textContent = `Reconnect ${lastName}`;
-
-        const uuid = document.createElement('span');
-        uuid.className = 'device-item-uuid';
-        uuid.textContent = lastUUID;
-
-        main.appendChild(name);
-        main.appendChild(uuid);
-        reconnectEl.appendChild(main);
-
-        const doReconnect = () => selectDevice({ uuid: lastUUID, name: lastName });
-        reconnectEl.addEventListener('click', doReconnect);
-        reconnectEl.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                doReconnect();
-            }
-        });
-        deviceList.appendChild(reconnectEl);
+        html += renderDeviceItem(getLastDevice(), { reconnect: true });
     }
 
-    if (filteredDevices.length > 0) {
-        filteredDevices.forEach(device => {
-            const el = createDeviceItem(device, { selected: selectedDevice?.uuid === device.uuid });
-            deviceList.appendChild(el);
-        });
-    }
+    discoveredDevices.forEach(device => {
+        html += renderDeviceItem(device, { selected: selectedDevice?.uuid === device.uuid });
+    });
 
-    if (filteredDevices.length === 0 && !showReconnect) {
-        if (deviceSearchQuery.trim()) {
-            const note = document.createElement('p');
-            note.className = 'scanning-message';
-            note.textContent = `No devices match "${deviceSearchQuery.trim()}".`;
-            deviceList.appendChild(note);
-        } else if (isScanActive) {
-            const note = document.createElement('p');
-            note.className = 'scanning-message';
-            note.textContent = 'Scanning for devices...';
-            deviceList.appendChild(note);
+    if (discoveredDevices.length === 0 && !showReconnect) {
+        if (isScanActive) {
+            html = '<div class="cc-empty-state">Scanning for devices...</div>';
         } else {
-            const note = document.createElement('p');
-            note.className = 'scanning-message';
-            note.textContent = lastUUID
-                ? 'No devices currently visible. Click Rescan to refresh the list.'
-                : 'No devices found. If discovery fails in Docker, try entering a Chromecast IP or hostname above.';
-            deviceList.appendChild(note);
+            html = '<div class="cc-empty-state">No devices found.<br>Try Rescan or check Troubleshooting below.</div>';
         }
     }
 
-    updateDeviceSummary(filteredDevices.length + (showReconnect ? 1 : 0), showReconnect);
+    list.innerHTML = html;
 }
 
+// ── Device list click delegation ─────────────────────────────────────────
+
+function handleDeviceListClick(event) {
+    const item = event.target.closest('.device-item');
+    if (!item) return;
+    const uuid = item.dataset.uuid;
+    if (!uuid) return;
+
+    const device = discoveredDevices.find(d => d.uuid === uuid) || { uuid, name: item.querySelector('.device-item-name')?.textContent?.replace(/^Reconnect\s+/, '') || 'Chromecast' };
+    selectDevice(device);
+}
+
+// ── Inline connection feedback helpers ───────────────────────────────────
+
+function updateDeviceStatus(el, text, type) {
+    if (!el) return;
+    const statusEl = el.querySelector('.device-item-status');
+    if (!statusEl) return;
+
+    el.classList.remove('connecting', 'connect-failed');
+    statusEl.innerHTML = '';
+
+    if (type === 'connecting') {
+        el.classList.add('connecting');
+        statusEl.innerHTML = `<span class="mini-spinner"></span> ${escapeHtml(text)}`;
+    } else if (type === 'success') {
+        statusEl.innerHTML = `<span style="color:var(--kick-color)">${escapeHtml(text)}</span>`;
+    } else if (type === 'failed') {
+        el.classList.add('connect-failed');
+        statusEl.innerHTML = `<span style="color:var(--error-color)">${escapeHtml(text)}</span>`;
+    }
+}
+
+function setDeviceListDisabled(disabled, exceptEl) {
+    const items = document.querySelectorAll('#chromecast-device-list .device-item');
+    items.forEach(item => {
+        if (item === exceptEl) return;
+        item.style.pointerEvents = disabled ? 'none' : '';
+        item.style.opacity = disabled ? '0.4' : '';
+    });
+}
+
+// ── Device selection ─────────────────────────────────────────────────────
+
 async function selectDevice(device) {
-    if (isScanActive) { toast('Please wait for device scan to finish.', 'info'); return; }
+    if (isScanActive) { toast('Please wait for scan to finish.', 'info'); return; }
     if (isSelecting) return;
 
     isSelecting = true;
     const deviceName = String(device?.name || 'Chromecast');
-    toast(`Connecting to ${deviceName}...`, 'info');
+
+    // Find the clicked device element for inline feedback
+    const deviceEl = document.querySelector(`#chromecast-device-list .device-item[data-uuid="${CSS.escape(device.uuid)}"]`);
+
+    // Show inline connecting state
+    updateDeviceStatus(deviceEl, 'Connecting...', 'connecting');
+    setDeviceListDisabled(true, deviceEl);
+
     try {
-        const response = await fetchWithTimeout('/api/chromecast/select', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ uuid: device.uuid }),
-        }, 20000);
-        const data = await response.json();
+        const { data, status } = await postChromecastSelect(device.uuid);
         if (data.status === 'success') {
             selectedDevice = device;
             localStorage.setItem('selectedChromecast', JSON.stringify(device));
-            localStorage.setItem('lastChromecastUUID', device.uuid);
-            localStorage.setItem('lastChromecastName', deviceName);
+            updatePreference('chromecast', { lastDeviceUUID: device.uuid, lastDeviceName: deviceName });
+            localStorage.removeItem('lastChromecastUUID');
+            localStorage.removeItem('lastChromecastName');
+
             updateIcon('active');
             document.body.classList.add('chromecast-active');
+            showQuickDisconnect(true);
             const dcBtn = document.getElementById('disconnect-device-btn');
             if (dcBtn) dcBtn.style.display = 'block';
+
+            // Show inline success briefly, then close
+            updateDeviceStatus(deviceEl, 'Connected', 'success');
             toast(`Connected to ${deviceName}`, 'success');
-            const pendingCast = pendingCastRequest;
+            const pending = pendingCastRequest;
             pendingCastRequest = null;
-            closeModal();
-            startStatusPolling();
-            if (pendingCast?.streamUrl) {
-                setTimeout(() => {
-                    castStream(pendingCast.streamUrl, pendingCast.title || 'Kick Stream');
-                }, 0);
-            }
-        } else if (response.status === 409) {
+
+            setTimeout(() => {
+                closeModal();
+                startStatusPolling();
+                if (pending?.streamUrl) {
+                    castStream(pending.streamUrl, pending.title || 'Kick Stream');
+                }
+            }, 600);
+        } else if (status === 409) {
+            updateDeviceStatus(deviceEl, 'Waiting...', 'connecting');
             toast('Scan in progress, retrying...', 'info');
-            setTimeout(() => { isSelecting = false; selectDevice(device); }, 3000);
+            setTimeout(() => {
+                setDeviceListDisabled(false);
+                isSelecting = false;
+                selectDevice(device);
+            }, 3000);
             return;
         } else {
-            toast(`Failed to connect to ${deviceName}.`, 'error');
+            updateDeviceStatus(deviceEl, 'Failed', 'failed');
+            setDeviceListDisabled(false);
+            toast(`Failed to connect to ${deviceName}.`, 'error', {
+                action: { label: 'Retry', onClick: () => selectDevice(device) },
+            });
         }
     } catch {
-        toast(`Error connecting to ${deviceName}.`, 'error');
+        updateDeviceStatus(deviceEl, 'Failed', 'failed');
+        setDeviceListDisabled(false);
+        toast(`Failed to connect to ${deviceName}.`, 'error', {
+            action: { label: 'Retry', onClick: () => selectDevice(device) },
+        });
     }
     isSelecting = false;
 }
 
+// ── Disconnect ───────────────────────────────────────────────────────────
+
 async function disconnectDevice() {
     if (selectedDevice) {
         try {
-            const response = await fetchWithTimeout('/api/chromecast/stop', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ uuid: selectedDevice.uuid }),
-            });
-            const data = await response.json();
-            toast(data.status === 'success' ? 'Casting stopped.' : 'Failed to stop casting.', data.status === 'success' ? 'info' : 'error');
+            const data = await postChromecastStop(selectedDevice.uuid);
+            if (data.status !== 'success') toast('Failed to stop casting.', 'error');
         } catch {
             toast('Error stopping cast.', 'error');
         }
@@ -482,39 +415,63 @@ async function disconnectDevice() {
     localStorage.removeItem('selectedChromecast');
     updateIcon('inactive');
     document.body.classList.remove('chromecast-active');
+    showQuickDisconnect(false);
     const dcBtn = document.getElementById('disconnect-device-btn');
     if (dcBtn) dcBtn.style.display = 'none';
     renderDeviceList(discoveredDevices);
-    toast('Disconnected from Chromecast.', 'info');
+    toast('Disconnected.', 'info');
     stopStatusPolling();
 }
 
+// ── Quick disconnect (header button) ─────────────────────────────────────
+
+function showQuickDisconnect(visible) {
+    const btn = document.getElementById('chromecast-disconnect-quick');
+    if (btn) btn.style.display = visible ? '' : 'none';
+}
+
+// ── Adaptive status polling ──────────────────────────────────────────────
+
 function startStatusPolling() {
-    if (statusPollInterval) clearInterval(statusPollInterval);
-    statusPollInterval = setInterval(async () => {
+    stopStatusPolling();
+    scheduleStatusPoll(10000); // initial: 10s
+}
+
+function scheduleStatusPoll(delay) {
+    statusPollTimer = setTimeout(async () => {
         try {
-            const response = await fetchWithTimeout('/api/chromecast/status', {}, 8000);
-            const data = await response.json();
-            if (data.status === 'success' && data.data.status === 'disconnected') {
-                selectedDevice = null;
-                localStorage.removeItem('selectedChromecast');
-                updateIcon('inactive');
-                document.body.classList.remove('chromecast-active');
-                const dcBtn = document.getElementById('disconnect-device-btn');
-                if (dcBtn) dcBtn.style.display = 'none';
-                renderDeviceList(discoveredDevices);
-                toast('Chromecast was disconnected.', 'info');
-                stopStatusPolling();
+            const data = await fetchChromecastStatus();
+            if (data?.status === 'success') {
+                const castStatus = data.data?.status;
+                if (castStatus === 'disconnected') {
+                    selectedDevice = null;
+                    localStorage.removeItem('selectedChromecast');
+                    updateIcon('inactive');
+                    document.body.classList.remove('chromecast-active');
+                    showQuickDisconnect(false);
+                    const dcBtn = document.getElementById('disconnect-device-btn');
+                    if (dcBtn) dcBtn.style.display = 'none';
+                    renderDeviceList(discoveredDevices);
+                    toast('Chromecast was disconnected.', 'info');
+                    return; // stop polling
+                }
+                // Adaptive interval: playing → 10s, idle → 30s
+                const nextDelay = castStatus === 'playing' ? 10000 : 30000;
+                scheduleStatusPoll(nextDelay);
+            } else {
+                scheduleStatusPoll(15000); // error → retry after 15s
             }
         } catch {
-            stopStatusPolling();
+            scheduleStatusPoll(15000);
         }
-    }, 5000);
+    }, delay);
 }
 
 function stopStatusPolling() {
-    if (statusPollInterval) { clearInterval(statusPollInterval); statusPollInterval = null; }
+    if (statusPollTimer) { clearTimeout(statusPollTimer); statusPollTimer = null; }
 }
+
+// ── Icon ─────────────────────────────────────────────────────────────────
 
 function updateIcon(status) {
     const icon = document.getElementById('chromecast-icon');

@@ -1,4 +1,5 @@
-import { toast } from './toast.js?v=2.3.5';
+import { toast } from './toast.js?v=2.3.7';
+import { postChromecastCast } from './api.js?v=2.3.7';
 
 let isCasting = false;
 
@@ -28,13 +29,7 @@ export async function castStream(streamUrl, title) {
     isCasting = true;
     toast(`Casting to ${selectedDevice.name}...`, 'info');
     try {
-        const response = await fetch('/api/chromecast/cast', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ stream_url: streamUrl, title }),
-        });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const data = await response.json();
+        const data = await postChromecastCast(streamUrl, title);
         toast(
             data.status === 'success' ? 'Casting started successfully.' : 'Failed to start casting.',
             data.status === 'success' ? 'success' : 'error'

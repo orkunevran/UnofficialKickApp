@@ -52,6 +52,9 @@ class Config:
     CHROMECAST_FALLBACK_SCAN_WORKERS = int(os.environ.get('CHROMECAST_FALLBACK_SCAN_WORKERS', 96))
     CHROMECAST_FALLBACK_SCAN_PROBE_TIMEOUT = float(os.environ.get('CHROMECAST_FALLBACK_SCAN_PROBE_TIMEOUT', 0.25))
     CHROMECAST_FALLBACK_DEVICE_INFO_TIMEOUT = float(os.environ.get('CHROMECAST_FALLBACK_DEVICE_INFO_TIMEOUT', 3.0))
+    # How often (seconds) the background task re-scans for Chromecast devices.
+    # The service's 30s cache TTL prevents duplicate scans if they overlap.
+    CHROMECAST_PERIODIC_SCAN_INTERVAL = int(os.environ.get('CHROMECAST_PERIODIC_SCAN_INTERVAL', 90))
 
     # Per-endpoint cache durations (previously hardcoded in route files)
     SEARCH_CACHE_DURATION_SECONDS   = int(os.environ.get('SEARCH_CACHE_DURATION_SECONDS', 30))

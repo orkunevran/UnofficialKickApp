@@ -28,6 +28,15 @@ logging.basicConfig(level=Config.LOG_LEVEL, format="%(asctime)s - %(levelname)s 
 logger = logging.getLogger(__name__)
 
 
+# Suppress noisy /api/chromecast/status polling lines from uvicorn access log
+class _StatusPollFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "/api/chromecast/status" not in record.getMessage()
+
+
+logging.getLogger("uvicorn.access").addFilter(_StatusPollFilter())
+
+
 def _flask_style_url_for(endpoint: str, **values):
     anchor = values.pop("_anchor", values.pop("anchor", None))
     filename = values.pop("filename", None)
@@ -76,8 +85,22 @@ async def lifespan(fastapi_app: FastAPI):
     logger.info("Starting Chromecast device scan during app startup.")
     chromecast_service.scan_for_devices_async(force=True)
 
+    # Periodic background scan keeps the device list fresh without user action
+    async def _periodic_chromecast_scan():
+        interval = Config.CHROMECAST_PERIODIC_SCAN_INTERVAL
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                await asyncio.to_thread(chromecast_service.scan_for_devices_async)
+                logger.debug("Periodic Chromecast scan completed.")
+            except Exception:
+                logger.debug("Periodic Chromecast scan failed.", exc_info=True)
+
+    scan_task = asyncio.create_task(_periodic_chromecast_scan())
+
     yield
 
+    scan_task.cancel()
     logger.info("Shutting down Chromecast service from FastAPI lifespan.")
     await asyncio.to_thread(chromecast_service.shutdown)
 

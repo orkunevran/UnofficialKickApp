@@ -26,6 +26,10 @@ export const preferences = {
     language: null,       // null = use server default
     viewMode: 'grid',    // 'grid' or 'list'
     sidebarCollapsed: false,
+    chromecast: {
+        lastDeviceUUID: null,
+        lastDeviceName: null,
+    },
 };
 
 export function loadPreferences() {

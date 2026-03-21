@@ -3,7 +3,11 @@ version: '3.8'
 services:
   kick-proxy:
     build: .
-    network_mode: "host"
+    # network_mode: "host" is Linux-only; use port mapping for macOS compatibility
+    # Uncomment network_mode and remove ports when deploying to Raspberry Pi
+    # network_mode: "host"
+    ports:
+      - "8081:8081"
     restart: always
     environment:
       # Application Settings

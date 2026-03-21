@@ -2,14 +2,14 @@
  * Channel view — profile + tabs (Stream / VODs / Clips).
  */
 
-import { fetchChannelData, fetchViewerCount } from '../api.js?v=2.3.5';
-import { renderChannelProfile, renderStreamTabContent, renderProfileSkeleton, renderVodGrid, renderClipGrid } from '../ui.js?v=2.3.5';
-import { appState } from '../state.js?v=2.3.5';
-import { addToHistory } from '../history.js?v=2.3.5';
-import { toast } from '../toast.js?v=2.3.5';
-import { escapeHtml, debounce } from '../utils.js?v=2.3.5';
-import { navigate } from '../router.js?v=2.3.5';
-import { startMiniPlayer } from '../player.js?v=2.3.5';
+import { fetchChannelData, fetchViewerCount } from '../api.js?v=2.3.7';
+import { renderChannelProfile, renderStreamTabContent, renderProfileSkeleton, renderVodGrid, renderClipGrid } from '../ui.js?v=2.3.7';
+import { appState } from '../state.js?v=2.3.7';
+import { addToHistory } from '../history.js?v=2.3.7';
+import { toast } from '../toast.js?v=2.3.7';
+import { escapeHtml, debounce } from '../utils.js?v=2.3.7';
+import { navigate } from '../router.js?v=2.3.7';
+import { startMiniPlayer } from '../player.js?v=2.3.7';
 
 let viewerRefreshTimer = null;
 let hlsInstance = null;
@@ -240,11 +240,13 @@ export async function mount(params, contentEl) {
             initVideoPlayer(liveData.data.playback_url);
         }
     };
-    contentEl.querySelector('.profile-tabs')?.addEventListener('click', onTabClick);
+    const tabsEl = contentEl.querySelector('.profile-tabs');
+    tabsEl?.addEventListener('click', onTabClick);
 
     // Cleanup — activate mini player if stream was live
     return () => {
         stopViewerRefresh();
+        tabsEl?.removeEventListener('click', onTabClick);
         if (liveData?.data?.status === 'live') {
             startMiniPlayer({
                 slug: channelSlug,

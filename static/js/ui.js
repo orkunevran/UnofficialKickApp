@@ -2,11 +2,11 @@
  * UI rendering module — card-based grids instead of tables.
  */
 
-import { escapeHtml, formatDuration, formatDate, formatViewerCount, initialsAvatar, copyToClipboard } from './utils.js?v=2.3.5';
-import { appState, vodsSortState, featuredSortState } from './state.js?v=2.3.5';
-import { castStream } from './chromecast_logic.js?v=2.3.5';
-import { isFavorite, toggleFavorite } from './favorites.js?v=2.3.5';
-import { navigate } from './router.js?v=2.3.5';
+import { escapeHtml, formatDuration, formatDate, formatViewerCount, formatUptime, initialsAvatar, copyToClipboard } from './utils.js?v=2.3.7';
+import { appState, vodsSortState, featuredSortState } from './state.js?v=2.3.7';
+import { castStream } from './chromecast_logic.js?v=2.3.7';
+import { isFavorite, toggleFavorite } from './favorites.js?v=2.3.7';
+import { navigate } from './router.js?v=2.3.7';
 
 // ── Skeleton Loaders ──────────────────────────────────────────────────────
 
@@ -77,7 +77,7 @@ export function renderStreamCard(stream, { showActions = true } = {}) {
         <div class="stream-card" data-slug="${escapeHtml(slug)}">
             <div class="card-thumbnail">
                 ${thumbSrc ? `<img src="${escapeHtml(thumbSrc)}" alt="" loading="lazy" decoding="async" onerror="this.style.display='none'">` : '<div style="width:100%;height:100%;background:rgba(255,255,255,0.03)"></div>'}
-                <div class="card-live-badge"><span class="card-live-dot"></span>LIVE</div>
+                <div class="card-uptime-badge"><span class="card-live-dot"></span>${formatUptime(stream.start_time) || 'LIVE'}</div>
                 ${viewers != null ? `<div class="card-viewers"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>${formatViewerCount(viewers)}</div>` : ''}
                 ${actionsHTML}
             </div>

@@ -77,6 +77,7 @@ def test_scan_for_devices_async_forwards_known_hosts():
 
 def test_private_network_scan_discovers_host_based_cast(monkeypatch):
     service = ChromecastService()
+    service._zc = SimpleNamespace()  # Provide a non-None zeroconf stub
     service._fallback_scan_networks = [ipaddress.ip_network("192.168.1.2/32")]
     service._fallback_scan_workers = 1
     service._fallback_scan_probe_timeout = 0.01
@@ -92,7 +93,7 @@ def test_private_network_scan_discovers_host_based_cast(monkeypatch):
     )
 
     monkeypatch.setattr(service, "_probe_host_for_chromecast", lambda host: host == "192.168.1.2")
-    monkeypatch.setattr(chromecast_module, "get_device_info", lambda host, timeout=3.0: device_status if host == "192.168.1.2" else None)
+    monkeypatch.setattr(chromecast_module, "get_device_info", lambda host, timeout=3.0, context=None: device_status if host == "192.168.1.2" else None)
 
     def fake_builder(cast_info, zconf, tries=None, retry_wait=None, timeout=None):
         build_calls.append((cast_info.host, cast_info.friendly_name, cast_info.uuid))

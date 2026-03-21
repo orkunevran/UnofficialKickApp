@@ -117,7 +117,11 @@ function updateSidebarActive(path) {
     }
 }
 
+let initialized = false;
+
 export function init() {
+    if (initialized) return;
+    initialized = true;
     window.addEventListener('hashchange', resolve);
     // Set default route if none
     if (!window.location.hash || window.location.hash === '#' || window.location.hash === '#/') {

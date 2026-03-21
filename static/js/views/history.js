@@ -2,21 +2,22 @@
  * History view — recently viewed channels/VODs.
  */
 
-import { getHistory, clearHistory, removeFromHistory } from '../history.js?v=2.3.5';
-import { escapeHtml, formatRelativeTime, initialsAvatar } from '../utils.js?v=2.3.5';
-import { navigate } from '../router.js?v=2.3.5';
-import { toast } from '../toast.js?v=2.3.5';
+import { getHistory, clearHistory, removeFromHistory } from '../history.js?v=2.3.7';
+import { escapeHtml, formatRelativeTime, initialsAvatar } from '../utils.js?v=2.3.7';
+import { navigate } from '../router.js?v=2.3.7';
+import { toast } from '../toast.js?v=2.3.7';
 
 function renderHistoryItem(item) {
-    const avatarHTML = item.profilePicture
-        ? `<img src="${escapeHtml(item.profilePicture)}" alt="" style="width:100%;height:100%;object-fit:cover">`
-        : (item.thumbnailUrl
-            ? `<img src="${escapeHtml(item.thumbnailUrl)}" alt="" style="width:100%;height:100%;object-fit:cover">`
-            : '');
+    const hasProfile = !!item.profilePicture;
+    const imgSrc = item.profilePicture || item.thumbnailUrl || '';
+    const avatarHTML = imgSrc
+        ? `<img src="${escapeHtml(imgSrc)}" alt="" style="width:100%;height:100%;object-fit:cover">`
+        : '';
+    const thumbClass = hasProfile ? 'history-thumb history-thumb--avatar' : 'history-thumb';
 
     return `
         <div class="history-item" data-slug="${escapeHtml(item.slug)}" data-type="${escapeHtml(item.type || 'stream')}">
-            <div class="history-thumb">${avatarHTML}</div>
+            <div class="${thumbClass}">${avatarHTML}</div>
             <div class="history-info">
                 <div class="history-title">${escapeHtml(item.username || item.slug)}</div>
                 <div class="history-meta">
@@ -30,10 +31,8 @@ function renderHistoryItem(item) {
         </div>`;
 }
 
-export async function mount(params, contentEl) {
-    const history = getHistory();
-
-    contentEl.innerHTML = `
+function renderHistoryView(history) {
+    return `
         <div class="section-header" style="justify-content:space-between">
             <h1 class="section-title">Watch History <span class="section-count">${history.length > 0 ? `(${history.length})` : ''}</span></h1>
             ${history.length > 0 ? '<button id="clear-history-btn" class="btn-secondary">Clear History</button>' : ''}
@@ -48,26 +47,45 @@ export async function mount(params, contentEl) {
                 </div>`
                 : history.map(renderHistoryItem).join('')}
         </div>`;
+}
 
-    // Click to navigate or remove
-    contentEl.querySelector('#history-list')?.addEventListener('click', (e) => {
+export async function mount(params, contentEl) {
+    const history = getHistory();
+    contentEl.innerHTML = renderHistoryView(history);
+
+    function rerender() {
+        const updated = getHistory();
+        contentEl.innerHTML = renderHistoryView(updated);
+    }
+
+    // Click delegation on entire content for navigate, remove, and clear
+    const handleClick = (e) => {
         // Remove button
         const removeBtn = e.target.closest('.history-remove-btn');
         if (removeBtn) {
             e.stopPropagation();
             removeFromHistory(removeBtn.dataset.slug, removeBtn.dataset.type);
             toast('Removed from history', 'success');
-            mount(params, contentEl);
+            rerender();
             return;
         }
+
+        // Clear history button
+        if (e.target.closest('#clear-history-btn')) {
+            clearHistory();
+            toast('History cleared', 'success');
+            rerender();
+            return;
+        }
+
+        // Navigate to channel
         const item = e.target.closest('.history-item');
         if (item) navigate(`/channel/${item.dataset.slug}`);
-    });
+    };
 
-    // Clear history
-    contentEl.querySelector('#clear-history-btn')?.addEventListener('click', () => {
-        clearHistory();
-        toast('History cleared', 'success');
-        mount(params, contentEl);
-    });
+    contentEl.addEventListener('click', handleClick);
+
+    return () => {
+        contentEl.removeEventListener('click', handleClick);
+    };
 }

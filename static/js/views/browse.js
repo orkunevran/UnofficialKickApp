@@ -2,11 +2,11 @@
  * Browse view — Featured streams with card grid, filters, infinite scroll, auto-refresh.
  */
 
-import { fetchFeaturedStreams } from '../api.js?v=2.3.5';
-import { renderStreamGrid, renderCardSkeleton, updateFavoritesBadge, patchStreamGrid } from '../ui.js?v=2.3.5';
-import { appState, featuredSortState, preferences } from '../state.js?v=2.3.5';
-import { applyFeaturedStreamsSort } from '../sorting.js?v=2.3.5';
-import { toast } from '../toast.js?v=2.3.5';
+import { fetchFeaturedStreams } from '../api.js?v=2.3.7';
+import { renderStreamGrid, renderCardSkeleton, updateFavoritesBadge, patchStreamGrid } from '../ui.js?v=2.3.7';
+import { appState, featuredSortState, preferences } from '../state.js?v=2.3.7';
+import { applyFeaturedStreamsSort } from '../sorting.js?v=2.3.7';
+import { toast } from '../toast.js?v=2.3.7';
 
 const REFRESH_INTERVAL_MS = 90_000;
 const DEFAULT_PAGE_SIZE = 14;
@@ -193,8 +193,6 @@ async function loadInitialPages(language, contentEl, browseView) {
         activeGeneration = refreshGeneration;
         syncLoadedRange();
         rebuildAndRender(contentEl);
-        initScrollObserver(contentEl);
-        prefetchNextPage();
     } catch (err) {
         console.error('Error loading featured streams:', err);
         toast('Failed to load featured streams.', 'error', {
@@ -203,6 +201,11 @@ async function loadInitialPages(language, contentEl, browseView) {
     } finally {
         if (generation === refreshGeneration) refreshInFlight = false;
         if (inlineSpinner) inlineSpinner.classList.remove('is-active');
+        // Init observer AFTER refreshInFlight is cleared so the callback isn't blocked
+        if (generation === refreshGeneration && hasNextPage) {
+            initScrollObserver(contentEl);
+            prefetchNextPage();
+        }
     }
 }
 
@@ -273,6 +276,19 @@ async function loadNextScrollPage(contentEl) {
     } finally {
         scrollLoadInFlight = false;
         updateSentinel(contentEl);
+
+        // Re-observe sentinel after layout recomputes so the observer fires again
+        // if sentinel is still within rootMargin (common at wide resolutions)
+        if (hasNextPage && scrollObserver) {
+            const sentinel = contentEl?.querySelector('#scroll-sentinel');
+            if (sentinel) {
+                requestAnimationFrame(() => {
+                    if (!scrollObserver || !hasNextPage) return;
+                    scrollObserver.unobserve(sentinel);
+                    scrollObserver.observe(sentinel);
+                });
+            }
+        }
     }
 }
 
@@ -317,12 +333,13 @@ async function populateLanguageSelector() {
 export async function mount(params, contentEl) {
     contentEl.innerHTML = `
         <div id="browse-view">
-            <div class="section-header">
-                <h1 class="section-title">Featured Streams <span id="stream-count" class="section-count"></span></h1>
-                <span id="featured-spinner" class="inline-spinner" aria-hidden="true"></span>
-            </div>
+            <div class="browse-sticky-header">
+                <div class="section-header">
+                    <h1 class="section-title">Featured Streams <span id="stream-count" class="section-count"></span></h1>
+                    <span id="featured-spinner" class="inline-spinner" aria-hidden="true"></span>
+                </div>
 
-            <div class="filter-bar">
+                <div class="filter-bar">
                 <select id="languageSelector" class="filter-select" aria-label="Language"></select>
                 <select id="categorySelector" class="filter-select" aria-label="Category">
                     <option value="">All Categories</option>
@@ -342,6 +359,7 @@ export async function mount(params, contentEl) {
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
                     </button>
                 </div>
+            </div>
             </div>
 
             <div id="browse-grid">
@@ -388,7 +406,8 @@ export async function mount(params, contentEl) {
         contentEl.querySelectorAll('.view-toggle-btn').forEach(b => b.classList.toggle('active', b.dataset.view === mode));
         rebuildAndRender(contentEl);
     };
-    browseView.querySelector('.view-toggle')?.addEventListener('click', onViewToggle);
+    const viewToggleEl = browseView.querySelector('.view-toggle');
+    viewToggleEl?.addEventListener('click', onViewToggle);
 
     // Sort pills
     const onSortPill = (e) => {
@@ -416,7 +435,8 @@ export async function mount(params, contentEl) {
             rebuildAndRender(contentEl);
         }
     };
-    browseView.querySelector('.sort-pills')?.addEventListener('click', onSortPill);
+    const sortPillsEl = browseView.querySelector('.sort-pills');
+    sortPillsEl?.addEventListener('click', onSortPill);
 
     // Hover/focus pause
     const onMouseEnter = () => { isHovered = true; };
@@ -447,6 +467,8 @@ export async function mount(params, contentEl) {
         if (scrollObserver) { scrollObserver.disconnect(); scrollObserver = null; }
         langSel.removeEventListener('change', onLanguageChange);
         catSel.removeEventListener('change', onCategoryChange);
+        viewToggleEl?.removeEventListener('click', onViewToggle);
+        sortPillsEl?.removeEventListener('click', onSortPill);
         browseView.removeEventListener('mouseenter', onMouseEnter);
         browseView.removeEventListener('mouseleave', onMouseLeave);
         document.removeEventListener('visibilitychange', onVisibility);

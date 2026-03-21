@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import re
+from typing import Optional
 
 from fastapi import APIRouter, Request
 
@@ -15,11 +17,19 @@ def _service(request: Request):
     return request.app.state.chromecast_service
 
 
+def _parse_known_hosts(raw_value: Optional[str]):
+    if not raw_value:
+        return None
+    hosts = [part.strip() for part in re.split(r"[,\s]+", raw_value) if part.strip()]
+    return hosts or None
+
+
 @router.get("/devices")
 async def chromecast_devices(request: Request):
     logger.info("Received request to discover Chromecast devices.")
     force = request.query_params.get("force", "false").lower() == "true"
-    scanning = _service(request).scan_for_devices_async(force=force)
+    known_hosts = _parse_known_hosts(request.query_params.get("known_hosts"))
+    scanning = _service(request).scan_for_devices_async(force=force or bool(known_hosts), known_hosts=known_hosts)
     devices = _service(request).get_devices()
     logger.info("Returning %s devices (background scan: %s).", len(devices), scanning)
     return success_json({"devices": devices, "scanning": scanning or _service(request).is_scanning()})

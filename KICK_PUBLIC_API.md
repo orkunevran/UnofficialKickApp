@@ -1,6 +1,6 @@
 # Kick Public API Analysis
 
-Observed on `2026-03-19`.
+Observed on `2026-03-21`.
 
 This is an internal engineering memo for the reverse-engineered public Kick surface relevant to:
 - streamer/channel info
@@ -23,7 +23,7 @@ Goal:
 - document what public Kick surface is available today without authenticated developer keys
 - identify which parts are already used by this app
 - identify other useful public surfaces for future work
-- explain why the current Typesense key extraction is stale
+- explain why the current Typesense key extraction still needs improvement
 
 Method:
 - inspected current implementation in [services/kick_api_service.py](services/kick_api_service.py)
@@ -32,26 +32,34 @@ Method:
 - checked official developer-program language from:
   - [dev.kick.com](https://dev.kick.com/)
   - [dev.kick.com/terms-of-service](https://dev.kick.com/terms-of-service)
+  - [docs.kick.com/apis/channels](https://docs.kick.com/apis/channels)
+  - [docs.kick.com/apis/livestreams](https://docs.kick.com/apis/livestreams)
+  - [docs.kick.com/apis/categories](https://docs.kick.com/apis/categories)
+  - [docs.kick.com/apis/public-key](https://docs.kick.com/apis/public-key)
+  - [docs.kick.com/events/event-types](https://docs.kick.com/events/event-types)
 
 ## Official vs Reverse-Engineered Surface
 
 ### Official Kick Source
 
-Observed from [dev.kick.com/terms-of-service](https://dev.kick.com/terms-of-service):
-- Kick has an official developer program and refers to `dev.kick.com` as the developer portal.
-- Kick explicitly says developer keys may be issued through the official program.
-- Kick explicitly reserves rate limits and forbids abusive or excessive access.
-- Kick allows Kick APIs, embeds, and chat integrations under terms, but the public web-searchable docs surface is thin.
+Observed from [dev.kick.com](https://dev.kick.com/) and the linked docs:
+- Kick now has a real documented developer API under `docs.kick.com`.
+- App access tokens are generated through the Client Credentials flow and can access publicly available data.
+- User access tokens are generated through the Authorization Code flow with PKCE.
+- Most `api.kick.com/public/*` routes are still auth-gated without a token; `public/v1/public-key` is the notable anonymous exception.
+- The official docs are now a viable supported integration path, but they cover a narrower surface than the reverse-engineered frontend routes.
 
 Important practical conclusion:
-- there is an official program, but the publicly indexed documentation visible from search is not a usable public API reference
-- for current engineering work, the useful surface is mostly reverse-engineered from public web endpoints and live bundles
+- use the official API when you can authenticate
+- keep the reverse-engineered public surface for anonymous discovery and legacy frontend contracts
 
 ### Reverse-Engineered Surface
 
 Confirmed today:
 - public JSON endpoints on `kick.com`
 - public livestream list endpoints on `kick.com/stream/*`
+- anonymous category and livestream discovery on `api.kick.com/private/v1/categories` and `api.kick.com/private/v1/livestreams`
+- a dedicated chatroom settings route on `kick.com/api/v2/channels/{slug}/chatroom`
 - a public Typesense-backed search endpoint on `search.kick.com`
 - a public env-config chunk exposing client-side service roots and keys
 - bundle-observed Pusher configuration and channel naming
@@ -60,7 +68,7 @@ Not confirmed today:
 - a public category search collection in Typesense
 - a public schema-enumeration endpoint for search
 - publicly usable authenticated search endpoints under `/api/v1/live-channels/*/search`
-- fully validated websocket subscriptions to Pusher channels
+- unauthenticated websocket subscription success for Pusher channels
 
 ## Current Key Extraction Algorithm
 
@@ -73,27 +81,26 @@ Current behavior:
 - it sorts those paths heuristically
 - it scans only the first 25 chunks
 - it regexes for `TYPESENSE_API_KEY`, `typesenseApiKey`, or generic `apiKey`
-- `_get_typesense_key()` falls back to a hard-coded value if scraping fails
+- `_get_typesense_key(force_refresh=True)` still recovers the live public key in this inspection
 
-Why this is stale:
-- the live site now exposes chunk URLs as absolute `https://assets.kick.com/main/_next/static/chunks/...`
-- the live env-config chunk exposing the public Typesense key was observed at:
-  - `https://assets.kick.com/main/_next/static/chunks/428-8648c361edd7b568.js`
-- that absolute asset form is outside the current relative-path-only scraper
-- `_get_typesense_key(force_refresh=True)` currently returns the fallback even though the live bundle still contains the key
+Why this still deserves improvement:
+- chunk URLs and chunk IDs are implementation details, not a contract
+- the live bundle is served from `assets.kick.com`, so path-shape assumptions are brittle
+- scanning only 25 chunks is a heuristic, not a complete search
+- the regexes are still narrow and can miss renamed config entries
 
 Observed live example:
 - `NEXT_PUBLIC_TYPESENSE_API_KEY = nXIMW0iEN6sMujFYjFuhdrSwVow3pDQu`
 - `NEXT_PUBLIC_TYPESENSE_URL = https://search.kick.com`
 
 Evidence:
-- `Observed Live In Container`: `_get_typesense_key(force_refresh=True)` returned the fallback value
+- `Observed Live In Container`: `_get_typesense_key(force_refresh=True)` returned `nXIMW0iEN6sMujFYjFuhdrSwVow3pDQu`
 - `Observed In Live Bundle`: the same value was found in chunk `428-8648c361edd7b568.js`
 
 Recommended extraction improvement:
 - parse both relative and absolute chunk URLs
-- prefer env/config chunks exposing `NEXT_PUBLIC_*` defaults
 - scan all discovered chunks until the needed key is found
+- prefer env/config chunks exposing `NEXT_PUBLIC_*` defaults
 - classify discovered public config instead of only regexing `apiKey`
 - treat the hard-coded fallback as emergency-only, not the normal path
 
@@ -109,15 +116,17 @@ Status observed:
 - `200` for `cavs`
 
 What it returns:
-- channel core data
+- full channel core data
 - `playback_url`
+- `followers_count`
+- `recent_categories`
 - follower/subscription/channel settings
 - nested `livestream` when live
 
 Example observation:
 - `https://kick.com/api/v2/channels/cavs`
 - `STATUS 200`
-- returned `slug`, `playback_url`, `vod_enabled`, and live `livestream.viewer_count`
+- returned `slug`, `playback_url`, `followers_count`, `recent_categories`, `vod_enabled`, and live `livestream.viewer_count`
 
 Usefulness:
 - best all-in-one public channel payload
@@ -133,7 +142,10 @@ Status observed:
 What it returns:
 - streamlined channel + livestream info
 - includes `chatroom.id`
+- includes `followers_count`
+- includes `playback_url`
 - includes live `livestream.viewer_count`
+- includes basic user/channel fields
 
 Example observation:
 - `https://kick.com/api/v2/channels/cavs/info`
@@ -178,9 +190,11 @@ Status observed:
 
 What it returns:
 - list of VOD/live-session video records
-- includes `source`
 - includes `viewer_count`
-- includes thumbnail variants
+- includes `views`
+- includes `thumbnail`
+- includes nested `video`
+- includes `categories`
 
 Example observation:
 - `https://kick.com/api/v2/channels/cavs/videos`
@@ -322,6 +336,82 @@ Example observations:
 Notes:
 - guessed `sort` and `time` values like `featured` and `7d` were invalid for this route
 - only the base slug route is confirmed here
+- do not confuse this HTML route with the documented `https://api.kick.com/public/v2/categories` API
+
+### Anonymous Private API Surfaces
+
+#### `GET https://api.kick.com/private/v1/categories`
+
+Evidence: `Observed Live In Container`
+
+Status observed:
+- `200` without auth
+
+What it returns:
+- structured category list with:
+  - `id`
+  - `name`
+  - `slug`
+  - `tags`
+  - `image_url`
+  - `viewers_count`
+  - parent `directory` object
+- paging metadata such as `next_cursor` and `version`
+
+Example observation:
+- response shape starts with `status` and `data.categories`
+
+Usefulness:
+- best anonymous category/subcategory discovery feed
+- cleaner than piecing together taxonomy from `recent-categories` alone
+
+#### `GET https://api.kick.com/private/v1/livestreams`
+
+Evidence: `Observed Live In Container`
+
+Status observed:
+- `200` without auth
+
+What it returns:
+- discovery feed of live streams with:
+  - `streamer.user`
+  - `streamer.channel.slug`
+  - `metadata.title`
+  - `metadata.language`
+  - `metadata.category`
+  - `viewers_count`
+  - `playback_url`
+  - `thumbnail_url`
+  - `started_at`
+
+Example observation:
+- response shape starts with `status` and `data.livestreams`
+
+Usefulness:
+- best anonymous default discovery feed
+- cleaner than `kick.com/stream/livestreams/{lang}` when you do not need the legacy filter contract
+
+#### `GET https://kick.com/api/v2/channels/{slug}/chatroom`
+
+Evidence: `Observed Live In Container`
+
+Status observed:
+- `200`
+
+What it returns:
+- dedicated chatroom settings object with:
+  - `slow_mode`
+  - `followers_mode`
+  - `subscribers_mode`
+  - `emotes_mode`
+  - `account_age`
+  - `pinned_message`
+  - `show_quick_emotes`
+  - `show_banners`
+  - `gifts_enabled`
+
+Usefulness:
+- cleaner source for chatroom state than only relying on the embedded `chatroom` block inside the channel payload
 
 ## Confirmed Search Surface
 
@@ -376,6 +466,44 @@ Important note:
 - this still returned `401` even when probed with the current public search key
 - public schema enumeration should be treated as unavailable
 
+## Official API Surface
+
+Kick's supported developer surface now lives in [docs.kick.com](https://docs.kick.com/). The useful shift for this project is that the official API is now large enough to plan around, even though most routes still require OAuth.
+
+Observed from the docs and live probes:
+- app access tokens come from the Client Credentials flow and can access publicly available data
+- user access tokens come from the Authorization Code flow with PKCE
+- most `api.kick.com/public/*` routes return `401` anonymously
+- `GET /public/v1/public-key` is anonymous and returns the RSA key used for webhook signature verification
+- `GET /public/v1/events/subscriptions` is the documented webhook subscription surface
+
+### Channels
+
+- `GET /public/v1/channels` supports either `slug[]` or `broadcaster_user_id[]`, but not both in the same request
+- it requires the `channel:read` scope
+- `PATCH /public/v1/channels` updates livestream metadata with `channel:write`
+
+### Livestreams
+
+- `GET /public/v1/livestreams` supports `broadcaster_user_id[]`, `category_id`, `language`, `limit`, and `sort`
+- `sort` is limited to `viewer_count` or `started_at`
+- `GET /public/v1/livestreams/stats` is also documented
+
+### Categories
+
+- `GET /public/v2/categories` supports `cursor`, `limit`, `name[]`, `tag[]`, and `id[]`
+- `public/v1/categories` and `public/v1/categories/{category_id}` are documented but deprecated
+
+### Events
+
+- webhook payload docs cover `chat.message.sent`, `channel.followed`, `channel.subscription.renewal`, `channel.subscription.gifts`, `channel.subscription.new`, `channel.reward.redemption.updated`, `livestream.status.updated`, `livestream.metadata.updated`, `moderation.banned`, and `kicks.gifted`
+- the official webhook flow is the supported realtime path and is safer than reverse-engineered Pusher scraping
+
+### Practical Use
+
+- use the official API when you have credentials
+- keep the reverse-engineered `kick.com` and `api.kick.com/private/*` routes for anonymous discovery and frontend-only contracts
+
 ## Realtime/Public Client Surface
 
 ### Pusher Config
@@ -420,6 +548,7 @@ Important limitation:
 
 Potentially useful:
 - public `channel.{id}` suggests some realtime events may be available without user auth
+- the official webhook surface is now the supported realtime path
 - private/presence/userfeed channels clearly require auth flows
 
 Not yet validated:
@@ -466,12 +595,18 @@ Most useful findings:
 `Observed Live In Container`:
 - `https://kick.com/api/v1/live-channels/{term}/search` -> `401 Unauthenticated`
 - `https://search.kick.com/collections` -> `401`
+- `https://api.kick.com/public/v1/channels` -> `401`
+- `https://api.kick.com/public/v1/livestreams` -> `401`
+- `https://api.kick.com/public/v1/livestreams/stats` -> `401`
+- `https://api.kick.com/public/v2/categories` -> `401`
+- `https://api.kick.com/public/v1/events/subscriptions` -> `401`
 
 ### Not JSON Despite API-Looking Path
 
 `Observed Live In Container`:
 - `https://kick.com/api/v2/categories/{slug}` returned HTML, not JSON
 - `https://kick.com/api/v2/categories` returned HTML, not JSON
+- do not confuse those routes with the documented `https://api.kick.com/public/v2/categories` API
 
 ### Search Limitations
 
@@ -483,6 +618,7 @@ Most useful findings:
 
 - some public livestream list endpoints return `viewer_count: 0` for live rows
 - `current-viewers` is the more reliable lightweight refresh source
+- `private/v1/livestreams` is useful for anonymous discovery, but it is still a snapshot feed rather than a per-stream refresh endpoint
 
 ### Bundle-Mining Caveat
 
@@ -490,6 +626,13 @@ Most useful findings:
 - chunk names and public keys can rotate
 
 ## Recommended Extraction/Proxy Improvements
+
+### Official API Adapter
+
+If you have OAuth credentials:
+- add adapters for `https://api.kick.com/public/v1/channels`, `.../livestreams`, `.../livestreams/stats`, and `.../v2/categories`
+- treat `https://api.kick.com/public/v1/public-key` as the anonymous signature-verification source
+- prefer webhook subscriptions over Pusher scraping for realtime event delivery
 
 ### Typesense Extraction
 
@@ -511,10 +654,13 @@ If search remains in scope:
 ### Category Discovery Strategy
 
 Use:
+- `https://api.kick.com/private/v1/categories`
+- `https://api.kick.com/private/v1/livestreams`
 - `/api/v2/channels/{slug}/recent-categories`
 - `/stream/livestreams/{lang}?category={parent_slug}&strict=true`
 - `/stream/livestreams/{lang}?subcategory={leaf_slug}&strict=true`
 - `/stream/livestreams/{lang}?subcategories={leaf_slug}&strict=true`
+- `https://api.kick.com/public/v2/categories` when OAuth credentials are available
 - `/api/v2/categories/{slug}/clips`
 
 Do not rely on:
@@ -530,7 +676,9 @@ Implementation note for this app:
 
 Use:
 - livestream/channel payload viewer counts as initial values
+- `private/v1/livestreams` for anonymous discovery snapshots
 - `current-viewers` for refresh
+- `public/v1/livestreams/stats` if you have OAuth and want the documented aggregate feed
 
 Do not rely on:
 - `viewer_count` from general livestream lists as the sole truth source
@@ -541,7 +689,8 @@ Important nuance:
 ### Realtime Follow-Up
 
 If realtime becomes a future task:
-- separately validate unauthenticated subscription to `channel.{id}`
+- prefer official webhook subscriptions plus `public-key` verification
+- separately validate unauthenticated subscription to `channel.{id}` only if you still want a fallback
 - keep private/presence/userfeed channels out of scope unless auth is added
 
 ## Reproduction Commands
@@ -558,7 +707,7 @@ print(kick_api_client.session.headers.get("User-Agent"))
 PY
 ```
 
-### 2. Show stale Typesense extraction fallback
+### 2. Show current Typesense key recovery
 
 ```bash
 python - <<'PY'
@@ -593,6 +742,24 @@ urls = [
     "https://kick.com/api/v2/channels/cavs/recent-categories",
     "https://kick.com/api/v2/channels/cavs/videos",
     "https://kick.com/api/v2/channels/cavs/clips",
+]
+for url in urls:
+    resp = kick_api_client.session.get(url, timeout=(3, 10))
+    print(url, resp.status_code)
+    print(resp.text[:600])
+    print("---")
+PY
+```
+
+### 4a. Probe new anonymous private surfaces
+
+```bash
+python - <<'PY'
+from services.kick_api_service import kick_api_client
+urls = [
+    "https://api.kick.com/private/v1/categories",
+    "https://api.kick.com/private/v1/livestreams",
+    "https://kick.com/api/v2/channels/cavs/chatroom",
 ]
 for url in urls:
     resp = kick_api_client.session.get(url, timeout=(3, 10))
@@ -721,8 +888,17 @@ headers = {
 for url, hdrs in [
     ("https://kick.com/api/v1/live-channels/cav/search", None),
     ("https://search.kick.com/collections", headers),
+    ("https://api.kick.com/public/v1/channels", None),
+    ("https://api.kick.com/public/v1/livestreams", None),
+    ("https://api.kick.com/public/v1/livestreams/stats", None),
+    ("https://api.kick.com/public/v2/categories", None),
+    ("https://api.kick.com/public/v1/events/subscriptions", None),
+    ("https://api.kick.com/public/v1/public-key", None),
 ]:
-    resp = kick_api_client.session.get(url, headers=hdrs, timeout=(3, 10))
+    if hdrs is None:
+        resp = kick_api_client.session.get(url, timeout=(3, 10))
+    else:
+        resp = kick_api_client.session.get(url, headers=hdrs, timeout=(3, 10))
     print(url, resp.status_code)
     print(resp.text[:400])
     print("---")

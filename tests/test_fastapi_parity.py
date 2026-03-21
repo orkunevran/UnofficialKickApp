@@ -65,7 +65,7 @@ def _install_stubs(monkeypatch, sample_api_data):
     monkeypatch.setattr(kick_api_client, "get_viewer_count", fake_get_viewer_count)
 
     monkeypatch.setattr(chromecast_service, "configure", lambda config: None)
-    monkeypatch.setattr(chromecast_service, "scan_for_devices_async", lambda force=False: False)
+    monkeypatch.setattr(chromecast_service, "scan_for_devices_async", lambda force=False, known_hosts=None: False)
     monkeypatch.setattr(chromecast_service, "shutdown", lambda: None)
     monkeypatch.setattr(chromecast_service, "get_devices", lambda: copy.deepcopy(sample_api_data["devices"]))
     monkeypatch.setattr(chromecast_service, "is_scanning", lambda: False)
@@ -325,6 +325,7 @@ def patched_app(monkeypatch, sample_api_data):
         ("GET", "/streams/avatar/live-user", None, None),
         ("GET", "/streams/viewers", {"id": "123"}, None),
         ("GET", "/api/chromecast/devices", None, None),
+        ("GET", "/api/chromecast/devices", {"known_hosts": "192.168.1.10"}, None),
         ("GET", "/api/chromecast/status", None, None),
         ("GET", "/api/chromecast/last-device", None, None),
         ("POST", "/api/chromecast/select", None, {"uuid": "device-1"}),

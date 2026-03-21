@@ -82,3 +82,33 @@ def test_stale_cache_kept_when_bundle_fails():
         key = client._get_typesense_key(force_refresh=True)
 
     assert key == "old-cached-key"
+
+
+def test_get_viewer_count_hits_root_current_viewers_endpoint():
+    """
+    The lightweight viewer-count helper should call Kick's root /current-viewers route.
+    """
+    client = _fresh_client()
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+        text = '[{"livestream_id":101329688,"viewers":4720}]'
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return [{"livestream_id": 101329688, "viewers": 4720}]
+
+    def fake_get(url, timeout):
+        captured["url"] = url
+        captured["timeout"] = timeout
+        return FakeResponse()
+
+    with patch.object(client.session, "get", side_effect=fake_get):
+        count = client.get_viewer_count(101329688)
+
+    assert count == 4720
+    assert captured["url"] == "https://kick.com/current-viewers?ids[]=101329688"
+    assert captured["timeout"] == (3, 5)

@@ -1,14 +1,35 @@
 import pychromecast
+import ipaddress
+import re
 import threading
 import logging
+import socket
 import time
 import traceback
 import zeroconf
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pychromecast.discovery import CastBrowser, SimpleCastListener
+from pychromecast.dial import get_device_info
+from pychromecast.models import CastInfo
 from pychromecast.socket_client import ConnectionStatus
 
+try:
+    from pychromecast.discovery import HostServiceInfo as _HostServiceInfo
+except ImportError:
+    try:
+        from pychromecast.models import ServiceInfo as _HostServiceInfo
+    except ImportError:
+        _HostServiceInfo = None
+
 logger = logging.getLogger(__name__)
+
+DEFAULT_FALLBACK_SCAN_SUBNETS = (
+    "192.168.0.0/24,192.168.1.0/24,192.168.2.0/24,"
+    "10.0.0.0/24,10.0.1.0/24,10.0.2.0/24"
+)
+DEFAULT_FALLBACK_SCAN_WORKERS = 96
+DEFAULT_FALLBACK_SCAN_PROBE_TIMEOUT = 0.25
+DEFAULT_FALLBACK_DEVICE_INFO_TIMEOUT = 3.0
 
 
 class ChromecastService:
@@ -42,6 +63,11 @@ class ChromecastService:
         self._max_connection_failures = 3
         self._device_cache_seconds = 30
         self._stop_wait_seconds = 2.0
+        self._fallback_scan_enabled = True
+        self._fallback_scan_networks = self._parse_fallback_scan_networks(DEFAULT_FALLBACK_SCAN_SUBNETS)
+        self._fallback_scan_workers = DEFAULT_FALLBACK_SCAN_WORKERS
+        self._fallback_scan_probe_timeout = DEFAULT_FALLBACK_SCAN_PROBE_TIMEOUT
+        self._fallback_device_info_timeout = DEFAULT_FALLBACK_DEVICE_INFO_TIMEOUT
         self._last_device_uuid = None   # Remembered across stop/disconnect for reconnect UX
         self._last_device_name = None
 
@@ -53,7 +79,124 @@ class ChromecastService:
         self._max_connection_failures = config.get('CHROMECAST_MAX_CONNECTION_FAILURES', 3)
         self._device_cache_seconds = config.get('CHROMECAST_DEVICE_CACHE_SECONDS', 30)
         self._stop_wait_seconds = config.get('CHROMECAST_STOP_WAIT_SECONDS', 2.0)
+        self._fallback_scan_enabled = config.get('CHROMECAST_FALLBACK_SCAN_ENABLED', True)
+        self._fallback_scan_networks = self._parse_fallback_scan_networks(
+            config.get('CHROMECAST_FALLBACK_SCAN_SUBNETS', DEFAULT_FALLBACK_SCAN_SUBNETS)
+        )
+        self._fallback_scan_workers = config.get('CHROMECAST_FALLBACK_SCAN_WORKERS', DEFAULT_FALLBACK_SCAN_WORKERS)
+        self._fallback_scan_probe_timeout = config.get(
+            'CHROMECAST_FALLBACK_SCAN_PROBE_TIMEOUT',
+            DEFAULT_FALLBACK_SCAN_PROBE_TIMEOUT,
+        )
+        self._fallback_device_info_timeout = config.get(
+            'CHROMECAST_FALLBACK_DEVICE_INFO_TIMEOUT',
+            DEFAULT_FALLBACK_DEVICE_INFO_TIMEOUT,
+        )
         logger.info("ChromecastService configured with app settings.")
+
+    @staticmethod
+    def _parse_fallback_scan_networks(raw_value):
+        if not raw_value:
+            return []
+        if isinstance(raw_value, (list, tuple, set)):
+            entries = raw_value
+        else:
+            entries = re.split(r"[,\s]+", str(raw_value))
+
+        networks = []
+        for entry in entries:
+            value = str(entry).strip()
+            if not value:
+                continue
+            try:
+                networks.append(ipaddress.ip_network(value, strict=False))
+            except ValueError:
+                logger.warning("Ignoring invalid Chromecast fallback subnet: %s", value)
+        return networks
+
+    def _probe_host_for_chromecast(self, host):
+        if self._shutdown_event.is_set():
+            return False
+        try:
+            with socket.create_connection((host, 8009), timeout=self._fallback_scan_probe_timeout):
+                return True
+        except OSError:
+            return False
+
+    def _make_host_service_info(self, host):
+        if _HostServiceInfo is None:
+            raise RuntimeError("No Chromecast host service info class available.")
+        if getattr(_HostServiceInfo, "__name__", "") == "HostServiceInfo":
+            return _HostServiceInfo(host, 8009)
+        return _HostServiceInfo("host", (host, 8009))
+
+    def _build_host_chromecast(self, host, device_status):
+        service_info = self._make_host_service_info(host)
+        cast_info = CastInfo(
+            {service_info},
+            device_status.uuid,
+            device_status.model_name,
+            device_status.friendly_name,
+            host,
+            8009,
+            device_status.cast_type,
+            device_status.manufacturer,
+        )
+        return pychromecast.get_chromecast_from_cast_info(cast_info, self._zc)
+
+    def _scan_private_networks_for_chromecasts(self):
+        if not self._fallback_scan_enabled or not self._fallback_scan_networks:
+            return []
+
+        candidate_hosts = []
+        for network in self._fallback_scan_networks:
+            candidate_hosts.extend(str(host) for host in network.hosts())
+
+        if not candidate_hosts:
+            return []
+
+        logger.info(
+            "mDNS discovery returned no Chromecast devices; probing %d host(s) across %d subnet(s) for port 8009.",
+            len(candidate_hosts),
+            len(self._fallback_scan_networks),
+        )
+
+        discovered_chromecasts = []
+        seen_hosts = set()
+        with ThreadPoolExecutor(max_workers=self._fallback_scan_workers, thread_name_prefix="cc-netscan") as executor:
+            futures = {executor.submit(self._probe_host_for_chromecast, host): host for host in candidate_hosts}
+            for future in as_completed(futures):
+                if self._shutdown_event.is_set():
+                    logger.info("Chromecast subnet probe aborted early due to shutdown signal.")
+                    break
+
+                host = futures[future]
+                try:
+                    if not future.result():
+                        continue
+                except Exception as e:
+                    logger.debug("Chromecast probe failed for %s: %s", host, e)
+                    continue
+
+                if host in seen_hosts:
+                    continue
+                seen_hosts.add(host)
+
+                try:
+                    device_status = get_device_info(host, timeout=self._fallback_device_info_timeout)
+                except Exception as e:
+                    logger.debug("Unable to fetch Chromecast status from %s: %s", host, e)
+                    continue
+
+                if not device_status or not getattr(device_status, "uuid", None):
+                    continue
+
+                try:
+                    discovered_chromecasts.append(self._build_host_chromecast(host, device_status))
+                except Exception as e:
+                    logger.warning("Failed to create Chromecast object for %s: %s", host, e)
+
+        return discovered_chromecasts
 
     def shutdown(self):
         """Clean up resources on app shutdown."""
@@ -93,7 +236,7 @@ class ChromecastService:
 
 
 
-    def _do_scan(self):
+    def _do_scan(self, known_hosts=None):
         """Internal blocking scan implementation.
 
         Note: self._scanning is set to True by the CALLER (scan_for_devices_async
@@ -143,7 +286,11 @@ class ChromecastService:
                     pass
 
             self._cast_listener = _Listener()
-            self._browser = CastBrowser(self._cast_listener, zeroconf_instance=self._zc)
+            self._browser = CastBrowser(
+                self._cast_listener,
+                zeroconf_instance=self._zc,
+                known_hosts=known_hosts,
+            )
             self._browser.start_discovery()
             # Use _shutdown_event.wait() instead of time.sleep() so shutdown()
             # can interrupt the scan immediately rather than waiting the full timeout.
@@ -162,6 +309,11 @@ class ChromecastService:
                         discovered_chromecasts.append(cast)
                 except Exception as e:
                     logger.warning(f"Failed to create cast for UUID {uuid}: {e}")
+
+            if not discovered_chromecasts and known_hosts is None:
+                fallback_chromecasts = self._scan_private_networks_for_chromecasts()
+                if fallback_chromecasts:
+                    discovered_chromecasts = fallback_chromecasts
 
             self._last_scan_time = time.time()
 
@@ -208,12 +360,12 @@ class ChromecastService:
             with self._lock:
                 self._scanning = False
 
-    def scan_for_devices_async(self, force=False):
+    def scan_for_devices_async(self, force=False, known_hosts=None):
         """Non-blocking scan: returns cached devices immediately, triggers background refresh.
 
         Returns True if a background scan was kicked off, False if cache is fresh.
         """
-        if not force and (time.time() - self._last_scan_time) < self._device_cache_seconds:
+        if not force and not known_hosts and (time.time() - self._last_scan_time) < self._device_cache_seconds:
             logger.debug("Using cached device list (within TTL).")
             return False
 
@@ -227,7 +379,10 @@ class ChromecastService:
             self._scanning = True
 
         logger.info("Submitting background device scan...")
-        self._scan_future = self._scan_executor.submit(self._do_scan)
+        if known_hosts is None:
+            self._scan_future = self._scan_executor.submit(self._do_scan)
+        else:
+            self._scan_future = self._scan_executor.submit(self._do_scan, known_hosts)
         return True
 
     def is_scanning(self):

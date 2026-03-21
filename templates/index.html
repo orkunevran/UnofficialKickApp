@@ -6,102 +6,194 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="description" content="Check live status and browse VODs from your favorite Kick.com channels. Unofficial Kick proxy app.">
-    <title>Unofficial Kick App</title>
+    <meta name="theme-color" content="#0b0e14">
+    <title>Kick App</title>
     <link rel="icon" href="{{ url_for('static', filename='Kick_logo.svg') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        kick: '#53fc18',
+                        'kick-dark': '#4ce516',
+                        surface: 'rgba(20, 24, 32, 0.6)',
+                        'surface-hover': 'rgba(30, 35, 45, 0.8)',
+                        void: '#0b0e14',
+                        'void-light': '#111620',
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif'],
+                    },
+                },
+            },
+        }
+    </script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='2.3.5') }}">
 </head>
-<body>
-    <div class="background-glows">
-        <div class="glow glow-1"></div>
-        <div class="glow glow-2"></div>
-    </div>
-    <main class="container">
-        <header class="header-container">
-            <h1>
-                <a href="/" class="main-title">
-                    <img src="{{ url_for('static', filename='Kick_logo.svg') }}" alt="Kick Logo">
-                    <span class="main-title-text">Unofficial Kick App</span>
+<body class="bg-void text-white font-sans min-h-screen overflow-hidden">
+    <div id="app" class="flex h-screen">
+        <!-- Sidebar -->
+        <aside id="sidebar" class="sidebar">
+            <div class="sidebar-header">
+                <a href="#/browse" class="sidebar-logo">
+                    <img src="{{ url_for('static', filename='Kick_logo.svg') }}" alt="Kick" class="h-6">
+                    <span class="sidebar-logo-text">Kick App</span>
                 </a>
-            </h1>
-            <div class="header-icons">
-                <a href="/docs" target="_blank" class="header-api-link" title="API Documentation">API</a>
-                <button id="chromecast-button" class="chromecast-button" title="Connect a Chromecast device to cast streams">
-                    <img id="chromecast-icon" src="{{ url_for('static', filename='icons/chromecast.svg') }}" alt="Chromecast">
+            </div>
+
+            <nav class="sidebar-nav">
+                <a href="#/browse" class="sidebar-link" data-nav-route="/browse">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                    <span class="sidebar-link-text">Browse</span>
+                </a>
+                <a href="#/favorites" class="sidebar-link" data-nav-route="/favorites">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>
+                    <span class="sidebar-link-text">Favorites</span>
+                    <span id="favorites-badge" class="sidebar-badge hidden">0</span>
+                </a>
+                <a href="#/history" class="sidebar-link" data-nav-route="/history">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    <span class="sidebar-link-text">History</span>
+                </a>
+                <a href="#/settings" class="sidebar-link" data-nav-route="/settings">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+                    <span class="sidebar-link-text">Settings</span>
+                </a>
+            </nav>
+
+            <!-- Now Playing indicator -->
+            <div id="sidebar-now-playing" class="sidebar-now-playing hidden">
+                <div class="now-playing-pulse"></div>
+                <span class="sidebar-link-text now-playing-text">Now Playing</span>
+            </div>
+
+            <div class="sidebar-footer">
+                <a href="/docs" target="_blank" class="sidebar-link sidebar-link-muted" title="API Documentation">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                    <span class="sidebar-link-text">API Docs</span>
+                </a>
+            </div>
+        </aside>
+
+        <!-- Main content area -->
+        <div id="main-wrapper" class="flex-1 flex flex-col min-w-0 overflow-hidden">
+            <!-- Top bar -->
+            <header id="top-bar" class="top-bar">
+                <button id="sidebar-toggle" class="sidebar-toggle" aria-label="Toggle sidebar">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
                 </button>
-            </div>
-        </header>
-        <p class="subtitle">Explore live streams, VODs, and clips from any Kick.com channel.</p>
-        
-        <div class="input-section">
-            <label for="channelSlugInput" class="sr-only">Channel slug or search term</label>
-            <input type="text" id="channelSlugInput" placeholder="Search or enter channel slug…" maxlength="255" autofocus autocomplete="off">
-            <button id="checkChannelBtn">Search</button>
-            <button id="clearSearchBtn" class="secondary-button">Clear</button>
-        </div>
-        <div id="searchSuggestions" class="search-suggestions" style="display:none;"></div>
 
-        <div id="statusMessage" class="message"></div>
-
-        <div id="loading-indicator" style="display: none;">
-            <div class="spinner"></div>
-        </div>
-        
-        <div id="liveStreamInfo" class="info-box"></div>
-
-        <div id="vodsList" class="info-box"></div>
-
-        <div id="clipsList" class="info-box"></div>
-
-        <div id="featuredLivestreams" class="info-box" style="display: block;">
-            <div class="featured-header">
-                <h3 id="featuredSectionTitle">Featured Streams</h3>
-                <label for="languageSelector" class="sr-only">Language</label>
-                <select id="languageSelector"></select>
-                <label for="categorySelector" class="sr-only">Category</label>
-                <select id="categorySelector"><option value="">All Categories</option></select>
-                <span id="featured-spinner" class="inline-spinner" aria-hidden="true"></span>
-            </div>
-            <table class="vods-table">
-                <thead>
-                    <tr>
-                        <th>Thumbnail</th>
-                        <th class="sortable" data-sort-column="session_title" data-sort-type="string"><span>Title</span><span class="sort-indicator"></span></th>
-                        <th class="sortable" data-sort-column="channel.user.username" data-sort-type="string"><span>Channel</span><span class="sort-indicator"></span></th>
-                        <th class="sortable" data-sort-column="viewer_count" data-sort-type="number"><span>Viewers</span><span class="sort-indicator"></span></th>
-                        <th class="sortable" data-sort-column="categories.0.name" data-sort-type="string"><span>Category</span><span class="sort-indicator"></span></th>
-                        <th class="cast-header">Cast</th>
-                    </tr>
-                </thead>
-                <tbody id="featuredStreamsTableBody">
-                    <!-- Featured streams will be rendered here by JavaScript -->
-                </tbody>
-            </table>
-            <div id="featuredScrollSentinel" class="featured-scroll-sentinel" style="display:none;">
-                <div id="featuredSentinelSpinner" class="sentinel-spinner" style="display:none;">
-                    <span class="sentinel-spinner-ring"></span>
-                    <span class="sentinel-spinner-text">Loading more streams...</span>
+                <div id="search-container" class="search-container">
+                    <svg class="search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                    <label for="channelSlugInput" class="sr-only">Search channels</label>
+                    <input type="text" id="channelSlugInput" placeholder="Search channels..." maxlength="255" autocomplete="off" class="search-input">
+                    <kbd class="search-kbd hidden sm:inline-flex">/</kbd>
+                    <div id="searchSuggestions" class="search-suggestions" style="display:none;"></div>
                 </div>
-                <p id="featuredEndMessage" class="featured-end-message" style="display:none;">All streams loaded</p>
+
+                <div class="top-bar-actions">
+                    <button id="chromecast-button" class="chromecast-btn" title="Chromecast">
+                        <img id="chromecast-icon" src="{{ url_for('static', filename='icons/chromecast.svg') }}" alt="Chromecast" class="w-5 h-5">
+                    </button>
+                </div>
+            </header>
+
+            <!-- Scrollable content area -->
+            <main id="content-area" class="content-area"></main>
+
+            <!-- Mini player -->
+            <div id="mini-player" class="mini-player hidden">
+                <div class="mini-player-inner">
+                    <div id="mini-player-thumb" class="mini-player-thumb"></div>
+                    <div class="mini-player-info">
+                        <span id="mini-player-title" class="mini-player-title"></span>
+                        <span id="mini-player-channel" class="mini-player-channel"></span>
+                    </div>
+                    <div class="mini-player-controls">
+                        <button id="mini-player-expand" class="mini-player-btn" title="Expand player">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+                        </button>
+                        <button id="mini-player-cast" class="mini-player-btn" title="Cast to Chromecast">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 16.1A5 5 0 015.9 20M2 12.05A9 9 0 019.95 20M2 8V6a2 2 0 012-2h16a2 2 0 012 2v12a2 2 0 01-2 2h-6"/><line x1="2" y1="20" x2="2.01" y2="20"/></svg>
+                        </button>
+                        <button id="mini-player-close" class="mini-player-btn" title="Close player">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                        </button>
+                    </div>
+                </div>
+                <video id="miniPlayerVideo" class="mini-player-video hidden" muted playsinline></video>
             </div>
-            <p id="noFeaturedStreamsMessage" style="display: none;">No featured livestreams available at the moment.</p>
         </div>
-    </main>
+    </div>
+
+    <!-- Mobile bottom nav -->
+    <nav id="mobile-nav" class="mobile-nav">
+        <a href="#/browse" class="mobile-nav-item" data-nav-route="/browse">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            <span>Browse</span>
+        </a>
+        <a href="#/favorites" class="mobile-nav-item" data-nav-route="/favorites">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>
+            <span>Favorites</span>
+        </a>
+        <a href="#/history" class="mobile-nav-item" data-nav-route="/history">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            <span>History</span>
+        </a>
+        <a href="#/settings" class="mobile-nav-item" data-nav-route="/settings">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+            <span>Settings</span>
+        </a>
+    </nav>
 
     <!-- Chromecast Modal -->
     <div id="chromecast-modal" class="modal" role="dialog" aria-labelledby="chromecast-modal-title">
         <div class="modal-content">
-            <span class="close-button" role="button" aria-label="Close" tabindex="0">&times;</span>
-            <h2 id="chromecast-modal-title">Select a Chromecast Device</h2>
+            <div class="modal-header">
+                <h2 id="chromecast-modal-title">Chromecast</h2>
+                <button class="close-button" role="button" aria-label="Close">&times;</button>
+            </div>
+            <p class="chromecast-modal-help">Search your local network, or add a Chromecast IP/hostname if discovery fails.</p>
+            <div class="chromecast-search-container">
+                <svg class="chromecast-search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                </svg>
+                <label for="chromecast-device-search" class="sr-only">Search Chromecast devices</label>
+                <input
+                    type="search"
+                    id="chromecast-device-search"
+                    placeholder="Search by device name or UUID..."
+                    autocomplete="off"
+                    class="search-input chromecast-search-input"
+                >
+            </div>
+            <div class="chromecast-host-container">
+                <label for="chromecast-host-input" class="sr-only">Chromecast IP or hostname</label>
+                <input
+                    type="text"
+                    id="chromecast-host-input"
+                    placeholder="Add by IP or hostname..."
+                    autocomplete="off"
+                    class="search-input chromecast-host-input"
+                >
+                <button id="chromecast-host-discover-btn" class="btn-secondary chromecast-host-btn">Discover host</button>
+            </div>
+            <div id="chromecast-device-summary" class="chromecast-device-summary" aria-live="polite"></div>
             <div id="modal-spinner" class="spinner" style="display: none;"></div>
             <div id="chromecast-device-list"></div>
             <div class="modal-actions">
-                <button id="rescan-devices-btn" class="secondary-button">Rescan</button>
-                <button id="disconnect-device-btn" class="secondary-button" style="display: none;">Disconnect</button>
+                <button id="rescan-devices-btn" class="btn-secondary">Rescan</button>
+                <button id="disconnect-device-btn" class="btn-secondary" style="display: none;">Disconnect</button>
             </div>
         </div>
     </div>
 
+    <!-- Toast container -->
+    <div id="toast-container" class="toast-container"></div>
+
     <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.15/dist/hls.min.js"></script>
-    <script type="module" src="{{ url_for('static', filename='script.js', v='1.1.0') }}"></script>
+    <script type="module" src="{{ url_for('static', filename='script.js', v='2.3.5') }}"></script>
 </body>
 </html>

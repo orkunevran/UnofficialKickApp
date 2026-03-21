@@ -279,7 +279,7 @@ class KickAPIClient:
 
 
     def get_viewer_count(self, livestream_id: int, timeout: int = 5) -> int:
-        url = f"https://kick.com/api/v1/current-viewers?ids[]={livestream_id}"
+        url = f"https://kick.com/current-viewers?ids[]={livestream_id}"
         logger.debug(f"Fetching viewer count for livestream_id: {livestream_id}")
         response = self.session.get(url, timeout=(3, timeout))
         response.raise_for_status()
@@ -290,7 +290,7 @@ class KickAPIClient:
         except Exception:
             logger.debug(f"Non-JSON viewer count response for livestream_id: {livestream_id}")
             return 0
-        # Response: [{"id": <int>, "viewers": <int>}]
+        # Response: [{"livestream_id": <int>, "viewers": <int>}]
         if isinstance(data, list) and data:
             return data[0].get("viewers", 0)
         return 0

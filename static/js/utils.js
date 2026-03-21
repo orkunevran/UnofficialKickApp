@@ -1,4 +1,6 @@
-import { showMessage } from './ui.js';
+/**
+ * Shared utility functions.
+ */
 
 export function escapeHtml(str) {
     if (str === null || str === undefined) return '';
@@ -39,15 +41,37 @@ export function formatDate(dateString) {
     }
 }
 
-/**
- * Returns an HTML string for an initials avatar when no profile picture is available.
- * The background colour is derived from a hash of the name so each channel gets a
- * consistent colour across page loads (same approach as Gmail / Slack avatars).
- */
+export function formatRelativeTime(dateString) {
+    if (!dateString) return '';
+    try {
+        const date = new Date(dateString);
+        const now = new Date();
+        const diffMs = now - date;
+        const diffMins = Math.floor(diffMs / 60000);
+        if (diffMins < 1) return 'just now';
+        if (diffMins < 60) return `${diffMins}m ago`;
+        const diffHours = Math.floor(diffMins / 60);
+        if (diffHours < 24) return `${diffHours}h ago`;
+        const diffDays = Math.floor(diffHours / 24);
+        if (diffDays < 7) return `${diffDays}d ago`;
+        return formatDate(dateString);
+    } catch {
+        return '';
+    }
+}
+
+export function formatViewerCount(n) {
+    if (n === null || n === undefined) return 'N/A';
+    n = Number(n);
+    if (!Number.isFinite(n)) return 'N/A';
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+    return n.toLocaleString('en-US');
+}
+
 export function initialsAvatar(name, large = false) {
     const str = String(name || '?');
     const letter = str[0].toUpperCase();
-    // FNV-1a-inspired hash for a stable hue from the channel name
     let hash = 2166136261;
     for (let i = 0; i < str.length; i++) {
         hash ^= str.charCodeAt(i);
@@ -55,32 +79,26 @@ export function initialsAvatar(name, large = false) {
     }
     const hue = hash % 360;
     const bg = `hsl(${hue},45%,32%)`;
-    if (large) {
-        return `<div class="profile-avatar-initials" style="background:${bg}">${letter}</div>`;
-    }
-    return `<div class="suggestion-avatar suggestion-avatar--initials" style="background:${bg}">${letter}</div>`;
+    const sizeClass = large ? 'w-20 h-20 text-2xl' : 'w-8 h-8 text-sm';
+    return `<div class="initials-avatar ${sizeClass}" style="background:${bg}">${letter}</div>`;
 }
 
 export function copyToClipboard(button, text) {
-    const originalText = button.textContent;
+    const originalHTML = button.innerHTML;
 
     const succeed = () => {
-        button.textContent = 'Copied!';
+        button.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg> Copied!';
         button.classList.add('copied');
         setTimeout(() => {
-            button.textContent = originalText;
+            button.innerHTML = originalHTML;
             button.classList.remove('copied');
-        }, 3000);
+        }, 1500);
     };
 
     const fail = (err) => {
         console.error('Failed to copy text: ', err);
-        button.textContent = originalText;
-        button.classList.remove('copied');
     };
 
-    // navigator.clipboard requires HTTPS or localhost (secure context).
-    // Fall back to execCommand for HTTP (e.g. local Pi IP).
     if (navigator.clipboard && window.isSecureContext) {
         navigator.clipboard.writeText(text).then(succeed).catch(fail);
     } else {
@@ -93,4 +111,27 @@ export function copyToClipboard(button, text) {
         try { document.execCommand('copy'); succeed(); } catch (err) { fail(err); }
         document.body.removeChild(ta);
     }
+}
+
+export function debounce(fn, delay = 300) {
+    let timer;
+    return (...args) => {
+        clearTimeout(timer);
+        timer = setTimeout(() => fn(...args), delay);
+    };
+}
+
+export function throttle(fn, limit = 200) {
+    let inThrottle;
+    return (...args) => {
+        if (!inThrottle) {
+            fn(...args);
+            inThrottle = true;
+            setTimeout(() => { inThrottle = false; }, limit);
+        }
+    };
+}
+
+export function cn(...classes) {
+    return classes.filter(Boolean).join(' ');
 }

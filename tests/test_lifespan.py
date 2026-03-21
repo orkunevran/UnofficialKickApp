@@ -14,7 +14,7 @@ def test_lifespan_initializes_singletons_and_shuts_down(monkeypatch):
     def configure(settings):
         calls.append(("configure", settings["PORT"]))
 
-    def scan_for_devices_async(force=False):
+    def scan_for_devices_async(force=False, known_hosts=None):
         calls.append(("scan", force))
         return True
 

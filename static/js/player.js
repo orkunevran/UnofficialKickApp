@@ -91,6 +91,7 @@ export function reclaimHls() {
 
 /** Hide the mini player bar (called after the main video is rendering). */
 export function hideMiniPlayer() {
+    _collapseVideoPanel();
     const miniVideo = document.getElementById('miniPlayerVideo');
     if (miniVideo) { miniVideo.pause(); miniVideo.classList.add('hidden'); }
     const player = document.getElementById('mini-player');
@@ -100,6 +101,7 @@ export function hideMiniPlayer() {
 
 export function stopMiniPlayer() {
     currentStream = null;
+    _collapseVideoPanel();
     _destroyVideo();
     const player = document.getElementById('mini-player');
     if (player) player.classList.add('hidden');
@@ -114,6 +116,7 @@ export function initMiniPlayerControls() {
 
     expandBtn?.addEventListener('click', () => {
         if (currentStream?.slug) {
+            _collapseVideoPanel();
             const { navigate } = window.__routerModule || {};
             if (navigate) navigate(`/channel/${currentStream.slug}`);
         }
@@ -127,16 +130,135 @@ export function initMiniPlayerControls() {
         }
     });
 
-    closeBtn?.addEventListener('click', stopMiniPlayer);
+    closeBtn?.addEventListener('click', () => {
+        _collapseVideoPanel();
+        stopMiniPlayer();
+    });
 
     // Clicking the thumbnail/video area also expands
     const thumb = document.getElementById('mini-player-thumb');
     thumb?.addEventListener('click', () => {
         if (currentStream?.slug) {
+            _collapseVideoPanel();
             const { navigate } = window.__routerModule || {};
             if (navigate) navigate(`/channel/${currentStream.slug}`);
         }
     });
+
+    _initResizeHandle();
+}
+
+// ── Resize / Expand Panel ────────────────────────────────────────────────
+
+const _MIN_PANEL_H = 0;
+const _DEFAULT_PANEL_H = 300;
+const _SNAP_THRESHOLD = 80;
+const _DRAG_DEAD_ZONE = 4; // px moved before drag activates
+
+let _panelHeight = 0;
+let _dragging = false;
+
+function _initResizeHandle() {
+    const handle = document.getElementById('mini-player-resize');
+    if (!handle) return;
+
+    let startY = 0;
+    let startH = 0;
+    let activated = false; // true once pointer moves past dead zone
+
+    const onPointerDown = (e) => {
+        if (window.innerWidth < 768) return;
+        e.preventDefault();
+        startY = e.clientY;
+        startH = _panelHeight;
+        activated = false;
+        _dragging = true;
+        document.addEventListener('pointermove', onPointerMove);
+        document.addEventListener('pointerup', onPointerUp);
+    };
+
+    const onPointerMove = (e) => {
+        if (!_dragging) return;
+        const delta = startY - e.clientY;
+        // Don't commit to a drag until past the dead zone
+        if (!activated) {
+            if (Math.abs(delta) < _DRAG_DEAD_ZONE) return;
+            activated = true;
+            // Disable transition for smooth dragging
+            const panel = document.getElementById('mini-player-expanded-video');
+            if (panel) panel.style.transition = 'none';
+            document.body.style.cursor = 'ns-resize';
+            document.body.style.userSelect = 'none';
+        }
+        const maxH = Math.round(window.innerHeight * 0.6);
+        _setPanelHeight(Math.max(_MIN_PANEL_H, Math.min(maxH, startH + delta)));
+    };
+
+    const onPointerUp = () => {
+        _dragging = false;
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
+        document.removeEventListener('pointermove', onPointerMove);
+        document.removeEventListener('pointerup', onPointerUp);
+        // Re-enable transition
+        const panel = document.getElementById('mini-player-expanded-video');
+        if (panel) panel.style.transition = '';
+        if (activated && _panelHeight < _SNAP_THRESHOLD) {
+            _collapseVideoPanel();
+        }
+    };
+
+    handle.addEventListener('pointerdown', onPointerDown);
+
+    // Double-click toggles collapsed ↔ expanded
+    handle.addEventListener('dblclick', () => {
+        if (window.innerWidth < 768) return;
+        _panelHeight > 0 ? _collapseVideoPanel() : _expandVideoPanel(_DEFAULT_PANEL_H);
+    });
+}
+
+function _setPanelHeight(h) {
+    const panel = document.getElementById('mini-player-expanded-video');
+    const player = document.getElementById('mini-player');
+    if (!panel) return;
+
+    _panelHeight = h;
+    panel.style.height = h > 0 ? `${h}px` : '0';
+
+    if (h > 0) {
+        _moveVideoToPanel();
+        player?.classList.add('expanded');
+    } else {
+        _moveVideoToThumb();
+        player?.classList.remove('expanded');
+    }
+}
+
+function _expandVideoPanel(h) {
+    const maxH = Math.round(window.innerHeight * 0.6);
+    _setPanelHeight(Math.min(h, maxH));
+}
+
+function _collapseVideoPanel() {
+    _setPanelHeight(0);
+}
+
+function _moveVideoToPanel() {
+    const video = document.getElementById('miniPlayerVideo');
+    const panel = document.getElementById('mini-player-expanded-video');
+    if (video && panel && video.parentElement !== panel) {
+        panel.appendChild(video);
+        video.classList.remove('hidden');
+    }
+}
+
+function _moveVideoToThumb() {
+    const video = document.getElementById('miniPlayerVideo');
+    const thumb = document.getElementById('mini-player-thumb');
+    if (video && thumb && video.parentElement !== thumb) {
+        thumb.prepend(video);
+        video.classList.remove('hidden');
+    }
 }
 
 // ── Private helpers ──────────────────────────────────────────────────────

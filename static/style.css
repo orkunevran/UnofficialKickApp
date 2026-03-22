@@ -453,6 +453,45 @@ body {
     color: var(--primary-color);
 }
 
+/* ── Mini Player Resize Handle & Expanded Video ───────────────────────── */
+.mini-player-resize-handle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 14px;
+    cursor: ns-resize;
+    user-select: none;
+    -webkit-user-select: none;
+}
+.mini-player-resize-handle:hover .resize-grip,
+.mini-player.expanded .resize-grip {
+    background: var(--text-secondary);
+}
+.resize-grip {
+    width: 36px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--border-color);
+    transition: background 0.15s;
+}
+.mini-player-expanded-video {
+    width: 100%;
+    height: 0;
+    overflow: hidden;
+    background: #000;
+    transition: height 0.25s ease;
+}
+.mini-player-expanded-video video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+}
+/* When expanded, hide the inline thumb video (it moved to the expanded panel) */
+.mini-player.expanded .mini-player-thumb {
+    display: none;
+}
+
 /* ── Mobile Nav ────────────────────────────────────────────────────────── */
 .mobile-nav {
     display: none;
@@ -1797,8 +1836,10 @@ a:focus-visible,
     .mini-player-title { font-size: 12px; }
     .mini-player-channel { font-size: 10px; }
     .mini-player-btn { padding: 6px; }
-    /* Hide cast button on mobile to save space */
+    /* Hide cast button and resize handle on mobile */
     #mini-player-cast { display: none; }
+    .mini-player-resize-handle { display: none; }
+    .mini-player-expanded-video { display: none; }
     .stream-grid {
         grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
         gap: 12px;

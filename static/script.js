@@ -18,7 +18,7 @@ window.__favModule = { getFavoriteCount };
 window.__routerModule = { navigate };
 
 // ── View imports ──────────────────────────────────────────────────────────
-import { mount as mountBrowse } from './js/views/browse.js?v=2.4.8';
+import { mount as mountBrowse } from './js/views/browse.js?v=2.5.0';
 import { mount as mountChannel } from './js/views/channel.js?v=2.5.0';
 import { mount as mountFavorites } from './js/views/favorites.js?v=2.4.8';
 import { mount as mountHistory } from './js/views/history.js?v=2.4.8';

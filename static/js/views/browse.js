@@ -29,11 +29,10 @@ let refreshTimer = null;
 let midCycleTimer = null;
 let uptimeTimer = null;
 let scrollObserver = null;
-let isHovered = false;
-let isFocusWithin = false;
+// (hover/focus pause removed — was too aggressive, blocked all viewer count updates)
 
 function isPaused() {
-    return document.visibilityState !== 'visible' || isHovered || isFocusWithin;
+    return document.visibilityState !== 'visible';
 }
 
 function hasFreshCache() {
@@ -552,11 +551,7 @@ export async function mount(params, contentEl) {
     const sortPillsEl = browseView.querySelector('.sort-pills');
     sortPillsEl?.addEventListener('click', onSortPill);
 
-    // Hover/focus pause
-    const onMouseEnter = () => { isHovered = true; };
-    const onMouseLeave = () => { isHovered = false; };
-    browseView.addEventListener('mouseenter', onMouseEnter);
-    browseView.addEventListener('mouseleave', onMouseLeave);
+    // (hover/focus pause removed — viewer counts update regardless)
 
     // Visibility change
     const onVisibility = () => {
@@ -604,8 +599,6 @@ export async function mount(params, contentEl) {
         catSel.removeEventListener('change', onCategoryChange);
         viewToggleEl?.removeEventListener('click', onViewToggle);
         sortPillsEl?.removeEventListener('click', onSortPill);
-        browseView.removeEventListener('mouseenter', onMouseEnter);
-        browseView.removeEventListener('mouseleave', onMouseLeave);
         document.removeEventListener('visibilitychange', onVisibility);
     };
 }

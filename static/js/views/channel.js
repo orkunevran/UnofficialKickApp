@@ -9,26 +9,53 @@ import { addToHistory } from '../history.js?v=2.4.8';
 import { toast } from '../toast.js?v=2.4.8';
 import { escapeHtml, debounce } from '../utils.js?v=2.4.8';
 import { navigate } from '../router.js?v=2.4.8';
-import { startMiniPlayer } from '../player.js?v=2.4.8';
+import { startMiniPlayer, getCurrentStream, stopMiniPlayer, reclaimHls, hideMiniPlayer } from '../player.js?v=2.5.0';
 
 let viewerRefreshTimer = null;
 let hlsInstance = null;
 
-function initVideoPlayer(playbackUrl) {
+function initVideoPlayer(playbackUrl, channelSlug) {
     const video = document.getElementById('liveVideoPlayer');
     if (!video || !playbackUrl) return;
 
     if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
 
+    // If the mini player is active, handle the handoff
+    const miniStream = getCurrentStream();
+    if (miniStream) {
+        if (miniStream.slug === channelSlug) {
+            // Same channel — reclaim the HLS instance for seamless playback
+            const reclaimed = reclaimHls();
+            if (reclaimed) {
+                hlsInstance = reclaimed;
+                hlsInstance.attachMedia(video);
+                video.muted = false;
+                // Hide mini player once the main video renders its first frame
+                const onReady = () => {
+                    hideMiniPlayer();
+                    video.removeEventListener('playing', onReady);
+                };
+                video.addEventListener('playing', onReady);
+                video.play().catch(() => { hideMiniPlayer(); });
+                renderQualityPicker(hlsInstance);
+                _initPipButton(video);
+                return;
+            }
+        }
+        // Different channel or reclaim failed — stop mini player
+        stopMiniPlayer();
+    }
+
+    // Fresh HLS load (no mini player was active, or reclaim failed)
     if (video.canPlayType('application/vnd.apple.mpegurl')) {
         video.src = playbackUrl;
         video.play().catch(() => {});
     } else if (window.Hls && window.Hls.isSupported()) {
         hlsInstance = new window.Hls({
             lowLatencyMode: true,
-            liveSyncDurationCount: 3,     // Stay 3 segments behind live edge
+            liveSyncDurationCount: 3,
             liveMaxLatencyDurationCount: 6,
-            maxBufferLength: 10,          // Buffer 10s (was 30 — too slow for live)
+            maxBufferLength: 10,
             maxMaxBufferLength: 20,
             liveDurationInfinity: true,
             backBufferLength: 15,
@@ -41,7 +68,10 @@ function initVideoPlayer(playbackUrl) {
         });
     }
 
-    // PiP button
+    _initPipButton(video);
+}
+
+function _initPipButton(video) {
     const pipBtn = document.getElementById('pip-button');
     if (pipBtn && document.pictureInPictureEnabled) {
         pipBtn.classList.remove('hidden');
@@ -152,7 +182,7 @@ function renderTabContent(tab, liveData, vodsData, clipsData, channelSlug) {
     if (tab === 'stream') {
         tabContent.innerHTML = renderStreamTabContent(liveData?.data, channelSlug);
         if (liveData?.data?.status === 'live') {
-            initVideoPlayer(liveData.data.playback_url);
+            initVideoPlayer(liveData.data.playback_url, channelSlug);
         }
     } else if (tab === 'vods') {
         if (!vodsData) {
@@ -294,25 +324,38 @@ export async function mount(params, contentEl) {
 
         // Restart video if coming back to stream tab
         if (tabName === 'stream' && liveData?.data?.status === 'live') {
-            initVideoPlayer(liveData.data.playback_url);
+            initVideoPlayer(liveData.data.playback_url, channelSlug);
         }
     };
     const tabsEl = contentEl.querySelector('.profile-tabs');
     tabsEl?.addEventListener('click', onTabClick);
 
-    // Cleanup — activate mini player if stream was live
+    // Cleanup — transfer HLS to mini player if stream was live.
+    // Capture HLS ref in a getter so we read it at cleanup time, not mount time,
+    // but before View Transitions can clear the DOM.
     return () => {
+        // Grab HLS instance FIRST before anything can destroy it
+        const hls = hlsInstance;
+        const video = document.getElementById('liveVideoPlayer');
+        hlsInstance = null; // detach ownership from channel module
+
         stopViewerRefresh();
         tabsEl?.removeEventListener('click', onTabClick);
+
         if (liveData?.data?.status === 'live') {
-            startMiniPlayer({
-                slug: channelSlug,
-                title: d?.livestream_title || 'Untitled Stream',
-                channel: d?.username || channelSlug,
-                playbackUrl: d?.playback_url || '',
-                thumbnailUrl: d?.livestream_thumbnail_url || '',
-            });
+            startMiniPlayer(
+                {
+                    slug: channelSlug,
+                    title: d?.livestream_title || d?.username || channelSlug,
+                    channel: d?.username || channelSlug,
+                    playbackUrl: d?.playback_url || '',
+                    thumbnailUrl: d?.livestream_thumbnail_url || '',
+                },
+                hls,
+                video,
+            );
+        } else {
+            if (hls) { hls.destroy(); }
         }
-        destroyVideoPlayer();
     };
 }

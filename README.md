@@ -15,6 +15,7 @@ Unofficial Kick App provides a web UI plus a REST API for Kick.com live streams,
 ## Features
 
 - Live stream lookup with playback redirection
+- Seamless mini-player handoff so live playback keeps running while you browse other channels
 - VOD browsing and direct VOD playback links
 - Recent clip browsing
 - Featured streams with infinite scroll, language and category filtering
@@ -24,7 +25,7 @@ Unofficial Kick App provides a web UI plus a REST API for Kick.com live streams,
 - Seamless auto-refresh: viewer counts and stream data update silently every 90 seconds
 - Two-tier channel search: instant local results + full Typesense server-side search, with loading/empty states and keyboard navigation
 - Avatar lookup and current viewer counts (single and batch)
-- Chromecast device discovery, cast control, and SSE status streaming
+- Chromecast device discovery, fallback subnet probing, cast control, and SSE status streaming
 - Glassmorphism UI with skeleton loaders, smooth staggered animations, and responsive polish
 - Circuit breaker for upstream API resilience
 - Request correlation IDs and structured logging
@@ -217,6 +218,7 @@ Key design decisions:
 - **Page-1-only auto-refresh** — the 90-second timer re-fetches only page 1 (most dynamic data) instead of all loaded pages, keeping API usage minimal
 - **Observer self-re-triggering** — if the scroll sentinel is still visible after a page loads, the next page loads immediately without waiting for the IntersectionObserver frame delay
 - **Server-side stale-while-revalidate** — each page response is cached with a short fresh TTL and a longer stale TTL; stale responses are served instantly while a single background refresh runs
+- **Mini-player handoff** — when you navigate away from a live channel, the HLS stream is transferred into a persistent mini-player bar instead of restarting from scratch
 
 ## Troubleshooting
 

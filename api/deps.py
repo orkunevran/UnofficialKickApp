@@ -17,6 +17,7 @@ from fastapi import Depends, Request
 
 from services.cache_service import InMemoryCache
 from services.chromecast_service import ChromecastService
+from services.circuit_breaker import CircuitBreaker
 from services.kick_api_service import KickAPIClient
 
 
@@ -32,7 +33,12 @@ def get_chromecast(request: Request) -> ChromecastService:
     return request.app.state.chromecast_service
 
 
+def get_circuit_breaker(request: Request) -> CircuitBreaker:
+    return request.app.state.circuit_breaker
+
+
 # Annotated aliases for cleaner route signatures
 CacheDep = Annotated[InMemoryCache, Depends(get_cache)]
 KickClientDep = Annotated[KickAPIClient, Depends(get_kick_client)]
 ChromecastDep = Annotated[ChromecastService, Depends(get_chromecast)]
+CircuitBreakerDep = Annotated[CircuitBreaker, Depends(get_circuit_breaker)]

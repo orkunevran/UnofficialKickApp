@@ -13,7 +13,7 @@ from api.cache import (
     dedup_set,
     request_cache_key,
 )
-from api.deps import CacheDep, KickClientDep
+from api.deps import CacheDep, CircuitBreakerDep, KickClientDep
 from api.routes._common import kick_call, _SUBCATEGORY_RE
 from config import Config
 from services.transformers import build_featured_response, warm_caches_from_featured
@@ -26,6 +26,7 @@ router = APIRouter(prefix="/streams", tags=["streams"])
 async def _refresh_featured(
     cache,
     client,
+    circuit_breaker,
     stale_key: str,
     fresh_key: str,
     language: str,
@@ -44,10 +45,10 @@ async def _refresh_featured(
                 language, page_int,
                 category=category, subcategory=subcategory,
                 subcategories=subcategories, sort=sort, strict=strict_bool,
-                safe_value=language,
+                safe_value=language, circuit_breaker=circuit_breaker,
             )
         else:
-            raw = await kick_call(client.get_featured_livestreams, language, page_int, safe_value=language)
+            raw = await kick_call(client.get_featured_livestreams, language, page_int, safe_value=language, circuit_breaker=circuit_breaker)
 
         response_body = build_featured_response(raw, page_int)
         cache.set(stale_key, (response_body, 200), timeout=Config.FEATURED_STALE_TTL_SECONDS)
@@ -65,6 +66,7 @@ async def featured_livestreams(
     request: Request,
     cache: CacheDep,
     client: KickClientDep,
+    cb: CircuitBreakerDep,
     language: str = Query("en"),
     page: str = Query("1"),
     category: str = Query(""),
@@ -112,7 +114,7 @@ async def featured_livestreams(
             return resp
         if claim_inflight(stale_key):
             asyncio.create_task(_refresh_featured(
-                cache, client,
+                cache, client, cb,
                 stale_key, fresh_key,
                 language, page_int, category, subcategory, subcategories, sort, strict_bool,
             ))
@@ -137,11 +139,11 @@ async def featured_livestreams(
                 language, page_int,
                 category=category, subcategory=subcategory,
                 subcategories=subcategories, sort=sort, strict=strict_bool,
-                safe_value=language,
+                safe_value=language, circuit_breaker=cb,
             )
         else:
             logger.info("Fetching featured livestreams for language: %s, page: %s", language, page_int)
-            raw = await kick_call(client.get_featured_livestreams, language, page_int, safe_value=language)
+            raw = await kick_call(client.get_featured_livestreams, language, page_int, safe_value=language, circuit_breaker=cb)
 
         response_body = build_featured_response(raw, page_int)
         cache.set(stale_key, (response_body, 200), timeout=Config.FEATURED_STALE_TTL_SECONDS)

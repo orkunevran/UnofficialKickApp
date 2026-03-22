@@ -133,7 +133,7 @@ async def lifespan(fastapi_app: FastAPI):
                 await asyncio.to_thread(chromecast_service.scan_for_devices_async)
                 logger.debug("Periodic Chromecast scan completed.")
             except Exception:
-                logger.debug("Periodic Chromecast scan failed.", exc_info=True)
+                logger.warning("Periodic Chromecast scan failed.", exc_info=True)
 
     # Periodic sweep of stale in-flight dedup entries (prevents memory leaks)
     async def _periodic_inflight_sweep():

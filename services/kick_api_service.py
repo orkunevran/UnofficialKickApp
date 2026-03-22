@@ -1,4 +1,3 @@
-import asyncio
 import re
 import time
 import threading
@@ -63,26 +62,21 @@ class KickAPIClient:
             adapter._pool_maxsize = 10
         return s
 
-    def get_channel_data(self, channel_slug: str, timeout: int = 8) -> dict:
-        url = f"{self.BASE_URL}{channel_slug}"
-        logger.debug(f"Fetching Kick API URL: {url}")
-        response = self.session.get(url, timeout=(3, timeout))  # (connect, read) timeout
+    def _get_json(self, url: str, timeout: int = 8):
+        """GET *url*, raise on HTTP errors, return decoded JSON."""
+        logger.debug("Fetching Kick API URL: %s", url)
+        response = self.session.get(url, timeout=(3, timeout))
         response.raise_for_status()
         return response.json()
+
+    def get_channel_data(self, channel_slug: str, timeout: int = 8) -> dict:
+        return self._get_json(f"{self.BASE_URL}{channel_slug}", timeout)
 
     def get_channel_videos(self, channel_slug: str, timeout: int = 10) -> list:
-        url = f"{self.BASE_URL}{channel_slug}/videos"
-        logger.debug(f"Fetching Kick API URL: {url}")
-        response = self.session.get(url, timeout=(3, timeout))
-        response.raise_for_status()
-        return response.json()
+        return self._get_json(f"{self.BASE_URL}{channel_slug}/videos", timeout)
 
     def get_featured_livestreams(self, language: str = "en", page: int = 1, timeout: int = 8) -> dict:
-        url = f"{Config.KICK_FEATURED_LIVESTREAMS_URL}{language}?page={page}"
-        logger.debug(f"Fetching Kick API URL for featured livestreams: {url}")
-        response = self.session.get(url, timeout=(3, timeout))
-        response.raise_for_status()
-        return response.json()
+        return self._get_json(f"{Config.KICK_FEATURED_LIVESTREAMS_URL}{language}?page={page}", timeout)
 
     # Match featured-livestreams page size (Kick's all-livestreams default is 5)
     ALL_LIVESTREAMS_PAGE_SIZE = 14
@@ -109,21 +103,10 @@ class KickAPIClient:
             url += f"&sort={quote_plus(sort)}"
         if strict:
             url += "&strict=true"
-        logger.debug(
-            f"Fetching all livestreams for language: {language}, page: {page}, "
-            f"category: {category!r}, subcategory: {subcategory!r}, "
-            f"subcategories: {subcategories!r}, sort: {sort!r}, strict: {strict!r}"
-        )
-        response = self.session.get(url, timeout=(3, timeout))
-        response.raise_for_status()
-        return response.json()
+        return self._get_json(url, timeout)
 
     def get_channel_clips(self, channel_slug: str, timeout: int = 10) -> dict:
-        url = f"{self.BASE_URL}{channel_slug}/clips"
-        logger.debug(f"Fetching clips for channel: {channel_slug}")
-        response = self.session.get(url, timeout=(3, timeout))
-        response.raise_for_status()
-        return response.json()
+        return self._get_json(f"{self.BASE_URL}{channel_slug}/clips", timeout)
 
     # ------------------------------------------------------------------ #
     # Typesense search — covers ALL Kick channels (500k+, 8k+ live)       #
@@ -143,7 +126,7 @@ class KickAPIClient:
     # _ts_fetch_lock serializes the expensive bundle scrape so only one thread
     # fetches at a time while concurrent cache-hit readers are never blocked.
     _ts_key_cache = None
-    _ts_key_fetched_at: float = 0.0
+    _ts_key_fetched_at: float = 0.0  # monotonic clock
     _ts_key_lock = threading.Lock()
     _ts_fetch_lock = threading.Lock()
 
@@ -170,12 +153,12 @@ class KickAPIClient:
                         continue
                     m = self._TYPESENSE_KEY_PATTERN.search(cr.text)
                     if m:
-                        logger.info(f"Typesense key found in chunk: {path}")
+                        logger.info("Typesense key found in chunk: %s", path)
                         return m.group(1)
                 except Exception:
                     continue
         except Exception as exc:
-            logger.warning(f"Typesense key bundle fetch failed: {exc}")
+            logger.warning("Typesense key bundle fetch failed: %s", exc)
         return None
 
     def _get_typesense_key(self, force_refresh: bool = False) -> str:
@@ -189,7 +172,7 @@ class KickAPIClient:
                           fetches at a time. Threads that lose the race recheck the
                           cache inside _ts_fetch_lock and return early if it's warm.
         """
-        now = time.time()
+        now = time.monotonic()
         # Fast path: concurrent cache hits never touch _ts_fetch_lock
         with self._ts_key_lock:
             if (
@@ -202,7 +185,7 @@ class KickAPIClient:
         # Slow path: serialize fetches so only one thread hits the network
         with self._ts_fetch_lock:
             # Second check — another thread may have fetched while we waited
-            now = time.time()
+            now = time.monotonic()
             with self._ts_key_lock:
                 if (
                     not force_refresh
@@ -216,7 +199,7 @@ class KickAPIClient:
 
             with self._ts_key_lock:
                 # Always update the timestamp so we don't hammer the bundle on failures
-                KickAPIClient._ts_key_fetched_at = time.time()
+                KickAPIClient._ts_key_fetched_at = time.monotonic()
                 if fresh:
                     KickAPIClient._ts_key_cache = fresh
                     logger.info("Typesense key refreshed successfully.")
@@ -304,7 +287,7 @@ class KickAPIClient:
 
     def get_viewer_count(self, livestream_id: int, timeout: int = 5) -> int:
         url = f"https://kick.com/current-viewers?ids[]={livestream_id}"
-        logger.debug(f"Fetching viewer count for livestream_id: {livestream_id}")
+        logger.debug("Fetching viewer count for livestream_id: %s", livestream_id)
         response = self.session.get(url, timeout=(3, timeout))
         response.raise_for_status()
         if not response.text.strip():
@@ -312,7 +295,7 @@ class KickAPIClient:
         try:
             data = response.json()
         except Exception:
-            logger.debug(f"Non-JSON viewer count response for livestream_id: {livestream_id}")
+            logger.debug("Non-JSON viewer count response for livestream_id: %s", livestream_id)
             return 0
         # Response: [{"livestream_id": <int>, "viewers": <int>}]
         if isinstance(data, list) and data:
@@ -335,8 +318,12 @@ class KickAPIClient:
             params = "&".join(f"ids[]={lid}" for lid in chunk)
             url = f"https://kick.com/current-viewers?{params}"
             logger.debug("Fetching batch viewer counts for %d livestream(s)", len(chunk))
-            response = self.session.get(url, timeout=(3, timeout))
-            response.raise_for_status()
+            try:
+                response = self.session.get(url, timeout=(3, timeout))
+                response.raise_for_status()
+            except Exception:
+                logger.warning("Batch viewer chunk failed for %d IDs, skipping", len(chunk))
+                continue
             if not response.text.strip():
                 continue
             try:
@@ -349,39 +336,6 @@ class KickAPIClient:
                     if "livestream_id" in item:
                         merged[item["livestream_id"]] = item.get("viewers", 0)
         return merged
-
-    # ------------------------------------------------------------------ #
-    # Async wrappers                                                      #
-    #                                                                     #
-    # Route handlers call these directly — the asyncio.to_thread() call   #
-    # is encapsulated here instead of scattered across route files.       #
-    # If cloudscraper is replaced with an async HTTP client in the future,#
-    # only these wrappers need to change.                                 #
-    # ------------------------------------------------------------------ #
-
-    async def async_get_channel_data(self, channel_slug: str, **kw) -> dict:
-        return await asyncio.to_thread(self.get_channel_data, channel_slug, **kw)
-
-    async def async_get_channel_videos(self, channel_slug: str, **kw) -> list:
-        return await asyncio.to_thread(self.get_channel_videos, channel_slug, **kw)
-
-    async def async_get_featured_livestreams(self, language: str = "en", page: int = 1, **kw) -> dict:
-        return await asyncio.to_thread(self.get_featured_livestreams, language, page, **kw)
-
-    async def async_get_all_livestreams(self, language: str = "en", page: int = 1, **kw) -> dict:
-        return await asyncio.to_thread(self.get_all_livestreams, language, page, **kw)
-
-    async def async_get_channel_clips(self, channel_slug: str, **kw) -> dict:
-        return await asyncio.to_thread(self.get_channel_clips, channel_slug, **kw)
-
-    async def async_search_channels_typesense(self, query: str, **kw) -> list:
-        return await asyncio.to_thread(self.search_channels_typesense, query, **kw)
-
-    async def async_get_viewer_count(self, livestream_id: int, **kw) -> int:
-        return await asyncio.to_thread(self.get_viewer_count, livestream_id, **kw)
-
-    async def async_get_viewer_counts_batch(self, livestream_ids: list, **kw) -> dict:
-        return await asyncio.to_thread(self.get_viewer_counts_batch, livestream_ids, **kw)
 
 
 kick_api_client = KickAPIClient()

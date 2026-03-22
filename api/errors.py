@@ -21,7 +21,7 @@ def success_json(data=None, message: str = "", status_code: int = 200) -> JSONRe
 
 
 def error_json(message: str, status_code: int) -> JSONResponse:
-    payload = {"status": "error", "message": message}
+    payload = {"status": "error", "message": message, "data": {}}
     return JSONResponse(content=payload, status_code=status_code)
 
 

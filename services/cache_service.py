@@ -1,4 +1,3 @@
-import copy
 import threading
 import time
 
@@ -43,10 +42,11 @@ class InMemoryCache:
             return
 
         now = time.monotonic()
-        # First pass: remove expired entries
-        expired_keys = [k for k, (exp, _) in self._store.items() if exp <= now]
-        for k in expired_keys:
+        # First pass: remove expired entries, stop early once under limit
+        for k in [k for k, (exp, _) in self._store.items() if exp <= now]:
             del self._store[k]
+            if len(self._store) < self.max_size:
+                return
 
         # Second pass: if still over limit, evict oldest by insertion order
         while len(self._store) >= self.max_size:
@@ -56,12 +56,8 @@ class InMemoryCache:
     def set(self, key, value, timeout=None):
         with self._lock:
             self._evict_if_needed()
-            # Deep-copy on write; reads return references (callers treat as immutable)
-            try:
-                stored_value = copy.deepcopy(value)
-            except Exception:
-                stored_value = value
-            self._store[key] = (self._expiry(timeout), stored_value)
+            # Callers treat cached values as immutable — no deep-copy needed.
+            self._store[key] = (self._expiry(timeout), value)
         return True
 
     def get(self, key, default=None):

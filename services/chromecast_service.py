@@ -409,6 +409,25 @@ class ChromecastService:
             logger.warning(f"Chromecast with UUID {uuid} not found in the current list.")
             return False
 
+        # If the cast's socket_client thread was already started and is now dead
+        # (e.g. after a disconnect), we must create a fresh pychromecast object
+        # because Python threads cannot be restarted.
+        sc = getattr(cast, 'socket_client', None)
+        if sc and hasattr(sc, '_started') and sc._started.is_set() and not sc.is_alive():
+            logger.info(f"Replacing stale cast object for {cast.cast_info.friendly_name} (dead socket thread).")
+            try:
+                new_cast = pychromecast.get_chromecast_from_cast_info(cast.cast_info, self._zc)
+                with self._lock:
+                    try:
+                        idx = self.chromecasts.index(cast)
+                        self.chromecasts[idx] = new_cast
+                    except ValueError:
+                        self.chromecasts.append(new_cast)
+                cast = new_cast
+            except Exception as e:
+                logger.error(f"Failed to recreate cast object for {cast.cast_info.friendly_name}: {e}")
+                return False
+
         for attempt in range(1, self._select_max_retries + 1):
             try:
                 logger.info(f"Attempt {attempt}/{self._select_max_retries}: Connecting to device {cast.cast_info.friendly_name}...")

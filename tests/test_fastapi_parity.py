@@ -350,11 +350,11 @@ def test_fastapi_routes_match_expected_contract(
 @pytest.mark.parametrize(
     "method,path,params,json_body,expected_status,expected_body",
     [
-        ("GET", "/streams/play/bad slug", None, None, 400, {"status": "error", "message": "Invalid channel slug: 'bad slug'."}),
-        ("GET", "/streams/search", {"q": "a"}, None, 400, {"status": "error", "message": "Query must be at least 2 characters."}),
-        ("GET", "/streams/viewers", {"id": "abc"}, None, 400, {"status": "error", "message": "Missing or invalid livestream ID."}),
-        ("POST", "/api/chromecast/select", None, {}, 400, {"status": "error", "message": "Device UUID is required."}),
-        ("POST", "/api/chromecast/cast", None, {}, 400, {"status": "error", "message": "Stream URL is required."}),
+        ("GET", "/streams/play/bad slug", None, None, 400, {"status": "error", "message": "Invalid channel slug: 'bad slug'.", "data": {}}),
+        ("GET", "/streams/search", {"q": "a"}, None, 400, {"status": "error", "message": "Query must be at least 2 characters.", "data": {}}),
+        ("GET", "/streams/viewers", {"id": "abc"}, None, 400, {"status": "error", "message": "Missing or invalid livestream ID.", "data": {}}),
+        ("POST", "/api/chromecast/select", None, {}, 400, {"status": "error", "message": "Device UUID is required.", "data": {}}),
+        ("POST", "/api/chromecast/cast", None, {}, 400, {"status": "error", "message": "Stream URL is required.", "data": {}}),
     ],
 )
 def test_validation_errors_match_expected_contract(

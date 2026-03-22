@@ -13,7 +13,7 @@ from api.cache import (
     extract_channel_data_from_live_cache,
     extract_redirect_location,
 )
-from api.deps import CacheDep, KickClientDep
+from api.deps import CacheDep, CircuitBreakerDep, KickClientDep
 from api.errors import ApiError, error_json, success_json
 from api.routes._common import kick_call, validate_slug
 from config import Config
@@ -25,7 +25,7 @@ router = APIRouter(prefix="/streams", tags=["streams"])
 
 
 @router.get("/play/{channel_slug}")
-async def play_stream(channel_slug: str, cache: CacheDep, client: KickClientDep):
+async def play_stream(channel_slug: str, cache: CacheDep, client: KickClientDep, cb: CircuitBreakerDep):
     if not validate_slug(channel_slug):
         return error_json(f"Invalid channel slug: '{channel_slug}'.", 400)
 
@@ -36,7 +36,7 @@ async def play_stream(channel_slug: str, cache: CacheDep, client: KickClientDep)
         return cached_value_to_response(cached)
 
     try:
-        data = await kick_call(client.get_channel_data, channel_slug, safe_value=channel_slug)
+        data = await kick_call(client.get_channel_data, channel_slug, safe_value=channel_slug, circuit_breaker=cb)
         profile = build_channel_profile(data, channel_slug)
         livestream_data = data.get("livestream")
 
@@ -79,7 +79,7 @@ async def play_stream(channel_slug: str, cache: CacheDep, client: KickClientDep)
 
 
 @router.get("/go/{channel_slug}")
-async def go_to_live_stream(channel_slug: str, cache: CacheDep, client: KickClientDep):
+async def go_to_live_stream(channel_slug: str, cache: CacheDep, client: KickClientDep, cb: CircuitBreakerDep):
     if not validate_slug(channel_slug):
         return error_json(f"Invalid channel slug: '{channel_slug}'.", 400)
 
@@ -99,23 +99,33 @@ async def go_to_live_stream(channel_slug: str, cache: CacheDep, client: KickClie
             cache.set(key, playback_url, timeout=Config.LIVE_CACHE_DURATION_SECONDS)
             return RedirectResponse(playback_url, status_code=307)
 
-    logger.info("Fetching live stream redirect for: %s", channel_slug)
-    data = await kick_call(client.get_channel_data, channel_slug, safe_value=channel_slug)
-    livestream_data = data.get("livestream")
+    # Dedup concurrent cache-miss fetches for the same channel
+    dedup_cached = await dedup_get(cache, key)
+    if dedup_cached is not None:
+        redirect_url = extract_redirect_location(dedup_cached)
+        if redirect_url:
+            return RedirectResponse(redirect_url, status_code=307)
 
-    if livestream_data is None:
-        return error_json(f"Channel '{channel_slug}' is currently offline.", 404)
+    try:
+        logger.info("Fetching live stream redirect for: %s", channel_slug)
+        data = await kick_call(client.get_channel_data, channel_slug, safe_value=channel_slug, circuit_breaker=cb)
+        livestream_data = data.get("livestream")
 
-    playback_url = data.get("playback_url")
-    if not playback_url:
-        return error_json("Live playback URL not found in API response.", 500)
+        if livestream_data is None:
+            return error_json(f"Channel '{channel_slug}' is currently offline.", 404)
 
-    cache.set(key, playback_url, timeout=Config.LIVE_CACHE_DURATION_SECONDS)
-    return RedirectResponse(playback_url, status_code=307)
+        playback_url = data.get("playback_url")
+        if not playback_url:
+            return error_json("Live playback URL not found in API response.", 500)
+
+        cache.set(key, playback_url, timeout=Config.LIVE_CACHE_DURATION_SECONDS)
+        return RedirectResponse(playback_url, status_code=307)
+    finally:
+        dedup_set(key)
 
 
 @router.get("/avatar/{channel_slug}")
-async def channel_avatar(channel_slug: str, cache: CacheDep, client: KickClientDep):
+async def channel_avatar(channel_slug: str, cache: CacheDep, client: KickClientDep, cb: CircuitBreakerDep):
     if not validate_slug(channel_slug):
         return error_json(f"Invalid channel slug: '{channel_slug}'.", 400)
 
@@ -132,7 +142,7 @@ async def channel_avatar(channel_slug: str, cache: CacheDep, client: KickClientD
         cache_json_response(cache, key, payload, 200, timeout=Config.AVATAR_CACHE_DURATION_SECONDS)
         return success_json({"profile_picture": pic})
 
-    data = await kick_call(client.get_channel_data, channel_slug, safe_value=channel_slug)
+    data = await kick_call(client.get_channel_data, channel_slug, safe_value=channel_slug, circuit_breaker=cb)
     pic = data.get("user", {}).get("profile_pic")
     payload = {"status": "success", "message": "", "data": {"profile_picture": pic}}
     cache_json_response(cache, key, payload, 200, timeout=Config.AVATAR_CACHE_DURATION_SECONDS)
@@ -140,7 +150,7 @@ async def channel_avatar(channel_slug: str, cache: CacheDep, client: KickClientD
 
 
 @router.get("/clips/{channel_slug}")
-async def channel_clips(channel_slug: str, cache: CacheDep, client: KickClientDep):
+async def channel_clips(channel_slug: str, cache: CacheDep, client: KickClientDep, cb: CircuitBreakerDep):
     if not validate_slug(channel_slug):
         return error_json(f"Invalid channel slug: '{channel_slug}'.", 400)
 
@@ -150,7 +160,7 @@ async def channel_clips(channel_slug: str, cache: CacheDep, client: KickClientDe
         return cached_value_to_response(cached)
 
     logger.info("Fetching clips for channel: %s", channel_slug)
-    raw = await kick_call(client.get_channel_clips, channel_slug, safe_value=channel_slug)
+    raw = await kick_call(client.get_channel_clips, channel_slug, safe_value=channel_slug, circuit_breaker=cb)
     processed = normalize_clip_list(raw, channel_slug)
     payload = {"status": "success", "message": "", "data": {"clips": processed}}
     cache_json_response(cache, key, payload, 200, timeout=Config.VOD_CACHE_DURATION_SECONDS)

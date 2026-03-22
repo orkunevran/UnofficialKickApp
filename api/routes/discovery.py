@@ -5,7 +5,7 @@ import logging
 from fastapi import APIRouter, Query, Request
 
 from api.cache import cache_json_response, cached_value_to_response, request_cache_key
-from api.deps import CacheDep, KickClientDep
+from api.deps import CacheDep, CircuitBreakerDep, KickClientDep
 from api.errors import error_json, sanitize_log_value, success_json
 from api.routes._common import kick_call
 from config import Config
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/streams", tags=["streams"])
 
 
 @router.get("/search")
-async def channel_search(request: Request, cache: CacheDep, client: KickClientDep, q: str = Query("")):
+async def channel_search(request: Request, cache: CacheDep, client: KickClientDep, cb: CircuitBreakerDep, q: str = Query("")):
     query = q.strip()
     if not query or len(query) < 2:
         return error_json("Query must be at least 2 characters.", 400)
@@ -29,14 +29,14 @@ async def channel_search(request: Request, cache: CacheDep, client: KickClientDe
         return cached_value_to_response(cached)
 
     logger.info("Searching channels with query: %s", sanitize_log_value(query))
-    results = await kick_call(client.search_channels_typesense, query, safe_value=query)
+    results = await kick_call(client.search_channels_typesense, query, safe_value=query, circuit_breaker=cb)
     payload = {"status": "success", "message": "", "data": results}
     cache_json_response(cache, key, payload, 200, timeout=Config.SEARCH_CACHE_DURATION_SECONDS)
     return success_json(results)
 
 
 @router.get("/viewers")
-async def viewer_count(request: Request, cache: CacheDep, client: KickClientDep, id: str = Query("")):
+async def viewer_count(request: Request, cache: CacheDep, client: KickClientDep, cb: CircuitBreakerDep, id: str = Query("")):
     try:
         livestream_id = int(id)
     except (ValueError, TypeError):
@@ -50,14 +50,14 @@ async def viewer_count(request: Request, cache: CacheDep, client: KickClientDep,
     if cached is not None:
         return cached_value_to_response(cached)
 
-    viewers = await kick_call(client.get_viewer_count, livestream_id, safe_value=str(livestream_id))
+    viewers = await kick_call(client.get_viewer_count, livestream_id, safe_value=str(livestream_id), circuit_breaker=cb)
     payload = {"status": "success", "message": "", "data": {"viewer_count": viewers}}
     cache_json_response(cache, key, payload, 200, timeout=Config.VIEWER_CACHE_DURATION_SECONDS)
     return success_json({"viewer_count": viewers})
 
 
 @router.get("/viewers/batch")
-async def viewer_count_batch(request: Request, cache: CacheDep, client: KickClientDep, ids: str = Query("")):
+async def viewer_count_batch(request: Request, cache: CacheDep, client: KickClientDep, cb: CircuitBreakerDep, ids: str = Query("")):
     """Batch viewer count — single upstream call for multiple livestream IDs.
 
     Query: ``?ids=101621100,101647164,...`` (comma-separated, max 50).
@@ -79,7 +79,7 @@ async def viewer_count_batch(request: Request, cache: CacheDep, client: KickClie
         return cached_value_to_response(cached)
 
     counts = await kick_call(
-        client.get_viewer_counts_batch, int_ids, safe_value="batch"
+        client.get_viewer_counts_batch, int_ids, safe_value="batch", circuit_breaker=cb,
     )
     data = {str(k): v for k, v in counts.items()}
     payload = {"status": "success", "message": "", "data": data}

@@ -63,14 +63,15 @@ class TestInMemoryCache:
         assert c.get("fresh2") == "z"
         assert c.get("new") == "w"
 
-    def test_deep_copy_on_write(self):
+    def test_no_copy_on_write(self):
+        """Cache stores references directly — callers must treat values as immutable."""
         c = InMemoryCache()
         data = {"key": [1, 2, 3]}
         c.set("data", data)
         data["key"].append(4)  # mutate original
-        # Cached value should not be affected
+        # Cache shares the same reference (no deep copy)
         cached = c.get("data")
-        assert cached["key"] == [1, 2, 3]
+        assert cached["key"] == [1, 2, 3, 4]
 
     def test_stats(self):
         c = InMemoryCache(max_size=100)

@@ -48,7 +48,7 @@ export function renderProfileSkeleton() {
 export function renderStreamCard(stream, { showActions = true } = {}) {
     const slug = stream.channel?.slug || stream.slug || '';
     const username = stream.channel?.user?.username || slug;
-    const title = stream.session_title || 'Untitled Stream';
+    const title = stream.session_title || username || 'Live Stream';
     const category = stream.categories?.[0]?.name || '';
     const viewers = stream.viewer_count;
     const thumbSrc = stream.thumbnail?.src || '';
@@ -62,9 +62,6 @@ export function renderStreamCard(stream, { showActions = true } = {}) {
 
     const actionsHTML = showActions ? `
         <div class="card-actions-overlay">
-            <button class="card-action-btn" data-action="play" data-slug="${escapeHtml(slug)}" title="Watch" aria-label="Watch ${escapeHtml(username)}">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-            </button>
             <button class="card-action-btn ${isFav ? 'favorited' : ''}" data-action="favorite" data-slug="${escapeHtml(slug)}" data-username="${escapeHtml(username)}" data-pic="${escapeHtml(profilePic)}" title="${isFav ? 'Remove from favorites' : 'Add to favorites'}" aria-label="${isFav ? 'Remove' : 'Add'} ${escapeHtml(username)} ${isFav ? 'from' : 'to'} favorites">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="${isFav ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>
             </button>
@@ -97,7 +94,7 @@ export function renderStreamCard(stream, { showActions = true } = {}) {
 export function renderStreamListItem(stream) {
     const slug = stream.channel?.slug || stream.slug || '';
     const username = stream.channel?.user?.username || slug;
-    const title = stream.session_title || 'Untitled Stream';
+    const title = stream.session_title || username || 'Live Stream';
     const category = stream.categories?.[0]?.name || '';
     const viewers = stream.viewer_count;
     const thumbSrc = stream.thumbnail?.src || '';
@@ -150,7 +147,7 @@ export function renderVodCard(vod, channelSlug) {
                 ${vod.duration_seconds ? `<span class="vod-card-duration">${formatDuration(vod.duration_seconds)}</span>` : ''}
             </div>
             <div class="vod-card-info">
-                <div class="vod-card-title">${escapeHtml(vod.title || 'Untitled VOD')}</div>
+                <div class="vod-card-title">${escapeHtml(vod.title || 'VOD')}</div>
                 <div class="vod-card-meta">
                     <span>${formatDate(vod.created_at)}</span>
                     <span>${vod.views?.toLocaleString('en-US') || '0'} views</span>
@@ -169,7 +166,7 @@ export function renderClipCard(clip) {
                 ${clip.duration_seconds ? `<span class="vod-card-duration">${formatDuration(clip.duration_seconds)}</span>` : ''}
             </div>
             <div class="vod-card-info">
-                <div class="vod-card-title">${escapeHtml(clip.title || 'Untitled Clip')}</div>
+                <div class="vod-card-title">${escapeHtml(clip.title || 'Clip')}</div>
                 <div class="vod-card-meta">
                     <span>${formatDate(clip.created_at)}</span>
                     <span>${clip.views?.toLocaleString('en-US') || '0'} views</span>
@@ -304,7 +301,7 @@ export function renderStreamTabContent(data, channelSlug) {
         <div class="stream-details">
             <div>
                 <span class="stream-detail-label">Title: </span>
-                <span class="stream-detail-value">${escapeHtml(d.livestream_title || 'Untitled')}</span>
+                <span class="stream-detail-value">${escapeHtml(d.livestream_title || d.username || 'Live Stream')}</span>
             </div>
             <div class="viewer-count">
                 <span class="stream-detail-label">Viewers: </span>
@@ -459,15 +456,6 @@ export function initButtonDelegation() {
             return;
         }
 
-        // Card action: play
-        const playBtn = event.target.closest('[data-action="play"]');
-        if (playBtn) {
-            event.stopPropagation();
-            const slug = playBtn.dataset.slug;
-            if (slug) navigate(`/channel/${slug}`);
-            return;
-        }
-
         // Card action: favorite
         const favBtn = event.target.closest('[data-action="favorite"]');
         if (favBtn) {
@@ -609,7 +597,7 @@ function updateCardInPlace(cardEl, stream) {
     // Title
     const titleEl = cardEl.querySelector('.card-title');
     if (titleEl) {
-        const t = stream.session_title || 'Untitled Stream';
+        const t = stream.session_title || stream.channel?.user?.username || 'Live Stream';
         if (titleEl.textContent !== t) titleEl.textContent = t;
     }
 

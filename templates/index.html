@@ -10,35 +10,18 @@
     <meta name="theme-color" content="#0b0e14">
     <title>Kick App</title>
     <link rel="icon" href="{{ url_for('static', filename='Kick_logo.svg') }}">
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        kick: '#53fc18',
-                        'kick-dark': '#4ce516',
-                        surface: 'rgba(20, 24, 32, 0.6)',
-                        'surface-hover': 'rgba(30, 35, 45, 0.8)',
-                        void: '#0b0e14',
-                        'void-light': '#111620',
-                    },
-                    fontFamily: {
-                        sans: ['Inter', 'system-ui', 'sans-serif'],
-                    },
-                },
-            },
-        }
-    </script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='2.3.7') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', ) }}">
 </head>
-<body class="bg-void text-white font-sans min-h-screen overflow-hidden">
-    <div id="app" class="flex h-screen">
+<body>
+    <div id="app">
         <!-- Sidebar -->
         <aside id="sidebar" class="sidebar">
             <div class="sidebar-header">
                 <a href="#/browse" class="sidebar-logo">
-                    <img src="{{ url_for('static', filename='Kick_logo.svg') }}" alt="Kick" class="h-6">
+                    <img src="{{ url_for('static', filename='Kick_logo.svg') }}" alt="Kick" style="height:24px">
                     <span class="sidebar-logo-text">Kick App</span>
                 </a>
             </div>
@@ -74,11 +57,14 @@
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
                     <span class="sidebar-link-text">API Docs</span>
                 </a>
+                <div class="sidebar-connection-status">
+                    <span id="connection-status-dot" class="connection-dot ok" title="API: connected"></span>
+                </div>
             </div>
         </aside>
 
         <!-- Main content area -->
-        <div id="main-wrapper" class="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <div id="main-wrapper" class="main-wrapper">
             <!-- Top bar -->
             <header id="top-bar" class="top-bar">
                 <button id="sidebar-toggle" class="sidebar-toggle" aria-label="Toggle sidebar">
@@ -89,13 +75,13 @@
                     <svg class="search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
                     <label for="channelSlugInput" class="sr-only">Search channels</label>
                     <input type="text" id="channelSlugInput" placeholder="Search channels..." maxlength="255" autocomplete="off" class="search-input">
-                    <kbd class="search-kbd hidden sm:inline-flex">/</kbd>
+                    <kbd class="search-kbd">/</kbd>
                     <div id="searchSuggestions" class="search-suggestions" style="display:none;"></div>
                 </div>
 
                 <div class="top-bar-actions">
                     <button id="chromecast-button" class="chromecast-btn" title="Chromecast">
-                        <img id="chromecast-icon" src="{{ url_for('static', filename='icons/chromecast.svg') }}" alt="Chromecast" class="w-5 h-5">
+                        <img id="chromecast-icon" src="{{ url_for('static', filename='icons/chromecast.svg') }}" alt="Chromecast" style="width:20px;height:20px">
                     </button>
                     <button id="chromecast-disconnect-quick" class="chromecast-disconnect-quick" title="Disconnect Chromecast" style="display:none" aria-label="Disconnect Chromecast">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -103,8 +89,28 @@
                 </div>
             </header>
 
-            <!-- Scrollable content area -->
-            <main id="content-area" class="content-area"></main>
+            <!-- Scrollable content area — SSR skeleton replaced entirely by JS on mount -->
+            <main id="content-area" class="content-area" aria-live="polite" aria-busy="true">
+                <div class="browse-sticky-header">
+                    <div class="section-header">
+                        <h1 class="section-title">Featured Streams</h1>
+                        <span class="inline-spinner is-active" aria-hidden="true"></span>
+                    </div>
+                    <div class="filter-bar">
+                        <select class="filter-select" aria-label="Language" disabled>
+                            <option>Loading…</option>
+                        </select>
+                        <select class="filter-select" aria-label="Category" disabled>
+                            <option value="">All Categories</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="stream-grid">
+                    {% for _ in range(8) %}
+                    <div class="skeleton-card"><div class="skeleton-thumb"></div><div class="skeleton-info"><div class="skeleton-avatar"></div><div class="skeleton-lines"><div class="skeleton-line"></div><div class="skeleton-line short"></div></div></div></div>
+                    {% endfor %}
+                </div>
+            </main>
 
             <!-- Mini player -->
             <div id="mini-player" class="mini-player hidden">
@@ -190,6 +196,6 @@
     <div id="toast-container" class="toast-container"></div>
 
     <script defer src="https://cdn.jsdelivr.net/npm/hls.js@1.5.15/dist/hls.min.js"></script>
-    <script type="module" src="{{ url_for('static', filename='script.js', v='2.3.7') }}"></script>
+    <script type="module" src="{{ url_for('static', filename='script.js', ) }}"></script>
 </body>
 </html>

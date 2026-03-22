@@ -58,15 +58,27 @@ echo "=== Step 2: Stopping old container ==="
 "${SSH_CMD[@]}" "${PI_USER}@${PI_HOST}" "cd ${DEPLOY_DIR} && docker compose down 2>/dev/null || true"
 
 echo ""
-echo "=== Step 3: Building and starting new container ==="
+echo "=== Step 3: Cleaning up old Docker artifacts (frees disk space) ==="
+"${SSH_CMD[@]}" "${PI_USER}@${PI_HOST}" "docker image prune -f 2>/dev/null || true; docker builder prune -f 2>/dev/null || true"
+DISK_BEFORE=$("${SSH_CMD[@]}" "${PI_USER}@${PI_HOST}" "df -h / | tail -1 | awk '{print \$4}'")
+echo "Available disk space: ${DISK_BEFORE}"
+
+echo ""
+echo "=== Step 4: Building and starting new container ==="
 "${SSH_CMD[@]}" "${PI_USER}@${PI_HOST}" "cd ${DEPLOY_DIR} && docker compose up --build -d"
 
 echo ""
-echo "=== Step 4: Waiting for container to start ==="
+echo "=== Step 5: Post-build cleanup (remove dangling images from this build) ==="
+"${SSH_CMD[@]}" "${PI_USER}@${PI_HOST}" "docker image prune -f 2>/dev/null || true"
+DISK_AFTER=$("${SSH_CMD[@]}" "${PI_USER}@${PI_HOST}" "df -h / | tail -1 | awk '{print \$4}'")
+echo "Available disk space: ${DISK_AFTER}"
+
+echo ""
+echo "=== Step 6: Waiting for container to start ==="
 sleep 8
 
 echo ""
-echo "=== Step 5: Health check ==="
+echo "=== Step 7: Health check ==="
 HEALTH=$(curl -s -o /dev/null -w "%{http_code}" http://${PI_HOST}:8081/config/languages)
 if [ "$HEALTH" = "200" ]; then
   echo "Health check PASSED (HTTP 200)"
@@ -78,7 +90,7 @@ else
 fi
 
 echo ""
-echo "=== Step 6: Testing Chromecast endpoints ==="
+echo "=== Step 8: Testing Chromecast endpoints ==="
 echo "GET /api/chromecast/status:"
 curl -s http://${PI_HOST}:8081/api/chromecast/status | python3 -m json.tool
 

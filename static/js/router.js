@@ -82,16 +82,18 @@ async function resolve() {
     // Update sidebar active state
     updateSidebarActive(path);
 
+    if (contentArea) contentArea.setAttribute('aria-busy', 'true');
     const render = () => matched.route.handler(matched.params, contentArea);
     if (shouldAnimate) {
-        document.startViewTransition(async () => {
+        const transition = document.startViewTransition(async () => {
             currentCleanup = await render();
-            restoreScroll(path, contentArea);
         });
+        transition.finished.then(() => restoreScroll(path, contentArea)).catch(() => {});
     } else {
         currentCleanup = await render();
         restoreScroll(path, contentArea);
     }
+    if (contentArea) contentArea.setAttribute('aria-busy', 'false');
 }
 
 function restoreScroll(path, contentArea) {

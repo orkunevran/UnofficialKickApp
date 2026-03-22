@@ -1,30 +1,38 @@
+# ── Stage 1: Build dependencies ──────────────────────────────────────────
+FROM registry.access.redhat.com/ubi9/python-311 AS builder
+
+USER 0
+RUN dnf install -y gcc-c++ make && dnf clean all && rm -rf /var/cache/dnf
+
+WORKDIR /build
+COPY requirements.txt .
+RUN python3 -m venv /opt/venv \
+ && /opt/venv/bin/pip install --no-cache-dir -r requirements.txt \
+ && /opt/venv/bin/pip install --no-cache-dir dumb-init
+
+# ── Stage 2: Runtime ─────────────────────────────────────────────────────
 FROM registry.access.redhat.com/ubi9/python-311
 
-# 1) become root just for package install
 USER 0
+RUN dnf install -y iputils && dnf clean all && rm -rf /var/cache/dnf
 
-# 1) Install required system packages
-# We use microdnf which is the package manager in UBI
-# and install gcc-c++ and make which are equivalent to build-essential
+# Copy venv from builder (no gcc/make in runtime image)
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
-RUN dnf install -y gcc-c++ make iputils \
- && dnf clean all && rm -rf /var/cache/dnf
-
-# 2) Create application directory and a non-root user
 ENV USER=appuser
 RUN useradd -m ${USER}
 WORKDIR /home/${USER}/app
 
-# 3) Install dependencies as root
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# 4) Copy application code and set permissions
 COPY --chown=${USER} . .
 
-# 5) Switch to non-root user for security
 USER ${USER}
 
 EXPOSE 8081
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8081/config/languages')" || exit 1
+
 # Run a single ASGI worker so the Chromecast singleton stays in-process.
+ENTRYPOINT ["dumb-init", "--"]
 CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8081", "--workers", "1"]

@@ -3,18 +3,14 @@ import threading
 import time
 
 
-def _safe_copy(value):
-    try:
-        return copy.deepcopy(value)
-    except Exception:
-        return value
-
-
 class InMemoryCache:
-    def __init__(self):
-        self._store = {}
+    def __init__(self, max_size: int = 2000):
+        self._store: dict[str, tuple[float, object]] = {}
         self._lock = threading.RLock()
         self.default_timeout = 300
+        self.max_size = max_size
+        self._hit_count = 0
+        self._miss_count = 0
 
     def init_app(self, app=None):
         """Accept a config mapping or an app-like object with `config`."""
@@ -22,6 +18,10 @@ class InMemoryCache:
         if config is not None:
             try:
                 self.default_timeout = int(config.get("CACHE_DEFAULT_TIMEOUT", self.default_timeout))
+            except Exception:
+                pass
+            try:
+                self.max_size = int(config.get("CACHE_MAX_SIZE", self.max_size))
             except Exception:
                 pass
         return self
@@ -37,23 +37,48 @@ class InMemoryCache:
             return time.monotonic()
         return time.monotonic() + timeout
 
+    def _evict_if_needed(self):
+        """Evict entries when store exceeds max_size. Must be called under lock."""
+        if len(self._store) < self.max_size:
+            return
+
+        now = time.monotonic()
+        # First pass: remove expired entries
+        expired_keys = [k for k, (exp, _) in self._store.items() if exp <= now]
+        for k in expired_keys:
+            del self._store[k]
+
+        # Second pass: if still over limit, evict oldest by insertion order
+        while len(self._store) >= self.max_size:
+            oldest_key = next(iter(self._store))
+            del self._store[oldest_key]
+
     def set(self, key, value, timeout=None):
         with self._lock:
-            self._store[key] = (self._expiry(timeout), _safe_copy(value))
+            self._evict_if_needed()
+            # Deep-copy on write; reads return references (callers treat as immutable)
+            try:
+                stored_value = copy.deepcopy(value)
+            except Exception:
+                stored_value = value
+            self._store[key] = (self._expiry(timeout), stored_value)
         return True
 
     def get(self, key, default=None):
         with self._lock:
             item = self._store.get(key)
             if item is None:
+                self._miss_count += 1
                 return default
 
             expires_at, value = item
             if expires_at is not None and expires_at <= time.monotonic():
                 self._store.pop(key, None)
+                self._miss_count += 1
                 return default
 
-            return _safe_copy(value)
+            self._hit_count += 1
+            return value
 
     def delete(self, key):
         with self._lock:
@@ -62,7 +87,18 @@ class InMemoryCache:
     def clear(self):
         with self._lock:
             self._store.clear()
+            self._hit_count = 0
+            self._miss_count = 0
         return True
+
+    def stats(self) -> dict:
+        with self._lock:
+            return {
+                "size": len(self._store),
+                "max_size": self.max_size,
+                "hit_count": self._hit_count,
+                "miss_count": self._miss_count,
+            }
 
 
 cache = InMemoryCache()

@@ -2,11 +2,11 @@
  * Chromecast modal — device discovery, selection, and casting UI.
  */
 
-import { toast } from './toast.js?v=2.3.7';
-import { castStream } from './chromecast_logic.js?v=2.3.7';
-import { escapeHtml } from './utils.js?v=2.3.7';
-import { preferences, updatePreference } from './state.js?v=2.3.7';
-import { fetchChromecastDevices, postChromecastSelect, postChromecastStop, fetchChromecastStatus } from './api.js?v=2.3.7';
+import { toast } from './toast.js?v=2.4.8';
+import { castStream } from './chromecast_logic.js?v=2.4.8';
+import { escapeHtml } from './utils.js?v=2.4.8';
+import { preferences, updatePreference } from './state.js?v=2.4.8';
+import { fetchChromecastDevices, postChromecastSelect, postChromecastStop, fetchChromecastStatus } from './api.js?v=2.4.8';
 
 // ── SVG Icons ────────────────────────────────────────────────────────────
 
@@ -76,7 +76,10 @@ export function initializeChromecast() {
         closeModal();
     });
 
-    window.addEventListener('beforeunload', stopStatusPolling);
+    window.addEventListener('beforeunload', () => {
+        stopStatusPolling();
+        if (silentRefreshTimer) { clearInterval(silentRefreshTimer); silentRefreshTimer = null; }
+    });
 
     // Restore saved device
     const saved = localStorage.getItem('selectedChromecast');
@@ -99,9 +102,8 @@ export function initializeChromecast() {
         }
     }
 
-    // Pre-fetch devices silently so the modal always has devices ready
+    // Pre-fetch devices once; periodic refresh starts lazily on first modal open
     silentFetchDevices();
-    silentRefreshTimer = setInterval(silentFetchDevices, 60000);
 
     renderDeviceList(discoveredDevices);
 }
@@ -140,6 +142,11 @@ function openModal() {
             else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
         };
         modal.addEventListener('keydown', focusTrapHandler);
+    }
+
+    // Start periodic background refresh on first modal open (lazy — saves CPU/battery)
+    if (!silentRefreshTimer) {
+        silentRefreshTimer = setInterval(silentFetchDevices, 60000);
     }
 
     // Render cached devices immediately; fetch latest in background (no spinner if we have devices)
@@ -430,36 +437,66 @@ function showQuickDisconnect(visible) {
     if (btn) btn.style.display = visible ? '' : 'none';
 }
 
-// ── Adaptive status polling ──────────────────────────────────────────────
+// ── SSE-based status streaming (with polling fallback) ──────────────────
+
+let statusEventSource = null;
 
 function startStatusPolling() {
     stopStatusPolling();
-    scheduleStatusPoll(10000); // initial: 10s
+
+    // Try SSE first — single persistent connection instead of polling
+    if (typeof EventSource !== 'undefined') {
+        try {
+            statusEventSource = new EventSource('/api/chromecast/status/stream');
+            statusEventSource.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    handleStatusUpdate(data);
+                } catch { /* ignore malformed SSE data */ }
+            };
+            statusEventSource.onerror = () => {
+                // SSE failed — fall back to polling
+                stopStatusPolling();
+                scheduleStatusPoll(10000);
+            };
+            return; // SSE connected, no need for polling
+        } catch {
+            // EventSource constructor failed — fall back to polling
+        }
+    }
+
+    scheduleStatusPoll(10000); // fallback: poll every 10s
+}
+
+function handleStatusUpdate(data) {
+    if (data?.status !== 'success') return;
+    const castStatus = data.data?.status;
+    if (castStatus === 'disconnected') {
+        selectedDevice = null;
+        localStorage.removeItem('selectedChromecast');
+        updateIcon('inactive');
+        document.body.classList.remove('chromecast-active');
+        showQuickDisconnect(false);
+        const dcBtn = document.getElementById('disconnect-device-btn');
+        if (dcBtn) dcBtn.style.display = 'none';
+        renderDeviceList(discoveredDevices);
+        toast('Chromecast was disconnected.', 'info');
+        stopStatusPolling();
+    }
 }
 
 function scheduleStatusPoll(delay) {
     statusPollTimer = setTimeout(async () => {
         try {
             const data = await fetchChromecastStatus();
+            handleStatusUpdate(data);
             if (data?.status === 'success') {
                 const castStatus = data.data?.status;
-                if (castStatus === 'disconnected') {
-                    selectedDevice = null;
-                    localStorage.removeItem('selectedChromecast');
-                    updateIcon('inactive');
-                    document.body.classList.remove('chromecast-active');
-                    showQuickDisconnect(false);
-                    const dcBtn = document.getElementById('disconnect-device-btn');
-                    if (dcBtn) dcBtn.style.display = 'none';
-                    renderDeviceList(discoveredDevices);
-                    toast('Chromecast was disconnected.', 'info');
-                    return; // stop polling
-                }
-                // Adaptive interval: playing → 10s, idle → 30s
+                if (castStatus === 'disconnected') return; // stop polling
                 const nextDelay = castStatus === 'playing' ? 10000 : 30000;
                 scheduleStatusPoll(nextDelay);
             } else {
-                scheduleStatusPoll(15000); // error → retry after 15s
+                scheduleStatusPoll(15000);
             }
         } catch {
             scheduleStatusPoll(15000);
@@ -469,6 +506,7 @@ function scheduleStatusPoll(delay) {
 
 function stopStatusPolling() {
     if (statusPollTimer) { clearTimeout(statusPollTimer); statusPollTimer = null; }
+    if (statusEventSource) { statusEventSource.close(); statusEventSource = null; }
 }
 
 // ── Icon ─────────────────────────────────────────────────────────────────

@@ -18,6 +18,8 @@ Unofficial Kick App provides a web UI plus a REST API for Kick.com live streams,
 - VOD browsing and direct VOD playback links
 - Recent clip browsing
 - Featured streams with infinite scroll, language and category filtering
+- Single Page Application (SPA) architecture with ultra-fast client-side routing
+- Favorites and History tracking for quick access to your most-watched channels
 - Smart prefetching: next page is cached in the background before you scroll to it
 - Seamless auto-refresh: viewer counts and stream data update silently every 90 seconds
 - Two-tier channel search: instant local results + full Typesense server-side search, with loading/empty states and keyboard navigation
@@ -72,6 +74,7 @@ The app will be available at `http://localhost:8081`.
 | `GET` | `/streams/search?q=<query>` | Search Kick channels |
 | `GET` | `/streams/avatar/<channel_slug>` | Get the channel profile image URL |
 | `GET` | `/streams/viewers?id=<livestream_id>` | Get current viewer count for a live stream |
+| `GET` | `/config/languages` | Get available featured stream languages |
 
 ### Chromecast Routes
 
@@ -98,11 +101,28 @@ The application is configured with environment variables:
 | `KICK_FEATURED_LIVESTREAMS_URL` | `https://kick.com/stream/featured-livestreams/` | Featured livestreams URL |
 | `KICK_ALL_LIVESTREAMS_URL` | `https://kick.com/stream/livestreams/` | Public livestream discovery URL |
 | `CACHE_TYPE` | `SimpleCache` | In-memory cache adapter backend |
+| `CACHE_DEFAULT_TIMEOUT` | `300` | Default cache timeout in seconds |
 | `LIVE_CACHE_DURATION_SECONDS` | `30` | Cache duration for live stream data |
 | `VOD_CACHE_DURATION_SECONDS` | `300` | Cache duration for VOD and clip data |
 | `FEATURED_CACHE_DURATION_SECONDS` | `60` | Cache duration for featured streams |
+| `FEATURED_STALE_TTL_SECONDS` | `300` | Stale-while-revalidate window for featured streams |
+| `SEARCH_CACHE_DURATION_SECONDS` | `30` | Cache duration for search results |
+| `AVATAR_CACHE_DURATION_SECONDS` | `604800` | Cache duration for avatars (7 days) |
+| `VIEWER_CACHE_DURATION_SECONDS` | `10` | Cache duration for viewer counts |
+| `NEGATIVE_CACHE_DURATION_SECONDS`| `10` | Short TTL for error responses (e.g. 404/429) |
+| `ASYNCIO_THREAD_WORKERS` | `0` | Thread pool size for async ops (0 = default) |
 | `CHROMECAST_SCAN_TIMEOUT` | `5` | Chromecast discovery timeout |
+| `CHROMECAST_SELECT_MAX_RETRIES`| `2` | Max connection retries for Chromecast |
+| `CHROMECAST_SELECT_RETRY_DELAY`| `2` | Delay between Chromecast connection retries |
+| `CHROMECAST_MAX_CONNECTION_FAILURES`| `3` | Max general failures before dropping CC |
 | `CHROMECAST_DEVICE_CACHE_SECONDS` | `30` | Chromecast device cache lifetime |
+| `CHROMECAST_STOP_WAIT_SECONDS` | `2.0` | Seconds to wait when stopping a cast |
+| `CHROMECAST_PERIODIC_SCAN_INTERVAL`| `90` | How often to scan for Chromecasts |
+| `CHROMECAST_FALLBACK_SCAN_ENABLED` | `True` | Enable fallback probing for Chromecasts |
+| `CHROMECAST_FALLBACK_SCAN_SUBNETS` | `(subnets)` | Subnets for fallback CC scanning |
+| `CHROMECAST_FALLBACK_SCAN_WORKERS` | `96` | Max concurrent CC fallback scan workers |
+| `CHROMECAST_FALLBACK_SCAN_PROBE_TIMEOUT` | `0.25` | Target TCP port timeout during CC scan |
+| `CHROMECAST_FALLBACK_DEVICE_INFO_TIMEOUT`| `3.0` | Device metadata HTTP timeout |
 
 ## Docker
 

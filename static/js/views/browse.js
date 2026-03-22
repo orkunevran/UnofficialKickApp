@@ -2,13 +2,13 @@
  * Browse view — Featured streams with card grid, filters, infinite scroll, auto-refresh.
  */
 
-import { fetchFeaturedStreams } from '../api.js?v=2.3.7';
-import { renderStreamGrid, renderCardSkeleton, updateFavoritesBadge, patchStreamGrid } from '../ui.js?v=2.3.7';
-import { appState, featuredSortState, preferences } from '../state.js?v=2.3.7';
-import { applyFeaturedStreamsSort } from '../sorting.js?v=2.3.7';
-import { toast } from '../toast.js?v=2.3.7';
+import { fetchFeaturedStreams, fetchBatchViewerCounts } from '../api.js?v=2.4.8';
+import { renderStreamGrid, renderCardSkeleton, updateFavoritesBadge, patchStreamGrid } from '../ui.js?v=2.4.8';
+import { appState, featuredSortState, preferences } from '../state.js?v=2.4.8';
+import { applyFeaturedStreamsSort } from '../sorting.js?v=2.4.8';
+import { toast } from '../toast.js?v=2.4.8';
 
-const REFRESH_INTERVAL_MS = 90_000;
+const REFRESH_INTERVAL_MS = 120_000;
 const DEFAULT_PAGE_SIZE = 14;
 
 // Module state (persists across route changes via closure)
@@ -26,6 +26,8 @@ let prefetchInFlightPages = new Map();
 
 // Active timers/observers (cleaned up on unmount)
 let refreshTimer = null;
+let midCycleTimer = null;
+let uptimeTimer = null;
 let scrollObserver = null;
 let isHovered = false;
 let isFocusWithin = false;
@@ -174,6 +176,7 @@ function populateCategorySelector(streams) {
 async function loadInitialPages(language, contentEl, browseView) {
     const generation = ++refreshGeneration;
     refreshInFlight = true;
+    const hadCachedData = pageCache.size > 0;
     browseView?.classList.add('browse-bootstrapping'); // Keep browse renders static to avoid the initial flash.
 
     // Show spinner
@@ -192,7 +195,8 @@ async function loadInitialPages(language, contentEl, browseView) {
         pageMetaCache = newMeta;
         activeGeneration = refreshGeneration;
         syncLoadedRange();
-        rebuildAndRender(contentEl);
+        // Patch in-place when returning to browse with cached content already on screen
+        rebuildAndRender(contentEl, { renderMode: hadCachedData ? 'refresh' : 'full' });
     } catch (err) {
         console.error('Error loading featured streams:', err);
         toast('Failed to load featured streams.', 'error', {
@@ -229,6 +233,109 @@ async function backgroundRefresh(language, contentEl) {
         if (generation === refreshGeneration) refreshInFlight = false;
         if (inlineSpinner) inlineSpinner.classList.remove('is-active');
     }
+}
+
+async function midCycleViewerRefresh(contentEl) {
+    if (isPaused() || refreshInFlight) return;
+
+    // Collect livestream IDs from page 1 cached streams
+    const streams = pageCache.get(1);
+    if (!streams || streams.length === 0) return;
+
+    const idMap = new Map(); // livestream_id → stream index
+    streams.forEach((s, i) => {
+        const id = s.id || s.livestream_id;
+        if (id) idMap.set(String(id), i);
+    });
+    if (idMap.size === 0) return;
+
+    try {
+        const counts = await fetchBatchViewerCounts([...idMap.keys()]);
+        if (!counts || Object.keys(counts).length === 0) return;
+
+        // Update cached stream data
+        for (const [idStr, viewers] of Object.entries(counts)) {
+            const idx = idMap.get(idStr);
+            if (idx !== undefined && streams[idx]) {
+                streams[idx].viewer_count = viewers;
+            }
+        }
+
+        // Patch DOM — update viewer badges and uptime on visible cards
+        const gridEl = contentEl?.querySelector('.stream-grid');
+        if (!gridEl) return;
+        const slugMap = new Map(streams.map(s => [s.channel?.slug || s.slug, s]));
+        gridEl.querySelectorAll('.stream-card[data-slug]').forEach(card => {
+            const stream = slugMap.get(card.dataset.slug);
+            if (!stream) return;
+
+            // Viewer count
+            const viewerEl = card.querySelector('.card-viewers');
+            if (viewerEl && stream.viewer_count != null) {
+                const oldCount = parseInt(viewerEl.dataset.count || '0', 10);
+                const newCount = stream.viewer_count;
+                if (oldCount !== newCount) {
+                    viewerEl.dataset.count = newCount;
+                    // Trigger animation via the exported function from ui.js
+                    // We fire a custom event that ui.js listens for — or inline the animation
+                    const numEl = viewerEl.querySelector('.viewer-num');
+                    if (numEl) {
+                        _animateCount(numEl, oldCount, newCount);
+                    }
+                }
+            }
+
+            // Uptime — recalculate from start_time
+            const startTime = card.dataset.startTime;
+            if (startTime) {
+                const badge = card.querySelector('.card-uptime-badge');
+                if (badge) {
+                    const dot = badge.querySelector('.card-live-dot');
+                    const uptime = _formatUptime(startTime);
+                    const dotHTML = dot ? dot.outerHTML : '<span class="card-live-dot"></span>';
+                    const desired = dotHTML + (uptime || 'LIVE');
+                    if (badge.innerHTML !== desired) badge.innerHTML = desired;
+                }
+            }
+        });
+    } catch (err) {
+        // Silent — mid-cycle refresh is non-critical
+    }
+}
+
+function _formatUptime(startTime) {
+    if (!startTime) return '';
+    try {
+        const start = new Date(startTime.replace(' ', 'T') + 'Z');
+        const diffMs = Date.now() - start.getTime();
+        if (diffMs < 0) return '';
+        const mins = Math.floor(diffMs / 60000);
+        if (mins < 60) return `${mins}m`;
+        const h = Math.floor(mins / 60);
+        const m = mins % 60;
+        return `${h}h ${m}m`;
+    } catch { return ''; }
+}
+
+function _animateCount(numEl, from, to) {
+    if (numEl._animFrame) cancelAnimationFrame(numEl._animFrame);
+    const duration = 600;
+    const start = performance.now();
+    const diff = to - from;
+    function fmt(n) {
+        if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+        if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+        return n.toLocaleString('en-US');
+    }
+    function tick(now) {
+        const elapsed = now - start;
+        const progress = Math.min(elapsed / duration, 1);
+        const eased = 1 - Math.pow(1 - progress, 3);
+        numEl.textContent = fmt(Math.round(from + diff * eased));
+        if (progress < 1) numEl._animFrame = requestAnimationFrame(tick);
+        else numEl._animFrame = null;
+    }
+    numEl._animFrame = requestAnimationFrame(tick);
 }
 
 function prefetchNextPage() {
@@ -310,9 +417,14 @@ async function populateLanguageSelector() {
     const sel = document.getElementById('languageSelector');
     if (!sel) return;
     try {
-        const res = await fetch('/config/languages');
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const config = await res.json();
+        // Use cached config from init (fetched once in script.js) — avoids repeated /config/languages calls
+        let config = appState.languagesConfig;
+        if (!config) {
+            const res = await fetch('/config/languages');
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            config = await res.json();
+            appState.languagesConfig = config;
+        }
         sel.innerHTML = '';
         config.languages.forEach(lang => {
             const opt = document.createElement('option');
@@ -335,7 +447,7 @@ export async function mount(params, contentEl) {
         <div id="browse-view">
             <div class="browse-sticky-header">
                 <div class="section-header">
-                    <h1 class="section-title">Featured Streams <span id="stream-count" class="section-count"></span></h1>
+                    <h1 class="section-title">Featured Streams <span id="stream-count" class="section-count">${pageCache.size > 0 ? `(${mergePagesIntoStreams().length})` : ''}</span></h1>
                     <span id="featured-spinner" class="inline-spinner" aria-hidden="true"></span>
                 </div>
 
@@ -363,7 +475,9 @@ export async function mount(params, contentEl) {
             </div>
 
             <div id="browse-grid">
-                <div class="stream-grid">${renderCardSkeleton(8)}</div>
+                ${pageCache.size > 0
+                    ? renderStreamGrid(applyFeaturedStreamsSort(mergePagesIntoStreams(), featuredSortState), preferences.viewMode)
+                    : `<div class="stream-grid">${renderCardSkeleton(8)}</div>`}
             </div>
 
             <div id="scroll-sentinel" class="scroll-sentinel" style="display:none">
@@ -455,15 +569,36 @@ export async function mount(params, contentEl) {
     // Load initial data
     void loadInitialPages(currentLanguage, contentEl, browseView);
 
-    // Auto refresh
+    // Auto refresh — full data every 120s, lightweight viewer counts at 60s midpoint
     refreshTimer = setInterval(() => {
         void backgroundRefresh(currentLanguage, contentEl);
     }, REFRESH_INTERVAL_MS);
+    midCycleTimer = setInterval(() => {
+        void midCycleViewerRefresh(contentEl);
+    }, REFRESH_INTERVAL_MS / 2);
+    // Client-side uptime recalculation — zero API calls, just recalculates from start_time
+    uptimeTimer = setInterval(() => {
+        contentEl.querySelectorAll('.stream-card[data-start-time]').forEach(card => {
+            const startTime = card.dataset.startTime;
+            if (!startTime) return;
+            const badge = card.querySelector('.card-uptime-badge');
+            if (!badge) return;
+            const dot = badge.querySelector('.card-live-dot');
+            const uptime = _formatUptime(startTime);
+            const dotHTML = dot ? dot.outerHTML : '<span class="card-live-dot"></span>';
+            const desired = dotHTML + (uptime || 'LIVE');
+            if (badge.innerHTML !== desired) badge.innerHTML = desired;
+        });
+    }, 30_000);
 
     // Return cleanup function
     return () => {
         clearInterval(refreshTimer);
         refreshTimer = null;
+        clearInterval(midCycleTimer);
+        midCycleTimer = null;
+        clearInterval(uptimeTimer);
+        uptimeTimer = null;
         if (scrollObserver) { scrollObserver.disconnect(); scrollObserver = null; }
         langSel.removeEventListener('change', onLanguageChange);
         catSel.removeEventListener('change', onCategoryChange);

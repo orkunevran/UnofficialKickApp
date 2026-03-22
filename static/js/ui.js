@@ -2,11 +2,11 @@
  * UI rendering module — card-based grids instead of tables.
  */
 
-import { escapeHtml, formatDuration, formatDate, formatViewerCount, formatUptime, initialsAvatar, copyToClipboard } from './utils.js?v=2.3.7';
-import { appState, vodsSortState, featuredSortState } from './state.js?v=2.3.7';
-import { castStream } from './chromecast_logic.js?v=2.3.7';
-import { isFavorite, toggleFavorite } from './favorites.js?v=2.3.7';
-import { navigate } from './router.js?v=2.3.7';
+import { escapeHtml, formatDuration, formatDate, formatViewerCount, formatUptime, initialsAvatar, copyToClipboard } from './utils.js?v=2.4.8';
+import { appState, vodsSortState, featuredSortState } from './state.js?v=2.4.8';
+import { castStream } from './chromecast_logic.js?v=2.4.8';
+import { isFavorite, toggleFavorite } from './favorites.js?v=2.4.8';
+import { navigate } from './router.js?v=2.4.8';
 
 // ── Skeleton Loaders ──────────────────────────────────────────────────────
 
@@ -74,11 +74,11 @@ export function renderStreamCard(stream, { showActions = true } = {}) {
         </div>` : '';
 
     return `
-        <div class="stream-card" data-slug="${escapeHtml(slug)}">
+        <div class="stream-card" data-slug="${escapeHtml(slug)}" data-start-time="${escapeHtml(stream.start_time || '')}">
             <div class="card-thumbnail">
-                ${thumbSrc ? `<img src="${escapeHtml(thumbSrc)}" alt="" loading="lazy" decoding="async" onerror="this.style.display='none'">` : '<div style="width:100%;height:100%;background:rgba(255,255,255,0.03)"></div>'}
+                ${thumbSrc ? `<img src="${escapeHtml(thumbSrc)}" alt="" decoding="async" class="thumb-fade" onload="this.classList.add('loaded')" onerror="this.style.display='none'">` : '<div style="width:100%;height:100%;background:rgba(255,255,255,0.03)"></div>'}
                 <div class="card-uptime-badge"><span class="card-live-dot"></span>${formatUptime(stream.start_time) || 'LIVE'}</div>
-                ${viewers != null ? `<div class="card-viewers"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>${formatViewerCount(viewers)}</div>` : ''}
+                ${viewers != null ? `<div class="card-viewers" data-count="${viewers}"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg><span class="viewer-num">${formatViewerCount(viewers)}</span></div>` : ''}
                 ${actionsHTML}
             </div>
             <div class="card-info">
@@ -144,7 +144,7 @@ export function renderVodCard(vod, channelSlug) {
     const url = `/streams/vods/${safeSlug}/${safeVodId}`;
 
     return `
-        <a href="${url}" target="_blank" class="vod-card" data-vod-id="${vod.vod_id}">
+        <a href="${url}" target="_blank" class="vod-card" data-vod-id="${vod.vod_id}" data-title="${escapeHtml((vod.title || '').toLowerCase())}">
             <div class="vod-card-thumb">
                 ${vod.thumbnail_url ? `<img src="${escapeHtml(vod.thumbnail_url)}" alt="" loading="lazy" decoding="async" onerror="this.style.display='none'">` : '<div style="width:100%;height:100%;background:rgba(255,255,255,0.03)"></div>'}
                 ${vod.duration_seconds ? `<span class="vod-card-duration">${formatDuration(vod.duration_seconds)}</span>` : ''}
@@ -163,7 +163,7 @@ export function renderVodCard(vod, channelSlug) {
 
 export function renderClipCard(clip) {
     return `
-        <a href="${escapeHtml(clip.clip_url || '#')}" target="_blank" class="vod-card">
+        <a href="${escapeHtml(clip.clip_url || '#')}" target="_blank" class="vod-card" data-title="${escapeHtml((clip.title || '').toLowerCase())}">
             <div class="vod-card-thumb">
                 ${clip.thumbnail_url ? `<img src="${escapeHtml(clip.thumbnail_url)}" alt="" loading="lazy" decoding="async" onerror="this.style.display='none'">` : '<div style="width:100%;height:100%;background:rgba(255,255,255,0.03)"></div>'}
                 ${clip.duration_seconds ? `<span class="vod-card-duration">${formatDuration(clip.duration_seconds)}</span>` : ''}
@@ -350,6 +350,7 @@ export function renderSearchResults(results, onSelect) {
     suggestionOnSelect = onSelect;
 
     container.innerHTML = '';
+    const frag = document.createDocumentFragment();
     results.forEach((r, idx) => {
         const item = document.createElement('div');
         item.className = 'search-suggestion-item';
@@ -376,8 +377,9 @@ export function renderSearchResults(results, onSelect) {
                 ${metaParts ? `<span class="suggestion-meta">${escapeHtml(metaParts)}</span>` : ''}
             </div>`;
         item.addEventListener('click', () => onSelect(r.slug));
-        container.appendChild(item);
+        frag.appendChild(item);
     });
+    container.appendChild(frag);
     container.style.display = 'block';
 }
 
@@ -579,12 +581,29 @@ function updateCardInPlace(cardEl, stream) {
         crossfadeThumbnail(thumbImg, newSrc);
     }
 
-    // Viewer count
+    // Uptime badge — recalculate from start_time
+    const startTime = stream.start_time || cardEl.dataset.startTime || '';
+    if (startTime) {
+        cardEl.dataset.startTime = startTime;
+        const uptimeBadge = cardEl.querySelector('.card-uptime-badge');
+        if (uptimeBadge) {
+            const dot = uptimeBadge.querySelector('.card-live-dot');
+            const newUptime = formatUptime(startTime) || 'LIVE';
+            const dotHTML = dot ? dot.outerHTML : '<span class="card-live-dot"></span>';
+            const desired = dotHTML + newUptime;
+            if (uptimeBadge.innerHTML !== desired) uptimeBadge.innerHTML = desired;
+        }
+    }
+
+    // Viewer count — animate numerically
     const viewerEl = cardEl.querySelector('.card-viewers');
     if (viewerEl && stream.viewer_count != null) {
-        const svgHTML = viewerEl.querySelector('svg')?.outerHTML || '';
-        const newText = svgHTML + formatViewerCount(stream.viewer_count);
-        if (viewerEl.innerHTML !== newText) viewerEl.innerHTML = newText;
+        const oldCount = parseInt(viewerEl.dataset.count || '0', 10);
+        const newCount = stream.viewer_count;
+        if (oldCount !== newCount) {
+            viewerEl.dataset.count = newCount;
+            animateViewerCount(viewerEl, oldCount, newCount);
+        }
     }
 
     // Title
@@ -610,6 +629,39 @@ function updateCardInPlace(cardEl, stream) {
     } else if (catEl && !newCat) {
         catEl.remove();
     }
+}
+
+function animateViewerCount(viewerEl, from, to) {
+    const numEl = viewerEl.querySelector('.viewer-num');
+    if (!numEl) {
+        // Fallback: no .viewer-num wrapper (e.g. old card), just update directly
+        const svgHTML = viewerEl.querySelector('svg')?.outerHTML || '';
+        viewerEl.innerHTML = svgHTML + `<span class="viewer-num">${formatViewerCount(to)}</span>`;
+        return;
+    }
+
+    // Cancel any running animation on this element
+    if (numEl._animFrame) cancelAnimationFrame(numEl._animFrame);
+
+    const duration = 600; // ms
+    const start = performance.now();
+    const diff = to - from;
+
+    function tick(now) {
+        const elapsed = now - start;
+        const progress = Math.min(elapsed / duration, 1);
+        // Ease-out cubic
+        const eased = 1 - Math.pow(1 - progress, 3);
+        const current = Math.round(from + diff * eased);
+        numEl.textContent = formatViewerCount(current);
+        if (progress < 1) {
+            numEl._animFrame = requestAnimationFrame(tick);
+        } else {
+            numEl._animFrame = null;
+        }
+    }
+
+    numEl._animFrame = requestAnimationFrame(tick);
 }
 
 function crossfadeThumbnail(currentImg, newSrc) {

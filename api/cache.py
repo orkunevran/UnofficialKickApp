@@ -1,57 +1,117 @@
 import asyncio
+import logging
+import time
 from typing import Optional
 from urllib.parse import urlencode
 
 from fastapi.responses import JSONResponse
 
-# ---------------------------------------------------------------------------
-# In-flight deduplication
-# ---------------------------------------------------------------------------
-# Keyed by cache key. When a cache miss is detected, the fetching coroutine
-# inserts an Event here before awaiting the API call. Subsequent coroutines
-# that see the same key wait on the Event instead of making their own API
-# call (thundering-herd protection). Pure asyncio — single event loop only.
-_inflight: dict[str, asyncio.Event] = {}
+logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# In-flight deduplication tracker
+# ---------------------------------------------------------------------------
+# Prevents thundering-herd on cache miss: only one coroutine fetches, others
+# wait on the same asyncio.Event. Entries have timestamps for stale cleanup.
+
+
+class InflightTracker:
+    """Tracks in-flight cache-miss fetches with timeout and periodic sweep."""
+
+    _WAIT_TIMEOUT = 15.0    # seconds to wait for an in-flight fetch
+    _STALE_SECONDS = 30.0   # entries older than this are considered abandoned
+
+    def __init__(self):
+        self._inflight: dict[str, tuple[asyncio.Event, float]] = {}
+
+    async def dedup_get(self, cache, key: str):
+        """
+        Cache-aware get with in-flight deduplication.
+
+        - Cache hit  → return cached value immediately.
+        - In-flight  → await the existing Event (with timeout), return cache result.
+        - Cold       → insert a new Event in _inflight, return None. The caller
+                       MUST call dedup_set(key) in a finally block.
+        """
+        val = cache.get(key)
+        if val is not None:
+            return val
+
+        entry = self._inflight.get(key)
+        if entry is not None:
+            event, _ = entry
+            try:
+                await asyncio.wait_for(event.wait(), timeout=self._WAIT_TIMEOUT)
+            except asyncio.TimeoutError:
+                # Stale in-flight entry — remove it and let caller re-fetch
+                self._inflight.pop(key, None)
+                logger.warning("In-flight wait timed out for key: %s", key)
+            return cache.get(key)
+
+        self._inflight[key] = (asyncio.Event(), time.monotonic())
+        return None
+
+    def dedup_set(self, key: str) -> None:
+        """Unblock all coroutines waiting on key and remove the in-flight marker."""
+        entry = self._inflight.pop(key, None)
+        if entry:
+            event, _ = entry
+            event.set()
+
+    def claim_inflight(self, key: str) -> bool:
+        """
+        Try to claim key as the sole background fetcher.
+        Returns True if the caller should proceed, False if another coroutine
+        already holds the slot. Used by stale-while-revalidate refresh.
+        """
+        if key in self._inflight:
+            return False
+        self._inflight[key] = (asyncio.Event(), time.monotonic())
+        return True
+
+    def sweep_stale(self) -> int:
+        """Remove in-flight entries older than _STALE_SECONDS. Returns count removed."""
+        now = time.monotonic()
+        stale_keys = [
+            k for k, (_, ts) in self._inflight.items()
+            if (now - ts) > self._STALE_SECONDS
+        ]
+        for k in stale_keys:
+            entry = self._inflight.pop(k, None)
+            if entry:
+                event, _ = entry
+                event.set()  # unblock any waiters
+        if stale_keys:
+            logger.info("Swept %d stale in-flight entries", len(stale_keys))
+        return len(stale_keys)
+
+    def stats(self) -> dict:
+        return {"active_keys": len(self._inflight)}
+
+
+# Module-level singleton (attached to app.state during lifespan for testability)
+inflight_tracker = InflightTracker()
+
+
+# ---------------------------------------------------------------------------
+# Convenience functions (thin wrappers for backwards compat)
+# ---------------------------------------------------------------------------
 
 async def dedup_get(cache, key: str):
-    """
-    Cache-aware get with in-flight deduplication.
-
-    - Cache hit  → return cached value immediately.
-    - In-flight  → await the existing Event, return cache result (may be None
-                   if the in-flight fetch failed; caller handles that).
-    - Cold       → insert a new Event in _inflight, return None. The caller
-                   MUST call dedup_set(key) in a finally block.
-    """
-    val = cache.get(key)
-    if val is not None:
-        return val
-    if key in _inflight:
-        await _inflight[key].wait()
-        return cache.get(key)
-    _inflight[key] = asyncio.Event()
-    return None
+    return await inflight_tracker.dedup_get(cache, key)
 
 
 def dedup_set(key: str) -> None:
-    """Unblock all coroutines waiting on key and remove the in-flight marker."""
-    event = _inflight.pop(key, None)
-    if event:
-        event.set()
+    inflight_tracker.dedup_set(key)
 
 
 def claim_inflight(key: str) -> bool:
-    """
-    Try to claim key as the sole background fetcher.
-    Returns True if the caller should proceed (slot was free), False if another
-    coroutine already holds the slot. Used by stale-while-revalidate refresh.
-    """
-    if key in _inflight:
-        return False
-    _inflight[key] = asyncio.Event()
-    return True
+    return inflight_tracker.claim_inflight(key)
 
+
+# ---------------------------------------------------------------------------
+# Cache key and response helpers
+# ---------------------------------------------------------------------------
 
 def request_cache_key(request, prefix: Optional[str] = None, include_query: bool = False) -> str:
     path = getattr(getattr(request, "url", None), "path", None) or getattr(request, "path", "")
@@ -136,8 +196,6 @@ def extract_channel_data_from_live_cache(cached_value) -> Optional[dict]:
     """
     Extract the 'data' dict from a cached play_stream response.
     Returns None if the cache entry is absent or malformed.
-    Allows go_to_live_stream and channel_avatar to piggyback on the live: key
-    populated by play_stream and skip a redundant get_channel_data() call.
     """
     if cached_value is None:
         return None

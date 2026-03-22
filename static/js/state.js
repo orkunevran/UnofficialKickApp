@@ -10,6 +10,8 @@ export const appState = {
     clips: [],
     searchPool: [],
     currentChannel: null,
+    /** Cached /config/languages response — fetched once at init, never re-fetched. */
+    languagesConfig: null,
 };
 
 export const vodsSortState = {

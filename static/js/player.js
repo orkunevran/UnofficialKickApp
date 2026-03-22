@@ -2,8 +2,8 @@
  * Mini-player module. Manages the persistent bottom player bar.
  */
 
-import { castStream } from './chromecast_logic.js?v=2.3.7';
-import { escapeHtml } from './utils.js?v=2.3.7';
+import { castStream } from './chromecast_logic.js?v=2.4.8';
+import { escapeHtml } from './utils.js?v=2.4.8';
 
 let hlsInstance = null;
 let currentStream = null;

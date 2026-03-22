@@ -1,3 +1,4 @@
+import asyncio
 import re
 import time
 import threading
@@ -13,31 +14,54 @@ logger = logging.getLogger(__name__)
 class KickAPIClient:
     BASE_URL = Config.KICK_API_BASE_URL
 
-    def __init__(self):
-        self.session = cloudscraper.create_scraper()
-        self.session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.0.0 Safari/537.36",
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        })
+    # ------------------------------------------------------------------ #
+    # Thread-safe session management                                      #
+    #                                                                     #
+    # requests.Session (and its CloudScraper subclass) is NOT thread-safe.#
+    # asyncio.to_thread() dispatches blocking calls to a thread pool, so  #
+    # concurrent requests (featured refresh + batch viewer + channel data) #
+    # can corrupt shared session state (cookies, redirect history, etc.). #
+    #                                                                     #
+    # Fix: use threading.local() to give each worker thread its own       #
+    # CloudScraper session. Sessions are created lazily and reused within #
+    # the same thread, maintaining connection pooling benefits.            #
+    # ------------------------------------------------------------------ #
 
-        # Connection pooling and retry strategy
-        # Worst case: 2 retries × (0.3s, 0.6s backoff) + 3 attempts × 8s timeout = ~25s max
-        retry_strategy = Retry(
-            total=2,
-            backoff_factor=0.3,
-            status_forcelist=[502, 503, 504],
-            allowed_methods=["GET"],
-        )
-        
-        # We must configure cloudscraper's existing adapters instead of replacing them!
-        # Replacing them with HTTPAdapter breaks the Cloudflare bypass.
-        for protocol in ["http://", "https://"]:
-            adapter = self.session.get_adapter(protocol)
-            adapter.max_retries = retry_strategy
-            # The pool size properties for HTTPAdapter
+    _COMMON_HEADERS = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+
+    _RETRY_STRATEGY = Retry(
+        total=2,
+        backoff_factor=0.3,
+        status_forcelist=[502, 503, 504],
+        allowed_methods=["GET"],
+    )
+
+    def __init__(self):
+        self._local = threading.local()
+
+    @property
+    def session(self):
+        """Return a thread-local CloudScraper session (created lazily)."""
+        s = getattr(self._local, "session", None)
+        if s is None:
+            s = self._create_session()
+            self._local.session = s
+        return s
+
+    @classmethod
+    def _create_session(cls):
+        s = cloudscraper.create_scraper()
+        s.headers.update(cls._COMMON_HEADERS)
+        for protocol in ("http://", "https://"):
+            adapter = s.get_adapter(protocol)
+            adapter.max_retries = cls._RETRY_STRATEGY
             adapter._pool_connections = 5
             adapter._pool_maxsize = 10
+        return s
 
     def get_channel_data(self, channel_slug: str, timeout: int = 8) -> dict:
         url = f"{self.BASE_URL}{channel_slug}"
@@ -294,6 +318,70 @@ class KickAPIClient:
         if isinstance(data, list) and data:
             return data[0].get("viewers", 0)
         return 0
+
+    _BATCH_VIEWER_MAX = 10  # Kick.com enforces max 10 ids per request
+
+    def get_viewer_counts_batch(self, livestream_ids: list, timeout: int = 5) -> dict:
+        """Batch viewer count — chunked into max-10-ID calls to Kick.com.
+
+        Returns {livestream_id: viewer_count, ...}.
+        """
+        if not livestream_ids:
+            return {}
+        ids = [int(lid) for lid in livestream_ids[:50]]
+        merged = {}
+        for i in range(0, len(ids), self._BATCH_VIEWER_MAX):
+            chunk = ids[i:i + self._BATCH_VIEWER_MAX]
+            params = "&".join(f"ids[]={lid}" for lid in chunk)
+            url = f"https://kick.com/current-viewers?{params}"
+            logger.debug("Fetching batch viewer counts for %d livestream(s)", len(chunk))
+            response = self.session.get(url, timeout=(3, timeout))
+            response.raise_for_status()
+            if not response.text.strip():
+                continue
+            try:
+                data = response.json()
+            except Exception:
+                logger.debug("Non-JSON batch viewer count response")
+                continue
+            if isinstance(data, list):
+                for item in data:
+                    if "livestream_id" in item:
+                        merged[item["livestream_id"]] = item.get("viewers", 0)
+        return merged
+
+    # ------------------------------------------------------------------ #
+    # Async wrappers                                                      #
+    #                                                                     #
+    # Route handlers call these directly — the asyncio.to_thread() call   #
+    # is encapsulated here instead of scattered across route files.       #
+    # If cloudscraper is replaced with an async HTTP client in the future,#
+    # only these wrappers need to change.                                 #
+    # ------------------------------------------------------------------ #
+
+    async def async_get_channel_data(self, channel_slug: str, **kw) -> dict:
+        return await asyncio.to_thread(self.get_channel_data, channel_slug, **kw)
+
+    async def async_get_channel_videos(self, channel_slug: str, **kw) -> list:
+        return await asyncio.to_thread(self.get_channel_videos, channel_slug, **kw)
+
+    async def async_get_featured_livestreams(self, language: str = "en", page: int = 1, **kw) -> dict:
+        return await asyncio.to_thread(self.get_featured_livestreams, language, page, **kw)
+
+    async def async_get_all_livestreams(self, language: str = "en", page: int = 1, **kw) -> dict:
+        return await asyncio.to_thread(self.get_all_livestreams, language, page, **kw)
+
+    async def async_get_channel_clips(self, channel_slug: str, **kw) -> dict:
+        return await asyncio.to_thread(self.get_channel_clips, channel_slug, **kw)
+
+    async def async_search_channels_typesense(self, query: str, **kw) -> list:
+        return await asyncio.to_thread(self.search_channels_typesense, query, **kw)
+
+    async def async_get_viewer_count(self, livestream_id: int, **kw) -> int:
+        return await asyncio.to_thread(self.get_viewer_count, livestream_id, **kw)
+
+    async def async_get_viewer_counts_batch(self, livestream_ids: list, **kw) -> dict:
+        return await asyncio.to_thread(self.get_viewer_counts_batch, livestream_ids, **kw)
 
 
 kick_api_client = KickAPIClient()

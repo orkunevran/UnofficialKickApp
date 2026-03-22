@@ -2,10 +2,10 @@
  * Settings view — preferences for language, view mode, etc.
  */
 
-import { preferences, savePreferences } from '../state.js?v=2.3.7';
-import { toast } from '../toast.js?v=2.3.7';
-import { clearHistory } from '../history.js?v=2.3.7';
-import { clearFavorites } from '../favorites.js?v=2.3.7';
+import { preferences, savePreferences } from '../state.js?v=2.4.8';
+import { toast } from '../toast.js?v=2.4.8';
+import { clearHistory } from '../history.js?v=2.4.8';
+import { clearFavorites } from '../favorites.js?v=2.4.8';
 
 export async function mount(params, contentEl) {
     // Fetch languages for the selector
@@ -21,10 +21,22 @@ export async function mount(params, contentEl) {
     } catch { /* use fallback */ }
 
     const currentLang = preferences.language || defaultLang;
+    const currentTheme = preferences.theme || 'dark';
 
     contentEl.innerHTML = `
         <div class="section-header">
             <h1 class="section-title">Settings</h1>
+        </div>
+
+        <div class="settings-group">
+            <div class="settings-group-title">Appearance</div>
+            <div class="settings-row">
+                <span class="settings-label">Theme</span>
+                <select id="settings-theme" class="filter-select">
+                    <option value="dark" ${currentTheme === 'dark' ? 'selected' : ''}>Dark</option>
+                    <option value="light" ${currentTheme === 'light' ? 'selected' : ''}>Light</option>
+                </select>
+            </div>
         </div>
 
         <div class="settings-group">
@@ -60,7 +72,7 @@ export async function mount(params, contentEl) {
             <div class="settings-group-title">About</div>
             <div class="settings-row">
                 <span class="settings-label">Version</span>
-                <span style="color:var(--text-muted);font-size:13px">2.0.0</span>
+                <span style="color:var(--text-muted);font-size:13px">3.0.0</span>
             </div>
             <div class="settings-row">
                 <span class="settings-label">API Documentation</span>
@@ -100,6 +112,15 @@ export async function mount(params, contentEl) {
         confirmTimers.push(timer);
     }
 
+    // Theme change
+    const onThemeChange = (e) => {
+        const theme = e.target.value;
+        preferences.theme = theme;
+        savePreferences();
+        document.documentElement.dataset.theme = theme;
+        toast(`Theme switched to ${theme}`, 'success');
+    };
+
     // Language change
     const onLangChange = (e) => {
         preferences.language = e.target.value;
@@ -132,17 +153,20 @@ export async function mount(params, contentEl) {
         });
     };
 
+    const themeEl = contentEl.querySelector('#settings-theme');
     const langEl = contentEl.querySelector('#settings-language');
     const viewEl = contentEl.querySelector('#settings-viewmode');
     const clearHistBtn = contentEl.querySelector('#settings-clear-history');
     const clearFavBtn = contentEl.querySelector('#settings-clear-favorites');
 
+    themeEl?.addEventListener('change', onThemeChange);
     langEl?.addEventListener('change', onLangChange);
     viewEl?.addEventListener('change', onViewChange);
     clearHistBtn?.addEventListener('click', onClearHistory);
     clearFavBtn?.addEventListener('click', onClearFavorites);
 
     return () => {
+        themeEl?.removeEventListener('change', onThemeChange);
         langEl?.removeEventListener('change', onLangChange);
         viewEl?.removeEventListener('change', onViewChange);
         clearHistBtn?.removeEventListener('click', onClearHistory);

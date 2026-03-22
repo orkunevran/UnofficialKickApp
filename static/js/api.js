@@ -1,9 +1,30 @@
-const API_TIMEOUT_MS = 15000;
+const API_TIMEOUT_MS = 8000;
+
+// ── Connection status tracking ──────────────────────────────────────────
+let _consecutiveFailures = 0;
+
+function _updateConnectionStatus(success) {
+    if (success) {
+        _consecutiveFailures = 0;
+    } else {
+        _consecutiveFailures++;
+    }
+    const dot = document.getElementById('connection-status-dot');
+    if (!dot) return;
+    dot.className = 'connection-dot';
+    if (_consecutiveFailures === 0) dot.classList.add('ok');
+    else if (_consecutiveFailures <= 2) dot.classList.add('degraded');
+    else dot.classList.add('lost');
+    dot.title = _consecutiveFailures === 0 ? 'API: connected' : `API: ${_consecutiveFailures} consecutive failures`;
+}
 
 function fetchWithTimeout(url, options = {}, timeoutMs = API_TIMEOUT_MS) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
-    return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer));
+    return fetch(url, { ...options, signal: controller.signal })
+        .then(res => { _updateConnectionStatus(true); return res; })
+        .catch(err => { _updateConnectionStatus(false); throw err; })
+        .finally(() => clearTimeout(timer));
 }
 
 export async function fetchFeaturedStreams(language = 'en', page = 1, filters = {}) {
@@ -31,6 +52,16 @@ export async function fetchFeaturedStreams(language = 'en', page = 1, filters = 
             throw new Error('Request timed out. Please try again.');
         }
         throw error;
+    }
+}
+
+export async function fetchLiveStatus(channelSlug) {
+    try {
+        const res = await fetchWithTimeout(`/streams/play/${channelSlug}`, {}, 8000);
+        if (!res.ok) return null;
+        return await res.json();
+    } catch {
+        return null;
     }
 }
 
@@ -128,6 +159,20 @@ export async function fetchViewerCount(livestreamId) {
         return await response.json();
     } catch (error) {
         return null; // Silent fail — viewer count refresh is non-critical
+    }
+}
+
+export async function fetchBatchViewerCounts(livestreamIds) {
+    if (!livestreamIds.length) return {};
+    try {
+        const response = await fetchWithTimeout(
+            `/streams/viewers/batch?ids=${livestreamIds.join(',')}`, {}, 5000
+        );
+        if (!response.ok) return {};
+        const d = await response.json();
+        return d?.data || {};
+    } catch {
+        return {};
     }
 }
 

@@ -3,26 +3,26 @@
  * Thin orchestrator: initializes router, search, shortcuts, chromecast.
  */
 
-import { route, navigate, init as initRouter } from './js/router.js?v=2.3.7';
-import { initializeChromecast } from './js/chromecast.js?v=2.3.7';
-import { initButtonDelegation, renderSearchResults, renderSearchLoading, renderSearchEmpty, handleSuggestionKeydown, updateFavoritesBadge } from './js/ui.js?v=2.3.7';
-import { appState, loadPreferences, preferences } from './js/state.js?v=2.3.7';
-import { initShortcuts } from './js/shortcuts.js?v=2.3.7';
-import { initMiniPlayerControls } from './js/player.js?v=2.3.7';
-import { getFavoriteCount } from './js/favorites.js?v=2.3.7';
-import { fetchSearchResults, fetchChannelSearch, fetchChannelAvatar } from './js/api.js?v=2.3.7';
-import { initialsAvatar } from './js/utils.js?v=2.3.7';
+import { route, navigate, init as initRouter } from './js/router.js?v=2.4.8';
+import { initializeChromecast } from './js/chromecast.js?v=2.4.8';
+import { initButtonDelegation, renderSearchResults, renderSearchLoading, renderSearchEmpty, handleSuggestionKeydown, updateFavoritesBadge } from './js/ui.js?v=2.4.8';
+import { appState, loadPreferences, preferences } from './js/state.js?v=2.4.8';
+import { initShortcuts } from './js/shortcuts.js?v=2.4.8';
+import { initMiniPlayerControls } from './js/player.js?v=2.4.8';
+import { getFavoriteCount } from './js/favorites.js?v=2.4.8';
+import { fetchSearchResults, fetchChannelSearch, fetchChannelAvatar } from './js/api.js?v=2.4.8';
+import { initialsAvatar } from './js/utils.js?v=2.4.8';
 
 // Expose modules for cross-module access without circular imports
 window.__favModule = { getFavoriteCount };
 window.__routerModule = { navigate };
 
 // ── View imports ──────────────────────────────────────────────────────────
-import { mount as mountBrowse } from './js/views/browse.js?v=2.3.7';
-import { mount as mountChannel } from './js/views/channel.js?v=2.3.7';
-import { mount as mountFavorites } from './js/views/favorites.js?v=2.3.7';
-import { mount as mountHistory } from './js/views/history.js?v=2.3.7';
-import { mount as mountSettings } from './js/views/settings.js?v=2.3.7';
+import { mount as mountBrowse } from './js/views/browse.js?v=2.4.8';
+import { mount as mountChannel } from './js/views/channel.js?v=2.4.8';
+import { mount as mountFavorites } from './js/views/favorites.js?v=2.4.8';
+import { mount as mountHistory } from './js/views/history.js?v=2.4.8';
+import { mount as mountSettings } from './js/views/settings.js?v=2.4.8';
 
 // ── Register routes ───────────────────────────────────────────────────────
 route('/browse', mountBrowse);
@@ -40,6 +40,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Load preferences
     loadPreferences();
+
+    // Apply saved theme
+    if (preferences.theme && preferences.theme !== 'dark') {
+        document.documentElement.dataset.theme = preferences.theme;
+    }
+
+    // Pre-fetch static config (languages never change at runtime)
+    fetch('/config/languages').then(r => r.ok ? r.json() : null).then(cfg => {
+        if (cfg) appState.languagesConfig = cfg;
+    }).catch(() => {});
 
     // Initialize systems
     initializeChromecast();

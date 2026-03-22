@@ -2,14 +2,14 @@
  * Channel view — profile + tabs (Stream / VODs / Clips).
  */
 
-import { fetchChannelData, fetchViewerCount } from '../api.js?v=2.3.7';
-import { renderChannelProfile, renderStreamTabContent, renderProfileSkeleton, renderVodGrid, renderClipGrid } from '../ui.js?v=2.3.7';
-import { appState } from '../state.js?v=2.3.7';
-import { addToHistory } from '../history.js?v=2.3.7';
-import { toast } from '../toast.js?v=2.3.7';
-import { escapeHtml, debounce } from '../utils.js?v=2.3.7';
-import { navigate } from '../router.js?v=2.3.7';
-import { startMiniPlayer } from '../player.js?v=2.3.7';
+import { fetchChannelData, fetchLiveStatus, fetchViewerCount } from '../api.js?v=2.4.8';
+import { renderChannelProfile, renderStreamTabContent, renderProfileSkeleton, renderVodGrid, renderClipGrid } from '../ui.js?v=2.4.8';
+import { appState } from '../state.js?v=2.4.8';
+import { addToHistory } from '../history.js?v=2.4.8';
+import { toast } from '../toast.js?v=2.4.8';
+import { escapeHtml, debounce } from '../utils.js?v=2.4.8';
+import { navigate } from '../router.js?v=2.4.8';
+import { startMiniPlayer } from '../player.js?v=2.4.8';
 
 let viewerRefreshTimer = null;
 let hlsInstance = null;
@@ -24,12 +24,36 @@ function initVideoPlayer(playbackUrl) {
         video.src = playbackUrl;
         video.play().catch(() => {});
     } else if (window.Hls && window.Hls.isSupported()) {
-        hlsInstance = new window.Hls({ lowLatencyMode: true, maxBufferLength: 30 });
+        hlsInstance = new window.Hls({
+            lowLatencyMode: true,
+            liveSyncDurationCount: 3,     // Stay 3 segments behind live edge
+            liveMaxLatencyDurationCount: 6,
+            maxBufferLength: 10,          // Buffer 10s (was 30 — too slow for live)
+            maxMaxBufferLength: 20,
+            liveDurationInfinity: true,
+            backBufferLength: 15,
+        });
         hlsInstance.loadSource(playbackUrl);
         hlsInstance.attachMedia(video);
         hlsInstance.on(window.Hls.Events.MANIFEST_PARSED, () => {
             video.play().catch(() => {});
+            renderQualityPicker(hlsInstance);
         });
+    }
+
+    // PiP button
+    const pipBtn = document.getElementById('pip-button');
+    if (pipBtn && document.pictureInPictureEnabled) {
+        pipBtn.classList.remove('hidden');
+        pipBtn.onclick = async () => {
+            try {
+                if (document.pictureInPictureElement) {
+                    await document.exitPictureInPicture();
+                } else {
+                    await video.requestPictureInPicture();
+                }
+            } catch (e) { console.warn('PiP failed:', e); }
+        };
     }
 }
 
@@ -37,6 +61,31 @@ function destroyVideoPlayer() {
     if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
     const video = document.getElementById('liveVideoPlayer');
     if (video) { video.pause(); video.src = ''; video.load(); }
+}
+
+function renderQualityPicker(hls) {
+    const container = document.getElementById('quality-picker');
+    if (!container || !hls?.levels?.length) return;
+
+    const levels = hls.levels.map((l, i) => ({
+        index: i,
+        label: l.height ? `${l.height}p` : `${Math.round(l.bitrate / 1000)}k`,
+        height: l.height || 0,
+    }));
+
+    // Sort highest first
+    levels.sort((a, b) => b.height - a.height);
+
+    container.innerHTML = `
+        <select id="quality-select" class="filter-select quality-select" title="Stream quality">
+            <option value="-1" selected>Auto</option>
+            ${levels.map(l => `<option value="${l.index}">${l.label}</option>`).join('')}
+        </select>`;
+    container.classList.remove('hidden');
+
+    container.querySelector('#quality-select')?.addEventListener('change', (e) => {
+        hls.currentLevel = parseInt(e.target.value, 10);
+    });
 }
 
 function startViewerRefresh(livestreamId) {
@@ -96,10 +145,9 @@ function renderTabContent(tab, liveData, vodsData, clipsData, channelSlug) {
     const tabContent = document.getElementById('profile-tab-content');
     if (!tabContent) return;
 
-    // Re-trigger fade-in animation
-    tabContent.style.animation = 'none';
-    void tabContent.offsetWidth;
-    tabContent.style.animation = '';
+    // Re-trigger fade-in animation without forced reflow
+    tabContent.classList.remove('tab-fade-in');
+    requestAnimationFrame(() => tabContent.classList.add('tab-fade-in'));
 
     if (tab === 'stream') {
         tabContent.innerHTML = renderStreamTabContent(liveData?.data, channelSlug);
@@ -107,10 +155,13 @@ function renderTabContent(tab, liveData, vodsData, clipsData, channelSlug) {
             initVideoPlayer(liveData.data.playback_url);
         }
     } else if (tab === 'vods') {
+        if (!vodsData) {
+            tabContent.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;padding:40px;color:var(--text-muted)"><span class="inline-spinner is-active" style="margin-right:8px"></span>Loading VODs…</div>';
+            return;
+        }
         const vods = vodsData?.data?.vods || [];
         appState.vods = vods;
 
-        // Add search bar
         const searchHTML = `
             <div style="max-width:400px;margin:0 auto 20px">
                 <input type="text" id="vodSearchInput" placeholder="Search VOD titles..." class="search-input" style="padding-left:12px" maxlength="200">
@@ -122,16 +173,17 @@ function renderTabContent(tab, liveData, vodsData, clipsData, channelSlug) {
         if (vodSearch) {
             vodSearch.addEventListener('input', debounce((e) => {
                 const term = e.target.value.toLowerCase();
-                const filtered = vods.filter(v => v.title?.toLowerCase().includes(term));
-                const grid = tabContent.querySelector('.vod-grid, .empty-state');
-                if (grid) {
-                    const parent = grid.parentNode;
-                    grid.remove();
-                    parent.insertAdjacentHTML('beforeend', renderVodGrid(filtered, channelSlug));
-                }
-            }, 300));
+                tabContent.querySelectorAll('.vod-card').forEach(card => {
+                    const title = card.dataset.title || '';
+                    card.style.display = (!term || title.includes(term)) ? '' : 'none';
+                });
+            }, 200));
         }
     } else if (tab === 'clips') {
+        if (!clipsData) {
+            tabContent.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;padding:40px;color:var(--text-muted)"><span class="inline-spinner is-active" style="margin-right:8px"></span>Loading clips…</div>';
+            return;
+        }
         const clips = clipsData?.data?.clips || [];
         appState.clips = clips;
 
@@ -146,14 +198,11 @@ function renderTabContent(tab, liveData, vodsData, clipsData, channelSlug) {
         if (clipSearch) {
             clipSearch.addEventListener('input', debounce((e) => {
                 const term = e.target.value.toLowerCase();
-                const filtered = clips.filter(c => c.title?.toLowerCase().includes(term));
-                const grid = tabContent.querySelector('.vod-grid, .empty-state');
-                if (grid) {
-                    const parent = grid.parentNode;
-                    grid.remove();
-                    parent.insertAdjacentHTML('beforeend', renderClipGrid(filtered));
-                }
-            }, 300));
+                tabContent.querySelectorAll('.vod-card').forEach(card => {
+                    const title = card.dataset.title || '';
+                    card.style.display = (!term || title.includes(term)) ? '' : 'none';
+                });
+            }, 200));
         }
     }
 }
@@ -172,14 +221,15 @@ export async function mount(params, contentEl) {
     // Show skeleton
     contentEl.innerHTML = renderProfileSkeleton();
 
-    let liveData, vodsData, clipsData;
+    let liveData, vodsData = null, clipsData = null;
     let activeTab = 'stream';
 
+    // Phase 1: Fetch live status FIRST — render profile + start video immediately
     try {
-        const result = await fetchChannelData(channelSlug);
-        liveData = result.liveData;
-        vodsData = result.vodsData;
-        clipsData = result.clipsData;
+        liveData = await fetchLiveStatus(channelSlug);
+        if (!liveData || liveData.status !== 'success') {
+            throw new Error(liveData?.message || 'Channel not found');
+        }
     } catch (err) {
         console.error('Error fetching channel data:', err);
         contentEl.innerHTML = `
@@ -205,21 +255,28 @@ export async function mount(params, contentEl) {
         profilePicture: d?.profile_picture || '',
     });
 
-    // Render profile
+    // Render profile + stream tab immediately — video starts loading NOW
     contentEl.innerHTML = renderChannelProfile(
         liveData?.status === 'success' ? liveData.data : null,
         channelSlug,
         { activeTab }
     );
-
-    // Render initial tab
     renderTabContent(activeTab, liveData, vodsData, clipsData, channelSlug);
 
     // Start viewer refresh if live
     if (liveData?.data?.status === 'live') {
-        const initial = Number(liveData.data.livestream_viewer_count);
         startViewerRefresh(liveData.data.livestream_id);
     }
+
+    // Phase 2: Fetch vods + clips in background (non-blocking)
+    fetchChannelData(channelSlug).then(result => {
+        vodsData = result.vodsData;
+        clipsData = result.clipsData;
+        // If user already switched to vods/clips tab while waiting, re-render that tab
+        if (activeTab === 'vods' || activeTab === 'clips') {
+            renderTabContent(activeTab, liveData, vodsData, clipsData, channelSlug);
+        }
+    }).catch(() => {});
 
     // Tab switching
     const onTabClick = (e) => {

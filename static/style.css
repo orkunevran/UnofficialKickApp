@@ -53,6 +53,87 @@
 [data-theme="light"] ::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.15); }
 [data-theme="light"] ::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.25); }
 
+/* Light theme — cards & depth */
+[data-theme="light"] .stream-card {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+[data-theme="light"] .stream-card:hover {
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1), 0 0 0 1px var(--border-highlight);
+}
+[data-theme="light"] .card-uptime-badge,
+[data-theme="light"] .card-viewers {
+    background: rgba(0, 0, 0, 0.65);
+}
+[data-theme="light"] .card-category {
+    background: rgba(22, 163, 74, 0.1);
+}
+
+/* Light theme — surfaces */
+[data-theme="light"] .top-bar {
+    background: rgba(245, 246, 248, 0.95);
+    backdrop-filter: blur(10px);
+}
+[data-theme="light"] .search-input {
+    background: rgba(0, 0, 0, 0.04);
+}
+[data-theme="light"] .search-suggestions {
+    background: rgba(255, 255, 255, 0.98);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
+}
+[data-theme="light"] .filter-select option {
+    background: #fff;
+}
+[data-theme="light"] .browse-sticky-header {
+    background: var(--bg-color);
+}
+
+/* Light theme — mobile nav */
+[data-theme="light"] .mobile-nav {
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(10px);
+}
+[data-theme="light"] .mini-player {
+    background: rgba(255, 255, 255, 0.97);
+}
+
+/* Light theme — profile */
+[data-theme="light"] .profile-banner {
+    background: linear-gradient(135deg, rgba(22, 163, 74, 0.08), rgba(245, 246, 248, 0.8));
+}
+[data-theme="light"] .profile-avatar-wrap.live-ring {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px var(--primary-color), 0 0 16px rgba(22, 163, 74, 0.2);
+}
+
+/* Light theme — sort pills & filter elements */
+[data-theme="light"] .sort-pill.active {
+    background: rgba(22, 163, 74, 0.08);
+}
+[data-theme="light"] .category-tag {
+    background: rgba(22, 163, 74, 0.08);
+    border-color: rgba(22, 163, 74, 0.2);
+}
+
+/* Light theme — skeletons */
+[data-theme="light"] .skeleton-thumb,
+[data-theme="light"] .skeleton-bar {
+    background: linear-gradient(90deg, rgba(0,0,0,0.04) 25%, rgba(0,0,0,0.07) 50%, rgba(0,0,0,0.04) 75%);
+    background-size: 200% 100%;
+}
+
+/* Light theme — toast */
+[data-theme="light"] .toast {
+    background: rgba(255, 255, 255, 0.95);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+}
+
+/* Light theme — shortcut keys */
+[data-theme="light"] .shortcut-key,
+[data-theme="light"] .search-kbd {
+    background: rgba(0, 0, 0, 0.05);
+    border-color: rgba(0, 0, 0, 0.1);
+}
+
 /* ── Smooth theme transition ─────────────────────────────────────────── */
 html.theme-transitioning,
 html.theme-transitioning *,
@@ -209,6 +290,7 @@ body {
     will-change: opacity;
     border-radius: 50%;
     animation: pulse-glow 2s infinite;
+    color: var(--primary-color);
     flex-shrink: 0;
 }
 
@@ -555,12 +637,30 @@ body {
     overflow: hidden;
     transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
     cursor: pointer;
+    animation: card-enter 0.35s ease-out both;
 }
+/* Staggered entrance — first 24 cards get cascading delays */
+.stream-card:nth-child(1)  { animation-delay: 0ms; }
+.stream-card:nth-child(2)  { animation-delay: 30ms; }
+.stream-card:nth-child(3)  { animation-delay: 60ms; }
+.stream-card:nth-child(4)  { animation-delay: 90ms; }
+.stream-card:nth-child(5)  { animation-delay: 120ms; }
+.stream-card:nth-child(6)  { animation-delay: 150ms; }
+.stream-card:nth-child(7)  { animation-delay: 180ms; }
+.stream-card:nth-child(8)  { animation-delay: 210ms; }
+.stream-card:nth-child(9)  { animation-delay: 240ms; }
+.stream-card:nth-child(10) { animation-delay: 270ms; }
+.stream-card:nth-child(11) { animation-delay: 300ms; }
+.stream-card:nth-child(12) { animation-delay: 330ms; }
+.stream-card:nth-child(n+13) { animation-delay: 350ms; }
 @media (hover: hover) {
     .stream-card:hover {
-        transform: translateY(-2px);
+        transform: translateY(-3px);
         border-color: var(--border-highlight);
-        box-shadow: 0 8px 24px rgba(0,0,0,0.3);
+        box-shadow:
+            0 8px 24px rgba(0, 0, 0, 0.35),
+            0 0 0 1px var(--border-highlight),
+            0 0 20px rgba(83, 252, 24, 0.06);
     }
 }
 .card-thumbnail {
@@ -611,6 +711,7 @@ body {
     will-change: opacity;
     border-radius: 50%;
     animation: pulse-glow 2s infinite;
+    color: var(--live-color);
 }
 .card-viewers {
     position: absolute;
@@ -735,11 +836,13 @@ body {
     border-radius: var(--radius-sm);
     padding: 8px 12px;
     cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
+    transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+    animation: card-enter 0.3s ease-out both;
 }
 .stream-list-item:hover {
     background: var(--surface-hover);
     border-color: var(--border-highlight);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 .list-thumb {
     width: 120px;
@@ -964,6 +1067,7 @@ body {
     background: var(--live-color);
     will-change: opacity;
     animation: pulse-glow 2s infinite;
+    color: var(--live-color);
 }
 
 /* ── Stream Actions ────────────────────────────────────────────────────── */
@@ -1075,6 +1179,16 @@ body {
     margin: -24px -24px 8px;
     padding: 24px 24px 0;
     border-bottom: 1px solid var(--border-color);
+}
+.browse-sticky-header::after {
+    content: '';
+    position: absolute;
+    bottom: -16px;
+    left: 0; right: 0;
+    height: 16px;
+    background: linear-gradient(to bottom, var(--bg-color), transparent);
+    pointer-events: none;
+    z-index: 1;
 }
 .browse-sticky-header .section-header {
     margin-bottom: 0;
@@ -1744,27 +1858,29 @@ body {
 #browse-view.browse-bootstrapping .stream-list,
 #browse-view.browse-bootstrapping #profile-tab-content,
 #browse-view.browse-bootstrapping .stream-card,
-#browse-view.browse-bootstrapping .vod-card {
+#browse-view.browse-bootstrapping .vod-card,
+#browse-view.browse-bootstrapping .stream-list-item {
     animation: none !important;
 }
 
 /* ── Card Stagger Animation ───────────────────────────────────────────── */
-.stream-card,
+/* stream-card animation is set on its component rule above; vod-cards reuse card-enter */
 .vod-card {
-    animation: fade-in 0.3s ease backwards;
+    animation: card-enter 0.35s ease-out both;
 }
-.stream-card:nth-child(1), .vod-card:nth-child(1) { animation-delay: 0s; }
-.stream-card:nth-child(2), .vod-card:nth-child(2) { animation-delay: 0.03s; }
-.stream-card:nth-child(3), .vod-card:nth-child(3) { animation-delay: 0.06s; }
-.stream-card:nth-child(4), .vod-card:nth-child(4) { animation-delay: 0.09s; }
-.stream-card:nth-child(5), .vod-card:nth-child(5) { animation-delay: 0.12s; }
-.stream-card:nth-child(6), .vod-card:nth-child(6) { animation-delay: 0.15s; }
-.stream-card:nth-child(7), .vod-card:nth-child(7) { animation-delay: 0.18s; }
-.stream-card:nth-child(8), .vod-card:nth-child(8) { animation-delay: 0.21s; }
-.stream-card:nth-child(9), .vod-card:nth-child(9) { animation-delay: 0.24s; }
-.stream-card:nth-child(10), .vod-card:nth-child(10) { animation-delay: 0.27s; }
-.stream-card:nth-child(11), .vod-card:nth-child(11) { animation-delay: 0.30s; }
-.stream-card:nth-child(12), .vod-card:nth-child(12) { animation-delay: 0.33s; }
+.vod-card:nth-child(1)  { animation-delay: 0ms; }
+.vod-card:nth-child(2)  { animation-delay: 30ms; }
+.vod-card:nth-child(3)  { animation-delay: 60ms; }
+.vod-card:nth-child(4)  { animation-delay: 90ms; }
+.vod-card:nth-child(5)  { animation-delay: 120ms; }
+.vod-card:nth-child(6)  { animation-delay: 150ms; }
+.vod-card:nth-child(7)  { animation-delay: 180ms; }
+.vod-card:nth-child(8)  { animation-delay: 210ms; }
+.vod-card:nth-child(9)  { animation-delay: 240ms; }
+.vod-card:nth-child(10) { animation-delay: 270ms; }
+.vod-card:nth-child(11) { animation-delay: 300ms; }
+.vod-card:nth-child(12) { animation-delay: 330ms; }
+.vod-card:nth-child(n+13) { animation-delay: 350ms; }
 
 /* ── Favorites Badge Pulse ────────────────────────────────────────────── */
 .sidebar-badge.pulse {
@@ -1822,8 +1938,12 @@ body {
     to { transform: rotate(360deg); }
 }
 @keyframes pulse-glow {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
+    0%, 100% { opacity: 1; box-shadow: 0 0 4px currentColor; }
+    50% { opacity: 0.35; box-shadow: 0 0 1px currentColor; }
+}
+@keyframes card-enter {
+    from { opacity: 0; transform: translateY(12px) scale(0.98); }
+    to   { opacity: 1; transform: translateY(0)   scale(1); }
 }
 @keyframes toast-in {
     from { opacity: 0; transform: translateX(20px); }

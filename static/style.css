@@ -2163,6 +2163,22 @@ body {
     padding: 0 2px; flex-shrink: 0;
 }
 .toast-close:hover { color: var(--text-color); }
+/* Countdown progress bar — width shrinks from 100% to 0 over --toast-duration */
+.toast::after {
+    content: '';
+    position: absolute;
+    bottom: 0; left: 0;
+    height: 2px;
+    width: 100%;
+    background: var(--primary-color);
+    opacity: 0.4;
+    transform-origin: left;
+    animation: toast-countdown var(--toast-duration, 4s) linear forwards;
+}
+@keyframes toast-countdown {
+    from { transform: scaleX(1); }
+    to   { transform: scaleX(0); }
+}
 
 /* ── Scroll Sentinel ───────────────────────────────────────────────────── */
 .scroll-sentinel {

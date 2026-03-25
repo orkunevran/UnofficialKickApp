@@ -1,4 +1,4 @@
-"""Request context middleware — correlation IDs and timing."""
+"""Request context middleware — correlation IDs, timing, and security headers."""
 
 import contextvars
 import logging
@@ -14,9 +14,23 @@ request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("request_id
 
 logger = logging.getLogger(__name__)
 
+# Security headers applied to every response when SECURITY_HEADERS_ENABLED=True.
+# These provide baseline protection against common web vulnerabilities without
+# requiring any external dependencies.
+_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+}
+
 
 class RequestContextMiddleware(BaseHTTPMiddleware):
-    """Adds a short correlation ID to every request and logs completion with timing."""
+    """Adds correlation ID, request timing, and security headers to every response."""
+
+    def __init__(self, app, security_headers_enabled: bool = True):
+        super().__init__(app)
+        self._security_headers_enabled = security_headers_enabled
 
     async def dispatch(self, request: Request, call_next) -> Response:
         rid = request.headers.get("x-request-id") or uuid.uuid4().hex[:8]
@@ -37,6 +51,11 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
                 rid,
             )
         response.headers["X-Request-ID"] = rid
+
+        if self._security_headers_enabled:
+            for header, value in _SECURITY_HEADERS.items():
+                response.headers.setdefault(header, value)
+
         return response
 
 

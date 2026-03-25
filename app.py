@@ -15,6 +15,7 @@ from fastapi.templating import Jinja2Templates
 from api.cache import inflight_tracker
 from api.chromecast import router as chromecast_router
 from api.errors import ApiError, error_json
+from api.health import router as health_router
 from api.metrics import router as metrics_router
 from api.middleware import CorrelationIDFormatter, RequestContextMiddleware
 from api.routes import channel_router, discovery_router, featured_router, vods_router
@@ -164,7 +165,19 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.add_middleware(RequestContextMiddleware)
+app.add_middleware(RequestContextMiddleware, security_headers_enabled=Config.SECURITY_HEADERS_ENABLED)
+
+# CORS — only enabled when CORS_ORIGINS is set (comma-separated list)
+if Config.CORS_ORIGINS:
+    from starlette.middleware.cors import CORSMiddleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[o.strip() for o in Config.CORS_ORIGINS.split(",") if o.strip()],
+        allow_credentials=Config.CORS_ALLOW_CREDENTIALS,
+        allow_methods=["GET", "POST"],
+        allow_headers=["*"],
+    )
+
 templates.env.globals["url_for"] = _flask_style_url_for
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.include_router(channel_router)
@@ -173,6 +186,7 @@ app.include_router(featured_router)
 app.include_router(discovery_router)
 app.include_router(chromecast_router)
 app.include_router(metrics_router)
+app.include_router(health_router)
 
 
 @app.exception_handler(ApiError)

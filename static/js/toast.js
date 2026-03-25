@@ -42,6 +42,13 @@ export function toast(message, type = 'info', options = {}) {
     }
 
     container.appendChild(el);
+    // Set CSS variable for the countdown bar animation duration
+    if (duration > 0) {
+        el.style.setProperty('--toast-duration', `${duration}ms`);
+    } else {
+        // No auto-dismiss — hide the progress bar
+        el.style.setProperty('--toast-duration', '0s');
+    }
     // Trigger enter animation
     requestAnimationFrame(() => el.classList.add('toast-enter'));
 

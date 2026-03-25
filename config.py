@@ -68,6 +68,16 @@ class Settings(BaseSettings):
     CIRCUIT_BREAKER_FAILURE_THRESHOLD: int = Field(5, ge=1)
     CIRCUIT_BREAKER_RECOVERY_SECONDS: int = Field(30, ge=5)
 
+    # CORS settings — set CORS_ORIGINS to a comma-separated list to enable
+    CORS_ORIGINS: str = ""
+    CORS_ALLOW_CREDENTIALS: bool = False
+
+    # Security headers
+    SECURITY_HEADERS_ENABLED: bool = True
+
+    # Structured JSON logging (useful for production log aggregation)
+    LOG_FORMAT_JSON: bool = False
+
     def to_dict(self) -> dict:
         return self.model_dump()
 

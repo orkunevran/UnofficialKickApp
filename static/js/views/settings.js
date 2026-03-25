@@ -79,6 +79,10 @@ export async function mount(params, contentEl) {
                 <span class="settings-label">API Documentation</span>
                 <a href="/docs" target="_blank" class="btn-secondary">Open Swagger</a>
             </div>
+            <div class="settings-row">
+                <span class="settings-label">Generative Art</span>
+                <a href="/static/art/signal-drift.html" target="_blank" class="btn-secondary">Signal Drift</a>
+            </div>
         </div>
 
         <div class="settings-group">

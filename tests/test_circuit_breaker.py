@@ -60,3 +60,41 @@ class TestCircuitBreaker:
         assert stats["failure_count"] == 1
         assert stats["failure_threshold"] == 5
         assert stats["state"] == "closed"
+
+    def test_half_open_allows_only_one_probe(self):
+        """In half-open state, only the first caller should get permission.
+
+        This prevents the thundering-herd problem where ALL concurrent
+        requests pass through during the recovery probe window.
+        """
+        cb = CircuitBreaker(failure_threshold=1, recovery_timeout=10)
+        cb.record_failure()
+        assert cb.state == "open"
+
+        # Advance time past recovery timeout to trigger half-open
+        with patch("services.circuit_breaker.time") as mock_time:
+            mock_time.monotonic.return_value = time.monotonic() + 20
+            # First caller gets the probe
+            assert cb.allow_request() is True
+            # Subsequent callers are blocked — only one probe allowed
+            assert cb.allow_request() is False
+            assert cb.allow_request() is False
+
+        # After the probe succeeds, circuit closes and all requests pass
+        cb.record_success()
+        assert cb.allow_request() is True
+        assert cb.allow_request() is True
+
+    def test_half_open_failure_reopens_circuit(self):
+        """If the probe request fails in half-open state, circuit reopens."""
+        cb = CircuitBreaker(failure_threshold=1, recovery_timeout=10)
+        cb.record_failure()
+
+        with patch("services.circuit_breaker.time") as mock_time:
+            mock_time.monotonic.return_value = time.monotonic() + 20
+            assert cb.allow_request() is True  # probe granted
+
+            # Probe fails — circuit should reopen
+            cb.record_failure()
+            assert cb.state == "open"
+            assert cb.allow_request() is False

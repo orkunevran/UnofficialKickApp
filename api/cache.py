@@ -32,6 +32,11 @@ class InflightTracker:
         - In-flight  → await the existing Event (with timeout), return cache result.
         - Cold       → insert a new Event in _inflight, return None. The caller
                        MUST call dedup_set(key) in a finally block.
+
+        On timeout, we do NOT remove the in-flight entry — the original fetcher
+        is still running and will call dedup_set() when done. Removing it here
+        would break dedup: a new request would see no in-flight marker and start
+        a duplicate fetch. The periodic sweep_stale() handles truly abandoned entries.
         """
         val = cache.get(key)
         if val is not None:
@@ -43,9 +48,7 @@ class InflightTracker:
             try:
                 await asyncio.wait_for(event.wait(), timeout=self._WAIT_TIMEOUT)
             except asyncio.TimeoutError:
-                # Stale in-flight entry — remove it and let caller re-fetch
-                self._inflight.pop(key, None)
-                logger.warning("In-flight wait timed out for key: %s", key)
+                logger.warning("In-flight wait timed out for key: %s (fetcher still running)", key)
             return cache.get(key)
 
         self._inflight[key] = (asyncio.Event(), time.monotonic())

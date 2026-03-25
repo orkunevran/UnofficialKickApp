@@ -14,7 +14,7 @@ from api.cache import (
     request_cache_key,
 )
 from api.deps import CacheDep, CircuitBreakerDep, KickClientDep
-from api.routes._common import kick_call, _SUBCATEGORY_RE
+from api.routes._common import kick_call, SUBCATEGORY_RE
 from config import Config
 from services.transformers import build_featured_response, warm_caches_from_featured
 
@@ -90,11 +90,11 @@ async def featured_livestreams(
     sort = sort.strip().lower()
     strict_bool = strict.strip().lower() == "true"
 
-    if category and not _SUBCATEGORY_RE.match(category):
+    if category and not SUBCATEGORY_RE.match(category):
         category = ""
-    if subcategory and not _SUBCATEGORY_RE.match(subcategory):
+    if subcategory and not SUBCATEGORY_RE.match(subcategory):
         subcategory = ""
-    if subcategories and not _SUBCATEGORY_RE.match(subcategories):
+    if subcategories and not SUBCATEGORY_RE.match(subcategories):
         subcategories = ""
     if sort not in {"", "asc", "desc", "featured"}:
         sort = ""

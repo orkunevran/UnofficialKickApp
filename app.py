@@ -157,7 +157,7 @@ async def lifespan(fastapi_app: FastAPI):
 
 app = FastAPI(
     title="Kick Stream Proxy API",
-    version="3.0",
+    version="3.1.0",
     description="A proxy API for Kick.com live streams and VODs.",
     docs_url="/docs",
     redoc_url=None,

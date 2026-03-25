@@ -8,33 +8,52 @@
   <strong>A lightweight, self-hosted FastAPI web app and proxy API for Kick.com streams.</strong>
 </p>
 
+<p align="center">
+  <code>v3.1.0</code>&ensp;·&ensp;Python 3.11+&ensp;·&ensp;FastAPI&ensp;·&ensp;Vanilla JS SPA&ensp;·&ensp;Docker
+</p>
+
 ---
 
 Unofficial Kick App provides a web UI plus a REST API for Kick.com live streams, VODs, clips, featured streams, search, and Chromecast playback. It is designed to run locally, in Docker, or on a small home server such as a Raspberry Pi.
 
 ## Features
 
-- Live stream lookup with playback redirection
-- Seamless mini-player handoff so live playback keeps running while you browse other channels
-- VOD browsing and direct VOD playback links
-- Recent clip browsing
-- Featured streams with infinite scroll, language and category filtering
-- Single Page Application (SPA) architecture with ultra-fast client-side routing
-- Favorites and History tracking for quick access to your most-watched channels
-- Smart prefetching: next page is cached in the background before you scroll to it
-- Seamless auto-refresh: viewer counts and stream data update silently every 90 seconds
-- Two-tier channel search: instant local results + full Typesense server-side search, with loading/empty states and keyboard navigation
-- Avatar lookup and current viewer counts (single and batch)
+### Streaming & Playback
+- Live stream lookup with HLS playback and quality picker
+- Seamless mini-player handoff — live playback keeps running while you browse other channels
+- Resizable mini-player video panel with drag-to-resize and double-click expand
+- Picture-in-Picture support
+- VOD browsing with direct playback redirection
+- Recent clip browsing with search filtering
 - Chromecast device discovery, fallback subnet probing, cast control, and SSE status streaming
-- Glassmorphism UI with skeleton loaders, smooth staggered animations, and responsive polish
+
+### Discovery & Navigation
+- Featured streams with infinite scroll, language and category filtering
+- Smart prefetching — next page is cached in the background before you scroll to it
+- Two-tier channel search: instant local results + full Typesense server-side search with keyboard navigation
+- Favorites and History tracking with localStorage persistence
+- SPA architecture with hash-based client-side routing and View Transitions
+
+### UI & Design
+- System/Light/Dark theme toggle with `prefers-color-scheme` auto-detection
+- Atmospheric grain texture overlay and ambient glow orbs
+- Syne display typography for headers, Inter for UI text
+- Staggered card entrance animations and enhanced hover glow effects
+- Glassmorphism surfaces, skeleton loaders, and smooth transitions
+- Keyboard shortcuts modal (`?`) with two-key navigation combos (`g b`, `g f`, `g h`, `g s`)
+- WCAG AA accessible: skip link, focus rings, ARIA combobox search, tab pattern, `prefers-contrast` and `prefers-reduced-motion` support
+
+### Backend & Operations
 - Circuit breaker for upstream API resilience
+- Stale-while-revalidate caching with in-flight deduplication
 - Request correlation IDs and structured logging
-- LRU-bounded in-memory cache with hit/miss stats
+- LRU-bounded in-memory cache with hit/miss stats and max-size eviction
+- Batch viewer count endpoint (up to 50 IDs in one request)
 - Swagger/OpenAPI docs at `/docs`
 - Operational metrics at `/metrics`
-- Multi-stage Docker build with health checks
+- 68 tests (contract, unit, concurrency, lifecycle)
 - GitHub Actions CI pipeline
-- Cloudscraper-based Kick API access
+- Cloudscraper-based Kick API access with thread-safe per-worker sessions
 
 ## Quick Start
 
@@ -71,6 +90,20 @@ The app will be available at `http://localhost:8081`.
 pytest tests/ -v
 ```
 
+The test suite includes 68 tests across 7 modules:
+
+| Module | Coverage |
+| --- | --- |
+| `test_fastapi_parity.py` | API contract tests for all endpoints |
+| `test_transformers.py` | Data transformation edge cases |
+| `test_cache_service.py` | Cache LRU eviction, TTL, thread safety |
+| `test_circuit_breaker.py` | State machine transitions |
+| `test_kick_api_service.py` | Typesense key concurrency and fallback |
+| `test_chromecast_service.py` | Device discovery lifecycle |
+| `test_lifespan.py` | App startup/shutdown sequence |
+
+Tests use `monkeypatch` to stub service methods and `httpx.ASGITransport` for direct FastAPI testing without a live server.
+
 ## API Endpoints
 
 ### Stream Routes
@@ -86,7 +119,7 @@ pytest tests/ -v
 | `GET` | `/streams/search?q={query}` | Search Kick channels via Typesense |
 | `GET` | `/streams/avatar/{channel_slug}` | Get the channel profile image URL |
 | `GET` | `/streams/viewers?id={livestream_id}` | Get current viewer count for a live stream |
-| `GET` | `/streams/viewers/batch?ids={id1},{id2},...` | Batch viewer counts (up to 50) |
+| `GET` | `/streams/viewers/batch?ids={id1},{id2},...` | Batch viewer counts (up to 50, chunked at 10) |
 | `GET` | `/config/languages` | Get available featured stream languages |
 
 ### Chromecast Routes
@@ -128,20 +161,77 @@ api/
     featured.py                     # /featured-livestreams (stale-while-revalidate)
     discovery.py                    # /search, /viewers, /viewers/batch
 services/
-  kick_api_service.py               # HTTP client for Kick.com API (Cloudscraper)
+  kick_api_service.py               # HTTP client for Kick.com (Cloudscraper, thread-local sessions)
   cache_service.py                  # LRU in-memory cache with max_size and stats
   circuit_breaker.py                # Upstream circuit breaker (closed/open/half-open)
   chromecast_service.py             # Chromecast device discovery and cast control
-  transformers.py                   # Pure data transformation functions
+  transformers.py                   # Pure data transformations + cache warm-up
+templates/
+  index.html                        # SPA shell with Jinja2 hash-based cache busting
+static/
+  style.css                         # Full design system (CSS variables, both themes, responsive)
+  script.js                         # Main entry: router, search, theme system, modal inert mgmt
+  js/
+    router.js                       # Hash-based SPA router with View Transitions
+    state.js                        # Central app state + preferences (localStorage)
+    api.js                          # Fetch wrappers with timeout + connection status tracking
+    ui.js                           # Card rendering, ARIA, keyboard activation, grid patching
+    player.js                       # Mini-player: HLS handoff, resize, expand/collapse
+    shortcuts.js                    # Keyboard shortcuts: ?, t, g+b/f/h/s, Esc, /
+    chromecast.js                   # Chromecast modal: discovery, selection, focus trap
+    toast.js                        # Toast notification system (role=alert, auto-dismiss)
+    favorites.js                    # Favorites store (localStorage)
+    history.js                      # Watch history store (localStorage)
+    sorting.js                      # Client-side featured stream sorting
+    utils.js                        # Escaping, formatting, debounce, clipboard
+    views/
+      browse.js                     # Featured streams: infinite scroll, prefetch, auto-refresh
+      channel.js                    # Channel profile: HLS player, tabs, viewer refresh
+      favorites.js                  # Favorites grid with live status fetch
+      history.js                    # Watch history list
+      settings.js                   # Preferences: theme, language, view mode, data clearing
+  art/                              # Generative art (p5.js) — Signal Drift, Signal Propagation
 tests/
-  test_fastapi_parity.py            # API contract tests (all endpoints)
+  conftest.py                       # Shared fixtures (cache clearing, sample API data)
+  test_fastapi_parity.py            # Contract tests for all API endpoints
   test_transformers.py              # Data transformation edge cases
   test_cache_service.py             # Cache LRU eviction, TTL, thread safety
   test_circuit_breaker.py           # State machine transitions
-  test_kick_api_service.py          # Typesense key concurrency
+  test_kick_api_service.py          # Typesense key concurrency and fallback
   test_chromecast_service.py        # Device discovery lifecycle
   test_lifespan.py                  # App startup/shutdown sequence
 ```
+
+## Frontend Architecture
+
+The web UI is a vanilla JS Single Page Application with hash-based routing. No build step required.
+
+### Rendering Pipeline
+
+The browse view uses three render modes for optimal performance:
+
+| Mode | Trigger | Behavior |
+| --- | --- | --- |
+| **full** | Initial load, language/category switch, sort | Full DOM replacement with staggered card-enter animations |
+| **append** | Scroll-triggered page load | New cards animated in, existing cards untouched |
+| **refresh** | 90-second auto-refresh, mid-cycle viewer update | Silent cell-level DOM patching, zero animation overhead |
+
+### Key Design Decisions
+
+- **1-page-ahead prefetch** — after each scroll load, the next page is silently fetched so it is ready instantly when the user scrolls further
+- **Page-1-only auto-refresh** — the 90-second timer re-fetches only page 1 instead of all loaded pages, keeping API usage minimal
+- **Mid-cycle viewer refresh** — at the 60-second mark, batch viewer counts are fetched and animated in-place with eased counting transitions
+- **Server-side stale-while-revalidate** — each featured page is cached with a short fresh TTL and a longer stale TTL; stale responses are served instantly while a single background refresh runs
+- **Mini-player HLS handoff** — when navigating away from a live channel, the HLS.js instance is transferred (detach + attach) into a persistent mini-player bar instead of being destroyed and recreated
+- **Observer self-re-triggering** — if the scroll sentinel is still visible after a page loads, the next page loads immediately without waiting for the IntersectionObserver frame delay
+
+### Theme System
+
+Three-state theme (System / Light / Dark) with `prefers-color-scheme` auto-detection, real-time OS change tracking, smooth 300ms CSS transitions, and dynamic `<meta name="theme-color">` / `<meta name="color-scheme">` updates. Accessible via top-bar toggle button or `t` keyboard shortcut.
+
+### Accessibility
+
+WCAG AA compliance: skip-to-content link, distinct `aria-label` on nav landmarks, full combobox ARIA pattern for search, tab ARIA for profile tabs, focusable cards with Enter/Space activation, modal focus trapping with background `inert`, `prefers-contrast: more` and `prefers-reduced-motion: reduce` media queries, 4.8:1 minimum contrast ratio on light theme text, and `rel="noopener noreferrer"` on all external links.
 
 ## Configuration
 
@@ -152,6 +242,7 @@ The application is configured with environment variables (or a `.env` file):
 | `FLASK_DEBUG` | `False` | Enable reload mode for local development |
 | `PORT` | `8081` | Application port |
 | `LOG_LEVEL` | `INFO` | Logging level |
+| `LOG_FORMAT_JSON` | `False` | Structured JSON logging for production |
 | `DEFAULT_LANGUAGE_CODE` | `tr` | Default featured-stream language |
 | `KICK_API_BASE_URL` | `https://kick.com/api/v2/channels/` | Kick channel API base URL |
 | `KICK_FEATURED_LIVESTREAMS_URL` | `https://kick.com/stream/featured-livestreams/` | Featured livestreams URL |
@@ -162,17 +253,20 @@ The application is configured with environment variables (or a `.env` file):
 | `LIVE_CACHE_DURATION_SECONDS` | `30` | Cache duration for live stream data |
 | `VOD_CACHE_DURATION_SECONDS` | `300` | Cache duration for VOD and clip data |
 | `FEATURED_CACHE_DURATION_SECONDS` | `120` | Fresh TTL for featured streams |
-| `FEATURED_STALE_TTL_SECONDS` | `300` | Stale-while-revalidate window for featured streams |
+| `FEATURED_STALE_TTL_SECONDS` | `300` | Stale-while-revalidate window |
 | `SEARCH_CACHE_DURATION_SECONDS` | `30` | Cache duration for search results |
 | `AVATAR_CACHE_DURATION_SECONDS` | `604800` | Cache duration for avatars (7 days) |
 | `VIEWER_CACHE_DURATION_SECONDS` | `30` | Cache duration for viewer counts |
-| `NEGATIVE_CACHE_DURATION_SECONDS` | `10` | Short TTL for error responses (e.g. 404/429) |
+| `NEGATIVE_CACHE_DURATION_SECONDS` | `10` | Short TTL for error responses (404/429) |
 | `CIRCUIT_BREAKER_FAILURE_THRESHOLD` | `5` | Consecutive failures before circuit opens |
 | `CIRCUIT_BREAKER_RECOVERY_SECONDS` | `30` | Seconds before half-open probe |
 | `ASYNCIO_THREAD_WORKERS` | `0` | Thread pool size for async ops (0 = default) |
+| `CORS_ORIGINS` | `""` | Comma-separated CORS origins (empty = disabled) |
+| `CORS_ALLOW_CREDENTIALS` | `False` | Allow credentials in CORS requests |
+| `SECURITY_HEADERS_ENABLED` | `True` | Enable security response headers |
 | `CHROMECAST_SCAN_TIMEOUT` | `5` | Chromecast discovery timeout |
-| `CHROMECAST_SELECT_MAX_RETRIES` | `2` | Max connection retries for Chromecast |
-| `CHROMECAST_SELECT_RETRY_DELAY` | `2` | Delay between Chromecast connection retries |
+| `CHROMECAST_SELECT_MAX_RETRIES` | `2` | Max retries for Chromecast connection |
+| `CHROMECAST_SELECT_RETRY_DELAY` | `2` | Delay between connection retries |
 | `CHROMECAST_MAX_CONNECTION_FAILURES` | `3` | Max failures before dropping device |
 | `CHROMECAST_DEVICE_CACHE_SECONDS` | `30` | Chromecast device cache lifetime |
 | `CHROMECAST_STOP_WAIT_SECONDS` | `2.0` | Seconds to wait when stopping a cast |
@@ -201,24 +295,11 @@ docker run -d \
   kick-api:latest
 ```
 
-The Dockerfile uses a multi-stage build (build dependencies in stage 1, slim runtime in stage 2) and runs a single Uvicorn worker to keep the Chromecast singleton in-process.
+The Dockerfile uses a multi-stage build (build dependencies in stage 1, slim runtime in stage 2) and runs a single Uvicorn worker to keep the Chromecast singleton in-process. A `sitecustomize.py` patch replaces `requests.Session` with Cloudscraper at import time.
 
-## Frontend Architecture
+## Kick API Reference
 
-The web UI uses a custom infinite scroll system with three render modes for optimal performance:
-
-| Mode | Trigger | Behavior |
-| --- | --- | --- |
-| **full** | Initial load, language/category switch, sort | Full DOM diff with FLIP reorder animations |
-| **append** | Scroll-triggered page load, background prefetch | Entry animations for new rows only; existing rows untouched |
-| **refresh** | 90-second auto-refresh | Silent cell-level updates; zero animation overhead |
-
-Key design decisions:
-- **1-page-ahead prefetch** — after each scroll load, the next page is silently fetched so it is ready instantly when the user scrolls further
-- **Page-1-only auto-refresh** — the 90-second timer re-fetches only page 1 (most dynamic data) instead of all loaded pages, keeping API usage minimal
-- **Observer self-re-triggering** — if the scroll sentinel is still visible after a page loads, the next page loads immediately without waiting for the IntersectionObserver frame delay
-- **Server-side stale-while-revalidate** — each page response is cached with a short fresh TTL and a longer stale TTL; stale responses are served instantly while a single background refresh runs
-- **Mini-player handoff** — when you navigate away from a live channel, the HLS stream is transferred into a persistent mini-player bar instead of restarting from scratch
+The file [`KICK_PUBLIC_API.md`](KICK_PUBLIC_API.md) contains a detailed reverse-engineering memo of Kick's public API surface, including confirmed endpoints, search infrastructure, Typesense key extraction, official developer API status, Pusher/realtime config, and reproduction commands. It is the authoritative reference for understanding which upstream Kick endpoints this app depends on.
 
 ## Troubleshooting
 
@@ -229,10 +310,18 @@ Key design decisions:
 | Chromecast devices do not appear | Check the local network and re-run device discovery |
 | Container exits immediately | Inspect `docker logs kick-api` for the traceback |
 | Circuit breaker open (503s) | Check `/metrics` — upstream may be down; breaker resets after 30s |
+| Theme not applying | Clear localStorage (`kick-api-preferences`) and reload |
+| Stale search results | Typesense key may have rotated — app auto-refreshes on 401/403 |
 
 ## Contributing
 
-Pull requests and issues are welcome.
+Pull requests and issues are welcome. The codebase follows these conventions:
+
+- **Backend**: FastAPI with async routes, sync Kick API calls wrapped in `asyncio.to_thread()`, dependency injection via `api/deps.py`
+- **Frontend**: Vanilla JS ES modules (no build step), all rendering via string templates in `static/js/ui.js`
+- **Tests**: pytest with `monkeypatch` stubs and `httpx.ASGITransport` for in-process API testing
+- **Style**: CSS custom properties for theming, mobile-first responsive design
+- **Accessibility**: all interactive elements must be keyboard-focusable with visible focus rings and ARIA attributes
 
 ## License
 

@@ -1,6 +1,6 @@
 # Kick Public API Analysis
 
-Observed on `2026-03-21`.
+Originally observed on `2026-03-21`. Official API surface updated `2026-03-25` from [KickEngineering/KickDevDocs](https://github.com/KickEngineering/KickDevDocs) (147 commits, last changelog entry 2026-01-15).
 
 This is an internal engineering memo for the reverse-engineered public Kick surface relevant to:
 - streamer/channel info
@@ -33,25 +33,32 @@ Method:
   - [dev.kick.com](https://dev.kick.com/)
   - [dev.kick.com/terms-of-service](https://dev.kick.com/terms-of-service)
   - [docs.kick.com/apis/channels](https://docs.kick.com/apis/channels)
+  - [docs.kick.com/apis/users](https://docs.kick.com/apis/users)
   - [docs.kick.com/apis/livestreams](https://docs.kick.com/apis/livestreams)
   - [docs.kick.com/apis/categories](https://docs.kick.com/apis/categories)
+  - [docs.kick.com/apis/chat](https://docs.kick.com/apis/chat)
+  - [docs.kick.com/apis/moderation](https://docs.kick.com/apis/moderation)
+  - [docs.kick.com/apis/channel-rewards](https://docs.kick.com/apis/channel-rewards)
+  - [docs.kick.com/apis/kicks](https://docs.kick.com/apis/kicks)
   - [docs.kick.com/apis/public-key](https://docs.kick.com/apis/public-key)
   - [docs.kick.com/events/event-types](https://docs.kick.com/events/event-types)
+  - [api.kick.com/swagger/doc.yaml](https://api.kick.com/swagger/doc.yaml) (OpenAPI spec)
+- cross-referenced [KickEngineering/KickDevDocs](https://github.com/KickEngineering/KickDevDocs) GitHub repo (2026-03-25)
 
 ## Official vs Reverse-Engineered Surface
 
 ### Official Kick Source
 
-Observed from [dev.kick.com](https://dev.kick.com/) and the linked docs:
-- Kick now has a real documented developer API under `docs.kick.com`.
+Observed from [dev.kick.com](https://dev.kick.com/) and the linked docs (last changelog entry 2026-01-15):
+- Kick has a documented developer API under `docs.kick.com` with an OpenAPI spec at `api.kick.com/swagger/doc.yaml`.
 - App access tokens are generated through the Client Credentials flow and can access publicly available data.
-- User access tokens are generated through the Authorization Code flow with PKCE.
-- Most `api.kick.com/public/*` routes are still auth-gated without a token; `public/v1/public-key` is the notable anonymous exception.
-- The official docs are now a viable supported integration path, but they cover a narrower surface than the reverse-engineered frontend routes.
+- User access tokens are generated through the Authorization Code flow with PKCE (OAuth 2.1) via `id.kick.com`.
+- Most `api.kick.com/public/*` routes are auth-gated; `public/v1/public-key` is the notable anonymous exception.
+- The official surface now covers Channels, Users, Livestreams, Categories (V2), Chat, Moderation, Channel Rewards (with redemptions), KICKs, and 10 webhook event types. See the [Official API Surface](#official-api-surface) section below for full details.
 
 Important practical conclusion:
-- use the official API when you can authenticate
-- keep the reverse-engineered public surface for anonymous discovery and legacy frontend contracts
+- use the official API when you can authenticate — it now covers most use cases
+- keep the reverse-engineered public surface for anonymous discovery and frontend-only contracts where OAuth is not feasible
 
 ### Reverse-Engineered Surface
 
@@ -468,11 +475,12 @@ Important note:
 
 ## Official API Surface
 
-Kick's supported developer surface now lives in [docs.kick.com](https://docs.kick.com/). The useful shift for this project is that the official API is now large enough to plan around, even though most routes still require OAuth.
+Kick's supported developer surface now lives in [docs.kick.com](https://docs.kick.com/). Source of truth: [KickEngineering/KickDevDocs](https://github.com/KickEngineering/KickDevDocs) on GitHub. The OpenAPI spec is published at [`api.kick.com/swagger/doc.yaml`](https://api.kick.com/swagger/doc.yaml) and can be tested directly from the docs UI.
 
 Observed from the docs and live probes:
 - app access tokens come from the Client Credentials flow and can access publicly available data
-- user access tokens come from the Authorization Code flow with PKCE
+- user access tokens come from the Authorization Code flow with PKCE (OAuth 2.1)
+- auth is handled via `id.kick.com`; API base is `api.kick.com`
 - most `api.kick.com/public/*` routes return `401` anonymously
 - `GET /public/v1/public-key` is anonymous and returns the RSA key used for webhook signature verification
 - `GET /public/v1/events/subscriptions` is the documented webhook subscription surface
@@ -481,28 +489,74 @@ Observed from the docs and live probes:
 
 - `GET /public/v1/channels` supports either `slug[]` or `broadcaster_user_id[]`, but not both in the same request
 - it requires the `channel:read` scope
-- `PATCH /public/v1/channels` updates livestream metadata with `channel:write`
+- `PATCH /public/v1/channels` updates livestream metadata with `channel:write`; supports custom tags
+
+### Users
+
+- `GET /public/v1/users` returns user info; scopes vary and sensitive data requires User Access Token
+- `POST /public/v1/token/introspect` (moved from `/public/v1/token/introspect` as of 2026-01-15; old path deprecated)
 
 ### Livestreams
 
 - `GET /public/v1/livestreams` supports `broadcaster_user_id[]`, `category_id`, `language`, `limit`, and `sort`
 - `sort` is limited to `viewer_count` or `started_at`
-- `GET /public/v1/livestreams/stats` is also documented
+- `GET /public/v1/livestreams/stats` returns aggregate livestream statistics
+- the `livestreams` endpoint now includes the broadcaster's profile picture (added 2025-12-19)
 
 ### Categories
 
-- `GET /public/v2/categories` supports `cursor`, `limit`, `name[]`, `tag[]`, and `id[]`
-- `public/v1/categories` and `public/v1/categories/{category_id}` are documented but deprecated
+- `GET /public/v2/categories` is the current endpoint — supports `cursor`, `limit`, `name[]`, `tag[]`, and `id[]`
+- `GET /public/v1/categories` and `GET /public/v1/categories/{category_id}` are **deprecated** as of 2026-01-15 and will be removed
+
+### Chat
+
+- `POST /public/v1/chat` sends a message as a bot account or user account
+- `DELETE /public/v1/chat/{message_id}` deletes a chat message
+
+### Moderation
+
+- `POST /public/v1/moderation/bans` bans or times out a user in a chat room
+- `DELETE /public/v1/moderation/bans` unbans a user or removes a timeout
+
+### Channel Rewards
+
+Added 2025-12-03:
+- `GET /public/v1/channels/rewards` lists channel point rewards
+- `POST /public/v1/channels/rewards` creates a new reward
+- `PATCH /public/v1/channels/rewards/{id}` updates a reward
+- `DELETE /public/v1/channels/rewards/{id}` deletes a reward
+
+Redemptions added 2026-01-15:
+- `GET /public/v1/channels/rewards/redemptions` lists redemptions (filterable by status, reward ID)
+- `POST /public/v1/channels/rewards/redemptions/accept` accepts a pending redemption
+- `POST /public/v1/channels/rewards/redemptions/reject` rejects a pending redemption
+
+### KICKs
+
+- `GET /public/v1/kicks/leaderboard` returns the KICKs gifting leaderboard
 
 ### Events
 
-- webhook payload docs cover `chat.message.sent`, `channel.followed`, `channel.subscription.renewal`, `channel.subscription.gifts`, `channel.subscription.new`, `channel.reward.redemption.updated`, `livestream.status.updated`, `livestream.metadata.updated`, `moderation.banned`, and `kicks.gifted`
+Webhook payload docs cover 10 event types:
+- `chat.message.sent`, `channel.followed`, `channel.subscription.renewal`, `channel.subscription.gifts`, `channel.subscription.new`, `channel.reward.redemption.updated`, `livestream.status.updated`, `livestream.metadata.updated`, `moderation.banned`, `kicks.gifted`
 - the official webhook flow is the supported realtime path and is safer than reverse-engineered Pusher scraping
+- apps that fail to process a webhook for over 24 hours are auto-unsubscribed (since 2025-12-12)
+- disabling webhooks now auto-unsubscribes from all events (since 2025-12-19)
+
+### Official API Changelog
+
+| Date | Change |
+|---|---|
+| 2026-01-15 | Categories V2 added; V1 deprecated. Token introspect moved to `/oauth`. Channel reward redemptions API added. Docs UI now supports direct API testing. |
+| 2025-12-19 | Webhook auto-unsubscribe on disable. Livestreams endpoint returns profile pictures. |
+| 2025-12-12 | Auto-unsubscribe on 24h webhook failure. Profile picture and category fixes. |
+| 2025-12-03 | Channel Rewards CRUD API and `channel.reward.redemption.updated` webhook. |
 
 ### Practical Use
 
 - use the official API when you have credentials
 - keep the reverse-engineered `kick.com` and `api.kick.com/private/*` routes for anonymous discovery and frontend-only contracts
+- the OpenAPI spec at `api.kick.com/swagger/doc.yaml` can be used for code generation
 
 ## Realtime/Public Client Surface
 
@@ -631,8 +685,13 @@ Most useful findings:
 
 If you have OAuth credentials:
 - add adapters for `https://api.kick.com/public/v1/channels`, `.../livestreams`, `.../livestreams/stats`, and `.../v2/categories`
+- `.../v1/chat` enables bot-driven chat without Pusher
+- `.../v1/moderation/bans` enables moderation tooling
+- `.../v1/channels/rewards` and `.../v1/channels/rewards/redemptions` enable channel point integrations
+- `.../v1/kicks/leaderboard` provides KICKs gifting data
 - treat `https://api.kick.com/public/v1/public-key` as the anonymous signature-verification source
 - prefer webhook subscriptions over Pusher scraping for realtime event delivery
+- use the OpenAPI spec at `api.kick.com/swagger/doc.yaml` for client code generation
 
 ### Typesense Extraction
 

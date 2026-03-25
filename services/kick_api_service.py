@@ -43,7 +43,7 @@ class KickAPIClient:
         self._local = threading.local()
 
     @property
-    def session(self):
+    def session(self) -> cloudscraper.CloudScraper:
         """Return a thread-local CloudScraper session (created lazily)."""
         s = getattr(self._local, "session", None)
         if s is None:
@@ -52,7 +52,7 @@ class KickAPIClient:
         return s
 
     @classmethod
-    def _create_session(cls):
+    def _create_session(cls) -> cloudscraper.CloudScraper:
         s = cloudscraper.create_scraper()
         s.headers.update(cls._COMMON_HEADERS)
         for protocol in ("http://", "https://"):
@@ -62,7 +62,7 @@ class KickAPIClient:
             adapter._pool_maxsize = 10
         return s
 
-    def _get_json(self, url: str, timeout: int = 8):
+    def _get_json(self, url: str, timeout: int = 8) -> dict | list:
         """GET *url*, raise on HTTP errors, return decoded JSON."""
         logger.debug("Fetching Kick API URL: %s", url)
         response = self.session.get(url, timeout=(3, timeout))
@@ -130,7 +130,7 @@ class KickAPIClient:
     _ts_key_lock = threading.Lock()
     _ts_fetch_lock = threading.Lock()
 
-    def _fetch_typesense_key_from_bundle(self):
+    def _fetch_typesense_key_from_bundle(self) -> str | None:
         """Scrape Kick's Next.js JS chunks to find the current Typesense API key."""
         try:
             home = self.session.get("https://kick.com/", timeout=(3, 10))
@@ -247,8 +247,8 @@ class KickAPIClient:
 
             if response.status_code in (401, 403):
                 logger.warning(
-                    f"Typesense auth failed (attempt {attempt + 1}), "
-                    "invalidating cached key."
+                    "Typesense auth failed (attempt %d), invalidating cached key.",
+                    attempt + 1,
                 )
                 with self._ts_key_lock:
                     KickAPIClient._ts_key_cache = None
@@ -294,7 +294,7 @@ class KickAPIClient:
             return 0
         try:
             data = response.json()
-        except Exception:
+        except (ValueError, TypeError):
             logger.debug("Non-JSON viewer count response for livestream_id: %s", livestream_id)
             return 0
         # Response: [{"livestream_id": <int>, "viewers": <int>}]
@@ -304,7 +304,7 @@ class KickAPIClient:
 
     _BATCH_VIEWER_MAX = 10  # Kick.com enforces max 10 ids per request
 
-    def get_viewer_counts_batch(self, livestream_ids: list, timeout: int = 5) -> dict:
+    def get_viewer_counts_batch(self, livestream_ids: list[int], timeout: int = 5) -> dict[int, int]:
         """Batch viewer count — chunked into max-10-ID calls to Kick.com.
 
         Returns {livestream_id: viewer_count, ...}.
@@ -312,7 +312,7 @@ class KickAPIClient:
         if not livestream_ids:
             return {}
         ids = [int(lid) for lid in livestream_ids[:50]]
-        merged = {}
+        merged: dict[int, int] = {}
         for i in range(0, len(ids), self._BATCH_VIEWER_MAX):
             chunk = ids[i:i + self._BATCH_VIEWER_MAX]
             params = "&".join(f"ids[]={lid}" for lid in chunk)
@@ -321,14 +321,14 @@ class KickAPIClient:
             try:
                 response = self.session.get(url, timeout=(3, timeout))
                 response.raise_for_status()
-            except Exception:
+            except requests.exceptions.RequestException:
                 logger.warning("Batch viewer chunk failed for %d IDs, skipping", len(chunk))
                 continue
             if not response.text.strip():
                 continue
             try:
                 data = response.json()
-            except Exception:
+            except (ValueError, TypeError):
                 logger.debug("Non-JSON batch viewer count response")
                 continue
             if isinstance(data, list):

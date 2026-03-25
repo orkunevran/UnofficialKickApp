@@ -218,14 +218,14 @@ class ChromecastService:
                 self._browser.stop_discovery()
                 logger.info("Browser discovery stopped.")
             except Exception as e:
-                logger.error(f"Error stopping browser discovery: {e}")
+                logger.error("Error stopping browser discovery: %s", e)
             self._browser = None
         if self._zc:
             try:
                 self._zc.close()
                 logger.info("Zeroconf instance closed.")
             except Exception as e:
-                logger.error(f"Error closing zeroconf: {e}")
+                logger.error("Error closing zeroconf: %s", e)
             self._zc = None
 
         with self._lock:
@@ -312,7 +312,7 @@ class ChromecastService:
                         cast = pychromecast.get_chromecast_from_cast_info(cast_info, self._zc)
                         discovered_chromecasts.append(cast)
                 except Exception as e:
-                    logger.warning(f"Failed to create cast for UUID {uuid}: {e}")
+                    logger.warning("Failed to create cast for UUID %s: %s", uuid, e)
 
             if not discovered_chromecasts and known_hosts is None:
                 fallback_chromecasts = self._scan_private_networks_for_chromecasts()
@@ -352,14 +352,14 @@ class ChromecastService:
                 listener = ChromecastConnectionListener(self, cast)
                 cast.register_connection_listener(listener)
 
-            logger.info(f"Discovery scan finished. Found {len(self.chromecasts)} devices.")
+            logger.info("Discovery scan finished. Found %s devices.", len(self.chromecasts))
         except pychromecast.error.NoChromecastFoundError:
             logger.info("No Chromecast devices found in this scan.")
             self._last_scan_time = time.time()
             with self._lock:
                 self.chromecasts = []
         except Exception as e:
-            logger.error(f"An error occurred during Chromecast discovery: {e}")
+            logger.error("An error occurred during Chromecast discovery: %s", e)
         finally:
             with self._lock:
                 self._scanning = False
@@ -406,7 +406,7 @@ class ChromecastService:
             cast = next((cc for cc in self.chromecasts if str(cc.uuid) == uuid), None)
 
         if not cast:
-            logger.warning(f"Chromecast with UUID {uuid} not found in the current list.")
+            logger.warning("Chromecast with UUID %s not found in the current list.", uuid)
             return False
 
         # If the cast's socket_client thread was already started and is now dead
@@ -414,7 +414,7 @@ class ChromecastService:
         # because Python threads cannot be restarted.
         sc = getattr(cast, 'socket_client', None)
         if sc and hasattr(sc, '_started') and sc._started.is_set() and not sc.is_alive():
-            logger.info(f"Replacing stale cast object for {cast.cast_info.friendly_name} (dead socket thread).")
+            logger.info("Replacing stale cast object for %s (dead socket thread).", cast.cast_info.friendly_name)
             try:
                 new_cast = pychromecast.get_chromecast_from_cast_info(cast.cast_info, self._zc)
                 with self._lock:
@@ -425,12 +425,12 @@ class ChromecastService:
                         self.chromecasts.append(new_cast)
                 cast = new_cast
             except Exception as e:
-                logger.error(f"Failed to recreate cast object for {cast.cast_info.friendly_name}: {e}")
+                logger.error("Failed to recreate cast object for %s: %s", cast.cast_info.friendly_name, e)
                 return False
 
         for attempt in range(1, self._select_max_retries + 1):
             try:
-                logger.info(f"Attempt {attempt}/{self._select_max_retries}: Connecting to device {cast.cast_info.friendly_name}...")
+                logger.info("Attempt %s/%s: Connecting to device %s...", attempt, self._select_max_retries, cast.cast_info.friendly_name)
                 # Pass a per-attempt timeout so the executor thread never blocks forever.
                 # Without this, future.cancel() after the outer timeout fires is a no-op on
                 # a running future, leaving the single-worker _select_executor permanently
@@ -442,15 +442,15 @@ class ChromecastService:
                     # Remember last connected device so the frontend can offer a one-click reconnect
                     self._last_device_uuid = str(cast.uuid)
                     self._last_device_name = cast.cast_info.friendly_name
-                logger.info(f"Successfully selected Chromecast device: {cast.cast_info.friendly_name}")
+                logger.info("Successfully selected Chromecast device: %s", cast.cast_info.friendly_name)
                 return True
             except Exception as e:
-                logger.error(f"Failed to connect to device {cast.cast_info.friendly_name} on attempt {attempt}: {e}")
+                logger.error("Failed to connect to device %s on attempt %s: %s", cast.cast_info.friendly_name, attempt, e)
                 if attempt < self._select_max_retries:
-                    logger.info(f"Retrying in {self._select_retry_delay} seconds...")
+                    logger.info("Retrying in %s seconds...", self._select_retry_delay)
                     time.sleep(self._select_retry_delay)
                 else:
-                    logger.error(f"All {self._select_max_retries} attempts failed for device {cast.cast_info.friendly_name}.")
+                    logger.error("All %s attempts failed for device %s.", self._select_max_retries, cast.cast_info.friendly_name)
                     with self._lock:
                         self.selected_cast = None
                         self.media_controller = None
@@ -487,7 +487,7 @@ class ChromecastService:
                 result = future.result(timeout=timeout)
                 return result, None if result else 'failed'
             except Exception as e:
-                logger.error(f"select_device timed out or failed after {timeout}s: {e}")
+                logger.error("select_device timed out or failed after %ss: %s", timeout, e)
                 future.cancel()
                 return False, 'failed'
         finally:
@@ -517,16 +517,16 @@ class ChromecastService:
                         break
 
             content_type = 'application/x-mpegurl'
-            logger.info(f"Sending play_media command for '{title}' to {selected.cast_info.friendly_name}")
+            logger.info("Sending play_media command for '%s' to %s", title, selected.cast_info.friendly_name)
             mc.play_media(stream_url, content_type, title=title)
             logger.info("play_media command sent successfully.")
             return True
 
         except pychromecast.PyChromecastError as e:
-            logger.error(f"PyChromecast error during casting: {e}")
+            logger.error("PyChromecast error during casting: %s", e)
             return False
         except Exception as e:
-            logger.error(f"An unexpected error occurred during casting: {e}\n{traceback.format_exc()}")
+            logger.error("An unexpected error occurred during casting: %s\n%s", e, traceback.format_exc())
             return False
 
     def stop_cast(self, uuid=None):
@@ -538,7 +538,7 @@ class ChromecastService:
             with self._lock:
                 target_cast = next((cc for cc in self.chromecasts if str(cc.uuid) == uuid), None)
             if not target_cast:
-                logger.warning(f"Chromecast with UUID {uuid} not found for stopping/disconnecting.")
+                logger.warning("Chromecast with UUID %s not found for stopping/disconnecting.", uuid)
                 return False
         else:
             with self._lock:
@@ -571,26 +571,26 @@ class ChromecastService:
             _t = threading.Thread(target=_do_stop_media, daemon=True)
             _t.start()
             if not _stop_done.wait(timeout=3.0):
-                logger.warning(f"Stop timed out for {target_cast.cast_info.friendly_name} after 3s. Proceeding to disconnect.")
+                logger.warning("Stop timed out for %s after 3s. Proceeding to disconnect.", target_cast.cast_info.friendly_name)
             elif _stop_err[0]:
-                logger.error(f"Error stopping media on {target_cast.cast_info.friendly_name}: {_stop_err[0]}")
+                logger.error("Error stopping media on %s: %s", target_cast.cast_info.friendly_name, _stop_err[0])
             else:
                 logger.info("Cast media playback stopped.")
         else:
-            logger.info(f"No active media cast to stop on {target_cast.cast_info.friendly_name}.")
+            logger.info("No active media cast to stop on %s.", target_cast.cast_info.friendly_name)
 
-        logger.info(f"Attempting to disconnect from Chromecast: {target_cast.cast_info.friendly_name}")
+        logger.info("Attempting to disconnect from Chromecast: %s", target_cast.cast_info.friendly_name)
         try:
             # Guard: only disconnect if the socket client thread was actually started
             # "cannot join thread before it is started" happens when cast.wait() was never called
             sc = getattr(target_cast, 'socket_client', None)
             if sc and hasattr(sc, 'is_alive') and sc.is_alive():
                 target_cast.disconnect()
-                logger.info(f"Disconnected from Chromecast: {target_cast.cast_info.friendly_name}")
+                logger.info("Disconnected from Chromecast: %s", target_cast.cast_info.friendly_name)
             else:
-                logger.info(f"Skipping disconnect for {target_cast.cast_info.friendly_name} (socket thread not started).")
+                logger.info("Skipping disconnect for %s (socket thread not started).", target_cast.cast_info.friendly_name)
         except Exception as e:
-            logger.error(f"Error disconnecting from Chromecast {target_cast.cast_info.friendly_name}: {e}")
+            logger.error("Error disconnecting from Chromecast %s: %s", target_cast.cast_info.friendly_name, e)
         finally:
             with self._lock:
                 if target_cast == self.selected_cast:
@@ -629,33 +629,33 @@ class ChromecastService:
     def _handle_connection_status(self, cast, status: ConnectionStatus):
         """Handles Chromecast connection status changes."""
         device_uuid = str(cast.uuid)
-        logger.info(f"Connection handler for {cast.cast_info.friendly_name} ({device_uuid}): Status changed to {status.status}")
+        logger.info("Connection handler for %s (%s): Status changed to %s", cast.cast_info.friendly_name, device_uuid, status.status)
 
         if status.status == "DISCONNECTED" or status.status == "FAILED":
-            logger.warning(f"Chromecast {cast.cast_info.friendly_name} ({device_uuid}) disconnected or connection failed.")
+            logger.warning("Chromecast %s (%s) disconnected or connection failed.", cast.cast_info.friendly_name, device_uuid)
             with self._lock:
                 self._connection_failure_counts[device_uuid] = self._connection_failure_counts.get(device_uuid, 0) + 1
                 current_failures = self._connection_failure_counts[device_uuid]
 
-            logger.warning(f"Connection failures for {cast.cast_info.friendly_name} ({device_uuid}): {current_failures}")
+            logger.warning("Connection failures for %s (%s): %s", cast.cast_info.friendly_name, device_uuid, current_failures)
 
             if current_failures >= self._max_connection_failures:
                 # Guard against duplicate disconnect threads for same device
                 with self._lock:
                     if device_uuid in self._disconnect_in_progress:
-                        logger.info(f"Disconnect already in progress for {device_uuid}, skipping.")
+                        logger.info("Disconnect already in progress for %s, skipping.", device_uuid)
                         return
                     self._disconnect_in_progress.add(device_uuid)
                     self._connection_failure_counts[device_uuid] = 0
 
-                logger.error(f"Chromecast {cast.cast_info.friendly_name} ({device_uuid}) failed to reconnect {self._max_connection_failures} times. Triggering disconnection.")
+                logger.error("Chromecast %s (%s) failed to reconnect %s times. Triggering disconnection.", cast.cast_info.friendly_name, device_uuid, self._max_connection_failures)
 
                 def do_stop():
                     try:
                         self.stop_cast(device_uuid)
-                        logger.info(f"Successfully stopped/disconnected device {device_uuid} after repeated failures.")
+                        logger.info("Successfully stopped/disconnected device %s after repeated failures.", device_uuid)
                     except Exception as e:
-                        logger.error(f"Failed to stop device {device_uuid}: {e}")
+                        logger.error("Failed to stop device %s: %s", device_uuid, e)
                         with self._lock:
                             self._disconnect_in_progress.discard(device_uuid)
 
@@ -663,7 +663,7 @@ class ChromecastService:
                 thread.start()
 
         elif status.status == "CONNECTED":
-            logger.info(f"Chromecast {cast.cast_info.friendly_name} ({device_uuid}) reconnected successfully. Resetting failure count.")
+            logger.info("Chromecast %s (%s) reconnected successfully. Resetting failure count.", cast.cast_info.friendly_name, device_uuid)
             with self._lock:
                 self._connection_failure_counts[device_uuid] = 0
 

@@ -17,7 +17,7 @@ function renderHistoryItem(item) {
     const thumbClass = hasProfile ? 'history-thumb history-thumb--avatar' : 'history-thumb';
 
     return `
-        <div class="history-item" data-slug="${escapeHtml(item.slug)}" data-type="${escapeHtml(item.type || 'stream')}">
+        <div class="history-item" data-slug="${escapeHtml(item.slug)}" data-type="${escapeHtml(item.type || 'stream')}" tabindex="0" role="article" aria-label="${escapeHtml(item.username || item.slug)}${item.title ? ', ' + escapeHtml(item.title) : ''}, ${formatRelativeTime(item.timestamp)}">
             <div class="${thumbClass}">${avatarHTML}</div>
             <div class="history-info">
                 <div class="history-title">${escapeHtml(item.username || item.slug)}</div>

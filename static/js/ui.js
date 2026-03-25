@@ -141,9 +141,9 @@ export function renderVodCard(vod, channelSlug) {
     const url = `/streams/vods/${safeSlug}/${safeVodId}`;
 
     return `
-        <a href="${url}" target="_blank" class="vod-card" data-vod-id="${vod.vod_id}" data-title="${escapeHtml((vod.title || '').toLowerCase())}">
+        <a href="${url}" target="_blank" rel="noopener noreferrer" class="vod-card" data-vod-id="${vod.vod_id}" data-title="${escapeHtml((vod.title || '').toLowerCase())}" aria-label="${escapeHtml(vod.title || 'VOD')} — ${formatDate(vod.created_at)}, ${vod.views?.toLocaleString('en-US') || '0'} views">
             <div class="vod-card-thumb">
-                ${vod.thumbnail_url ? `<img src="${escapeHtml(vod.thumbnail_url)}" alt="" loading="lazy" decoding="async" onerror="this.style.display='none'">` : '<div style="width:100%;height:100%;background:rgba(255,255,255,0.03)"></div>'}
+                ${vod.thumbnail_url ? `<img src="${escapeHtml(vod.thumbnail_url)}" alt="${escapeHtml(vod.title || 'VOD')} thumbnail" loading="lazy" decoding="async" onerror="this.style.display='none'">` : '<div style="width:100%;height:100%;background:rgba(255,255,255,0.03)"></div>'}
                 ${vod.duration_seconds ? `<span class="vod-card-duration">${formatDuration(vod.duration_seconds)}</span>` : ''}
             </div>
             <div class="vod-card-info">
@@ -160,9 +160,9 @@ export function renderVodCard(vod, channelSlug) {
 
 export function renderClipCard(clip) {
     return `
-        <a href="${escapeHtml(clip.clip_url || '#')}" target="_blank" class="vod-card" data-title="${escapeHtml((clip.title || '').toLowerCase())}">
+        <a href="${escapeHtml(clip.clip_url || '#')}" target="_blank" rel="noopener noreferrer" class="vod-card" data-title="${escapeHtml((clip.title || '').toLowerCase())}" aria-label="${escapeHtml(clip.title || 'Clip')} — ${formatDate(clip.created_at)}, ${clip.views?.toLocaleString('en-US') || '0'} views">
             <div class="vod-card-thumb">
-                ${clip.thumbnail_url ? `<img src="${escapeHtml(clip.thumbnail_url)}" alt="" loading="lazy" decoding="async" onerror="this.style.display='none'">` : '<div style="width:100%;height:100%;background:rgba(255,255,255,0.03)"></div>'}
+                ${clip.thumbnail_url ? `<img src="${escapeHtml(clip.thumbnail_url)}" alt="${escapeHtml(clip.title || 'Clip')} thumbnail" loading="lazy" decoding="async" onerror="this.style.display='none'">` : '<div style="width:100%;height:100%;background:rgba(255,255,255,0.03)"></div>'}
                 ${clip.duration_seconds ? `<span class="vod-card-duration">${formatDuration(clip.duration_seconds)}</span>` : ''}
             </div>
             <div class="vod-card-info">
@@ -200,7 +200,7 @@ export function renderChannelProfile(data, channelSlug, { activeTab = 'stream' }
 
     // Banner
     const bannerHTML = d?.banner_image_url
-        ? `<div class="profile-banner"><img src="${escapeHtml(d.banner_image_url)}" alt=""><div class="profile-banner-overlay"></div></div>`
+        ? `<div class="profile-banner"><img src="${escapeHtml(d.banner_image_url)}" alt="${escapeHtml(d?.username || channelSlug)} channel banner"><div class="profile-banner-overlay"></div></div>`
         : `<div class="profile-banner"><div class="profile-banner-overlay"></div></div>`;
 
     // Avatar
@@ -236,6 +236,7 @@ export function renderChannelProfile(data, channelSlug, { activeTab = 'stream' }
     const isFav = isFavorite(channelSlug);
 
     const tabs = ['stream', 'vods', 'clips'];
+    const tabLabels = { stream: 'Stream', vods: 'VODs', clips: 'Clips' };
 
     return `
         ${bannerHTML}
@@ -246,7 +247,7 @@ export function renderChannelProfile(data, channelSlug, { activeTab = 'stream' }
                     <h2 class="profile-username">${escapeHtml(d?.username || channelSlug)}</h2>
                     ${d?.verified ? '<span class="verified-badge">&#10003;</span>' : ''}
                     <span class="status-badge ${isLive ? 'live' : 'offline'}">${isLive ? 'LIVE' : 'OFFLINE'}</span>
-                    <button class="btn-icon favorite-profile-btn ${isFav ? 'favorited' : ''}" data-slug="${escapeHtml(channelSlug)}" data-username="${escapeHtml(d?.username || channelSlug)}" data-pic="${escapeHtml(d?.profile_picture || '')}" title="${isFav ? 'Remove from favorites' : 'Add to favorites'}">
+                    <button class="btn-icon favorite-profile-btn ${isFav ? 'favorited' : ''}" data-slug="${escapeHtml(channelSlug)}" data-username="${escapeHtml(d?.username || channelSlug)}" data-pic="${escapeHtml(d?.profile_picture || '')}" title="${isFav ? 'Remove from favorites' : 'Add to favorites'}" aria-label="${isFav ? 'Remove from favorites' : 'Add to favorites'}">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="${isFav ? 'var(--live-color)' : 'none'}" stroke="${isFav ? 'var(--live-color)' : 'currentColor'}" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>
                     </button>
                 </div>
@@ -260,11 +261,11 @@ export function renderChannelProfile(data, channelSlug, { activeTab = 'stream' }
             ${categoriesHTML ? `<div class="profile-section-label">Recent categories</div><div class="category-tags">${categoriesHTML}</div>` : ''}
         </div>
 
-        <div class="profile-tabs">
-            ${tabs.map(t => `<button class="profile-tab ${t === activeTab ? 'active' : ''}" data-tab="${t}">${t === 'stream' ? 'Stream' : t === 'vods' ? 'VODs' : 'Clips'}</button>`).join('')}
+        <div class="profile-tabs" role="tablist" aria-label="Channel content">
+            ${tabs.map(t => `<button class="profile-tab ${t === activeTab ? 'active' : ''}" data-tab="${t}" role="tab" aria-selected="${t === activeTab}" aria-controls="profile-tab-content" id="tab-${t}">${tabLabels[t]}</button>`).join('')}
         </div>
 
-        <div id="profile-tab-content"></div>
+        <div id="profile-tab-content" role="tabpanel" aria-labelledby="tab-${activeTab}"></div>
     `;
 }
 
@@ -323,7 +324,7 @@ export function renderStreamTabContent(data, channelSlug) {
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 16.1A5 5 0 015.9 20M2 12.05A9 9 0 019.95 20M2 8V6a2 2 0 012-2h16a2 2 0 012 2v12a2 2 0 01-2 2h-6"/><line x1="2" y1="20" x2="2.01" y2="20"/></svg>
                 Cast
             </button>
-            <a href="/streams/go/${encodeURIComponent(channelSlug)}" target="_blank" class="btn-secondary">
+            <a href="/streams/go/${encodeURIComponent(channelSlug)}" target="_blank" rel="noopener noreferrer" class="btn-secondary">
                 Open Live Stream &rarr;
             </a>
         </div>`;
@@ -348,11 +349,16 @@ export function renderSearchResults(results, onSelect) {
 
     container.innerHTML = '';
     const frag = document.createDocumentFragment();
+    container.setAttribute('role', 'listbox');
+    container.setAttribute('aria-label', 'Search results');
     results.forEach((r, idx) => {
         const item = document.createElement('div');
         item.className = 'search-suggestion-item';
         item.dataset.slug = r.slug;
         item.dataset.index = idx;
+        item.setAttribute('role', 'option');
+        item.setAttribute('id', `search-option-${idx}`);
+        item.setAttribute('aria-selected', 'false');
 
         const liveBadge = r.is_live ? '<span class="suggestion-live">LIVE</span>' : '';
         const viewerInfo = r.is_live && r.viewer_count
@@ -363,7 +369,7 @@ export function renderSearchResults(results, onSelect) {
 
         item.innerHTML = `
             ${r.profile_picture
-                ? `<img src="${escapeHtml(r.profile_picture)}" alt="" class="suggestion-avatar">`
+                ? `<img src="${escapeHtml(r.profile_picture)}" alt="${escapeHtml(r.username || r.slug)}" class="suggestion-avatar">`
                 : initialsAvatar(r.username || r.slug)}
             <div class="suggestion-info">
                 <div class="suggestion-name-row">
@@ -378,6 +384,7 @@ export function renderSearchResults(results, onSelect) {
     });
     container.appendChild(frag);
     container.style.display = 'block';
+    document.getElementById('channelSlugInput')?.setAttribute('aria-expanded', 'true');
 }
 
 export function renderSearchLoading() {
@@ -424,8 +431,19 @@ export function handleSuggestionKeydown(event) {
 
 function updateSuggestionHighlight(items) {
     items.forEach((item, idx) => {
-        item.classList.toggle('highlighted', idx === suggestionSelectedIndex);
+        const selected = idx === suggestionSelectedIndex;
+        item.classList.toggle('highlighted', selected);
+        item.setAttribute('aria-selected', String(selected));
     });
+    // Update activedescendant on the input so screen readers track selection
+    const input = document.getElementById('channelSlugInput');
+    if (input) {
+        if (suggestionSelectedIndex >= 0 && items[suggestionSelectedIndex]) {
+            input.setAttribute('aria-activedescendant', items[suggestionSelectedIndex].id);
+        } else {
+            input.removeAttribute('aria-activedescendant');
+        }
+    }
     if (suggestionSelectedIndex >= 0 && items[suggestionSelectedIndex]) {
         items[suggestionSelectedIndex].scrollIntoView({ block: 'nearest' });
     }
@@ -442,10 +460,10 @@ export function initButtonDelegation() {
     // Keyboard activation for focusable cards (Enter / Space)
     document.addEventListener('keydown', (event) => {
         if (event.key !== 'Enter' && event.key !== ' ') return;
-        const card = event.target.closest('.stream-card, .stream-list-item');
+        const card = event.target.closest('.stream-card, .stream-list-item, .history-item');
         if (!card) return;
         // Don't interfere with buttons/links inside the card
-        if (event.target.closest('.card-action-btn, a, button')) return;
+        if (event.target.closest('.card-action-btn, a, button, .history-remove-btn')) return;
         event.preventDefault();
         const slug = card.dataset.slug;
         if (slug) navigate(`/channel/${slug}`);

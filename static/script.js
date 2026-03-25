@@ -59,9 +59,11 @@ document.addEventListener('DOMContentLoaded', () => {
             document.documentElement.dataset.theme = resolved;
         }
         updateThemeIcon(pref);
-        // Update <meta name="theme-color">
-        const meta = document.querySelector('meta[name="theme-color"]');
-        if (meta) meta.content = resolved === 'light' ? '#f5f6f8' : '#0b0e14';
+        // Update <meta name="theme-color"> and <meta name="color-scheme">
+        const metaTheme = document.querySelector('meta[name="theme-color"]');
+        if (metaTheme) metaTheme.content = resolved === 'light' ? '#f5f6f8' : '#0b0e14';
+        const metaScheme = document.querySelector('meta[name="color-scheme"]');
+        if (metaScheme) metaScheme.content = resolved === 'light' ? 'light' : 'dark';
         requestAnimationFrame(() => {
             setTimeout(() => document.documentElement.classList.remove('theme-transitioning'), 350);
         });
@@ -181,6 +183,16 @@ function initSearch() {
 
     let searchDebounce = null;
     let searchSeqId = 0;
+
+    // Sync aria-expanded on the combobox with suggestions visibility
+    const sugg = document.getElementById('searchSuggestions');
+    if (sugg) {
+        new MutationObserver(() => {
+            const open = sugg.style.display !== 'none';
+            input.setAttribute('aria-expanded', String(open));
+            if (!open) input.removeAttribute('aria-activedescendant');
+        }).observe(sugg, { attributes: true, attributeFilter: ['style'] });
+    }
 
     input.addEventListener('input', () => {
         const q = input.value.trim();

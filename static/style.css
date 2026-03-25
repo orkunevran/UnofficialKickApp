@@ -2128,7 +2128,8 @@ button:focus-visible,
 input:focus-visible,
 select:focus-visible,
 a:focus-visible,
-.close-button:focus-visible {
+.close-button:focus-visible,
+.history-item:focus-visible {
     outline: none;
     box-shadow: 0 0 0 2px var(--bg-color), 0 0 0 4px var(--primary-color);
 }

@@ -28,9 +28,9 @@ function renderFavoriteCard(fav, liveStatus = null) {
         : initialsAvatar(fav.username || fav.slug);
 
     return `
-        <div class="stream-card" data-slug="${escapeHtml(fav.slug)}" style="cursor:pointer">
+        <div class="stream-card" data-slug="${escapeHtml(fav.slug)}" style="cursor:pointer" tabindex="0" role="article" aria-label="${escapeHtml(fav.username || fav.slug)}${isLive ? ', Live' : ''}${viewers != null ? ', ' + formatViewerCount(viewers) + ' viewers' : ''}">
             <div class="card-thumbnail">
-                ${thumbSrc ? `<img src="${escapeHtml(thumbSrc)}" alt="" class="thumb-fade" onload="this.classList.add('loaded')" onerror="this.onerror=null;this.src='${escapeHtml(fav.profilePicture || '')}';this.style.objectFit='contain';this.classList.add('loaded');">` : '<div style="width:100%;height:100%;background:rgba(255,255,255,0.03);display:flex;align-items:center;justify-content:center;color:var(--text-secondary);font-size:13px">' + (liveStatus === null ? '' : (isLive ? '' : 'Offline')) + '</div>'}
+                ${thumbSrc ? `<img src="${escapeHtml(thumbSrc)}" alt="${escapeHtml(fav.username || fav.slug)} stream thumbnail" class="thumb-fade" onload="this.classList.add('loaded')" onerror="this.onerror=null;this.src='${escapeHtml(fav.profilePicture || '')}';this.style.objectFit='contain';this.classList.add('loaded');">` : '<div style="width:100%;height:100%;background:rgba(255,255,255,0.03);display:flex;align-items:center;justify-content:center;color:var(--text-secondary);font-size:13px">' + (liveStatus === null ? '' : (isLive ? '' : 'Offline')) + '</div>'}
                 ${isLive ? '<div class="card-live-badge"><span class="card-live-dot"></span>LIVE</div>' : ''}
                 ${viewers != null ? `<div class="card-viewers"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>${formatViewerCount(viewers)}</div>` : ''}
                 <div class="card-actions-overlay" style="opacity:1;background:linear-gradient(to top, rgba(0,0,0,0.5) 0%, transparent 60%)">

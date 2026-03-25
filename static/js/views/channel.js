@@ -319,7 +319,15 @@ export async function mount(params, contentEl) {
         if (activeTab === 'stream') destroyVideoPlayer();
 
         activeTab = tabName;
-        contentEl.querySelectorAll('.profile-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tabName));
+        contentEl.querySelectorAll('.profile-tab').forEach(t => {
+            const isActive = t.dataset.tab === tabName;
+            t.classList.toggle('active', isActive);
+            t.setAttribute('aria-selected', String(isActive));
+        });
+        // Update tabpanel's labelledby
+        const tabPanel = document.getElementById('profile-tab-content');
+        if (tabPanel) tabPanel.setAttribute('aria-labelledby', `tab-${tabName}`);
+
         renderTabContent(tabName, liveData, vodsData, clipsData, channelSlug);
 
         // Restart video if coming back to stream tab

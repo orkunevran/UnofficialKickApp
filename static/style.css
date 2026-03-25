@@ -191,6 +191,40 @@
     background-clip: text;
 }
 
+/* Light theme — mini-player */
+[data-theme="light"] .mini-player {
+    background: rgba(255, 255, 255, 0.97);
+}
+[data-theme="light"] .mini-player-thumb {
+    border-color: rgba(0, 0, 0, 0.08);
+}
+[data-theme="light"] .mini-player-thumb:has(video:not(.hidden)) {
+    border-color: rgba(22, 163, 74, 0.2);
+    box-shadow: 0 0 8px rgba(22, 163, 74, 0.06);
+}
+[data-theme="light"] #mini-player-close:hover {
+    background: rgba(220, 38, 38, 0.06);
+}
+
+/* Light theme — social pills & category tags */
+[data-theme="light"] .category-tag:hover {
+    background: rgba(22, 163, 74, 0.12);
+    box-shadow: 0 0 6px rgba(22, 163, 74, 0.08);
+}
+
+/* Light theme — copy/cast buttons */
+[data-theme="light"] .cast-button:hover {
+    box-shadow: 0 0 10px rgba(22, 163, 74, 0.2);
+}
+[data-theme="light"] .copy-button.copied {
+    box-shadow: 0 0 8px rgba(22, 163, 74, 0.1);
+}
+
+/* Light theme — device items */
+[data-theme="light"] .device-item.selected {
+    box-shadow: 0 0 10px rgba(22, 163, 74, 0.05);
+}
+
 /* Light theme — sort pills & filter elements */
 [data-theme="light"] .sort-pill.active {
     background: rgba(22, 163, 74, 0.08);
@@ -728,6 +762,13 @@ body {
     overflow: hidden;
     flex-shrink: 0;
     cursor: pointer;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    transition: border-color 0.3s, box-shadow 0.3s;
+}
+/* Glow border when video is active */
+.mini-player-thumb:has(video:not(.hidden)) {
+    border-color: rgba(83, 252, 24, 0.2);
+    box-shadow: 0 0 12px rgba(83, 252, 24, 0.08);
 }
 .mini-player-poster {
     position: absolute;
@@ -749,7 +790,9 @@ body {
     width: 6px; height: 6px;
     border-radius: 50%;
     background: var(--live-color);
-    box-shadow: 0 0 4px var(--live-color);
+    color: var(--live-color);
+    animation: pulse-glow 2s infinite;
+    z-index: 2;
 }
 .mini-player-info {
     flex: 1;
@@ -772,18 +815,21 @@ body {
 .mini-player-controls {
     display: flex;
     align-items: center;
-    gap: 2px;
+    gap: 4px;
     flex-shrink: 0;
 }
 .mini-player-btn {
     background: none; border: none; color: var(--text-secondary);
     cursor: pointer; padding: 8px; border-radius: 6px;
     display: flex; align-items: center; justify-content: center;
-    transition: background 0.15s, color 0.15s;
+    transition: background 0.15s, color 0.15s, transform 0.1s;
 }
 .mini-player-btn:hover {
     background: var(--surface-hover);
     color: #fff;
+}
+.mini-player-btn:active {
+    transform: scale(0.92);
 }
 #mini-player-play {
     color: #fff;
@@ -791,6 +837,10 @@ body {
 #mini-player-play:hover {
     color: var(--primary-color);
     filter: drop-shadow(0 0 4px rgba(83, 252, 24, 0.4));
+}
+#mini-player-close:hover {
+    color: var(--error-color);
+    background: rgba(255, 51, 102, 0.08);
 }
 
 /* ── Mini Player Resize Handle & Expanded Video ───────────────────────── */
@@ -1257,6 +1307,13 @@ body {
     padding: 4px 12px;
     font-size: 12px;
     color: var(--text-muted);
+    transition: border-color 0.15s, background 0.15s, transform 0.15s;
+    cursor: default;
+}
+.social-pill:hover {
+    border-color: var(--border-highlight);
+    background: var(--surface-hover);
+    transform: translateY(-1px);
 }
 .social-pill strong { color: var(--text-color); }
 .category-tags {
@@ -1273,6 +1330,14 @@ body {
     padding: 4px 12px;
     font-size: 12px;
     font-weight: 500;
+    transition: background 0.15s, border-color 0.15s, box-shadow 0.2s, transform 0.15s;
+    cursor: default;
+}
+.category-tag:hover {
+    background: rgba(83, 252, 24, 0.15);
+    border-color: rgba(83, 252, 24, 0.35);
+    box-shadow: 0 0 8px rgba(83, 252, 24, 0.1);
+    transform: translateY(-1px);
 }
 .profile-section-label {
     font-size: 11px;
@@ -1465,9 +1530,12 @@ body {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    transition: background 0.15s;
+    transition: background 0.15s, box-shadow 0.2s;
 }
-.cast-button:hover { background: var(--primary-hover); }
+.cast-button:hover {
+    background: var(--primary-hover);
+    box-shadow: 0 0 12px rgba(83, 252, 24, 0.25);
+}
 
 .copy-button {
     background: var(--surface-color);
@@ -1482,10 +1550,23 @@ body {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    transition: all 0.15s;
+    transition: border-color 0.15s, color 0.2s, box-shadow 0.2s, background 0.15s;
 }
-.copy-button:hover { border-color: var(--border-highlight); }
-.copy-button.copied { border-color: var(--primary-color); color: var(--primary-color); }
+.copy-button:hover {
+    border-color: var(--border-highlight);
+    background: var(--surface-hover);
+}
+.copy-button.copied {
+    border-color: var(--primary-color);
+    color: var(--primary-color);
+    box-shadow: 0 0 10px rgba(83, 252, 24, 0.12);
+    animation: copy-flash 0.4s ease;
+}
+@keyframes copy-flash {
+    0% { transform: scale(1); }
+    30% { transform: scale(1.05); }
+    100% { transform: scale(1); }
+}
 
 /* ── Filter / Sort Bar ─────────────────────────────────────────────────── */
 .browse-sticky-header {
@@ -1828,7 +1909,7 @@ body {
     padding: 10px 12px;
     border-radius: var(--radius-sm);
     cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
+    transition: background 0.15s, border-color 0.15s, box-shadow 0.2s, transform 0.15s;
     font-size: 14px;
     background: rgba(255,255,255,0.03);
     border: 1px solid transparent;
@@ -1836,14 +1917,16 @@ body {
 .device-item:hover {
     background: var(--surface-hover);
     border-color: var(--border-color);
+    transform: translateX(2px);
 }
 .device-item:focus-visible {
-    outline: 2px solid var(--primary-color);
-    outline-offset: -2px;
+    outline: none;
+    box-shadow: 0 0 0 2px var(--bg-color), 0 0 0 4px var(--primary-color);
 }
 .device-item.selected {
     background: rgba(83,252,24,0.08);
     border-color: rgba(83,252,24,0.25);
+    box-shadow: 0 0 12px rgba(83, 252, 24, 0.06);
 }
 .device-item-icon {
     flex-shrink: 0;
@@ -1884,7 +1967,7 @@ body {
 
 /* Connection state feedback */
 .device-item.connecting {
-    border-color: var(--kick-color);
+    border-color: var(--primary-color);
     will-change: border-color;
     animation: pulse-border 1.5s ease-in-out infinite;
 }
@@ -1903,12 +1986,12 @@ body {
     display: inline-block;
     width: 14px; height: 14px;
     border: 2px solid rgba(255,255,255,0.15);
-    border-top-color: var(--kick-color);
+    border-top-color: var(--primary-color);
     border-radius: 50%;
     animation: spin 0.7s linear infinite;
 }
 @keyframes pulse-border {
-    0%, 100% { border-color: var(--kick-color); }
+    0%, 100% { border-color: var(--primary-color); }
     50% { border-color: rgba(83, 252, 24, 0.3); }
 }
 @keyframes spin {

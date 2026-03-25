@@ -24,19 +24,42 @@ function _showShortcutsModal() {
     modal.style.display = 'block';
     requestAnimationFrame(() => modal.classList.add('visible'));
 
-    // Any key or click dismisses
-    const dismiss = () => {
+    // Focus the close button so screen readers land inside the modal
+    const closeBtn = modal.querySelector('.close-button');
+    if (closeBtn) closeBtn.focus();
+
+    // Focus trap — keep Tab cycling within the modal
+    const focusableSelector = 'button, [href], input, select, [tabindex]:not([tabindex="-1"])';
+    const trapFocus = (e) => {
+        if (e.key !== 'Tab') return;
+        const focusable = [...modal.querySelectorAll(focusableSelector)].filter(el => el.offsetParent !== null);
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey) {
+            if (document.activeElement === first) { e.preventDefault(); last.focus(); }
+        } else {
+            if (document.activeElement === last) { e.preventDefault(); first.focus(); }
+        }
+    };
+    modal.addEventListener('keydown', trapFocus);
+
+    // Any key (except Tab) or click dismisses
+    const dismiss = (e) => {
+        // Let Tab pass through to the focus trap
+        if (e.type === 'keydown' && e.key === 'Tab') return;
         modal.classList.remove('visible');
         setTimeout(() => { modal.style.display = 'none'; }, 200);
         document.removeEventListener('keydown', dismiss);
         modal.removeEventListener('click', onBackdropClick);
+        modal.removeEventListener('keydown', trapFocus);
     };
     const onBackdropClick = (e) => {
-        if (e.target === modal || e.target.closest('.close-button')) dismiss();
+        if (e.target === modal || e.target.closest('.close-button')) dismiss(e);
     };
     // Delay listener registration so the '?' keydown doesn't immediately dismiss
     setTimeout(() => {
-        document.addEventListener('keydown', dismiss, { once: true });
+        document.addEventListener('keydown', dismiss, { once: false });
         modal.addEventListener('click', onBackdropClick);
     }, 100);
 }

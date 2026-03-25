@@ -71,9 +71,9 @@ export function renderStreamCard(stream, { showActions = true } = {}) {
         </div>` : '';
 
     return `
-        <div class="stream-card" data-slug="${escapeHtml(slug)}" data-start-time="${escapeHtml(stream.start_time || '')}">
+        <div class="stream-card" data-slug="${escapeHtml(slug)}" data-start-time="${escapeHtml(stream.start_time || '')}" tabindex="0" role="article" aria-label="${escapeHtml(username)} — ${escapeHtml(title)}${viewers != null ? `, ${formatViewerCount(viewers)} viewers` : ''}">
             <div class="card-thumbnail">
-                ${thumbSrc ? `<img src="${escapeHtml(thumbSrc)}" alt="" decoding="async" class="thumb-fade" onload="this.classList.add('loaded')" onerror="this.style.display='none'">` : '<div style="width:100%;height:100%;background:rgba(255,255,255,0.03)"></div>'}
+                ${thumbSrc ? `<img src="${escapeHtml(thumbSrc)}" alt="${escapeHtml(username)} stream thumbnail" decoding="async" class="thumb-fade" onload="this.classList.add('loaded')" onerror="this.style.display='none'">` : '<div style="width:100%;height:100%;background:rgba(255,255,255,0.03)"></div>'}
                 <div class="card-uptime-badge"><span class="card-live-dot"></span>${formatUptime(stream.start_time) || 'LIVE'}</div>
                 ${viewers != null ? `<div class="card-viewers" data-count="${viewers}"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg><span class="viewer-num">${formatViewerCount(viewers)}</span></div>` : ''}
                 ${actionsHTML}
@@ -100,9 +100,9 @@ export function renderStreamListItem(stream) {
     const thumbSrc = stream.thumbnail?.src || '';
 
     return `
-        <div class="stream-list-item" data-slug="${escapeHtml(slug)}">
+        <div class="stream-list-item" data-slug="${escapeHtml(slug)}" tabindex="0" role="article" aria-label="${escapeHtml(username)} — ${escapeHtml(title)}${viewers != null ? `, ${formatViewerCount(viewers)} viewers` : ''}">
             <div class="list-thumb">
-                ${thumbSrc ? `<img src="${escapeHtml(thumbSrc)}" alt="" loading="lazy" onerror="this.style.display='none'">` : ''}
+                ${thumbSrc ? `<img src="${escapeHtml(thumbSrc)}" alt="${escapeHtml(username)} stream thumbnail" loading="lazy" onerror="this.style.display='none'">` : ''}
                 ${viewers != null ? `<div class="card-viewers" style="position:absolute;top:4px;right:4px;font-size:11px;padding:1px 6px"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>${formatViewerCount(viewers)}</div>` : ''}
             </div>
             <div class="list-info">
@@ -438,6 +438,18 @@ let delegationInitialized = false;
 export function initButtonDelegation() {
     if (delegationInitialized) return;
     delegationInitialized = true;
+
+    // Keyboard activation for focusable cards (Enter / Space)
+    document.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        const card = event.target.closest('.stream-card, .stream-list-item');
+        if (!card) return;
+        // Don't interfere with buttons/links inside the card
+        if (event.target.closest('.card-action-btn, a, button')) return;
+        event.preventDefault();
+        const slug = card.dataset.slug;
+        if (slug) navigate(`/channel/${slug}`);
+    });
 
     document.addEventListener('click', async (event) => {
         // Copy button

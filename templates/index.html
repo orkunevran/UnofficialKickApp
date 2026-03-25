@@ -16,6 +16,7 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css', ) }}">
 </head>
 <body>
+    <a href="#content-area" class="skip-link">Skip to content</a>
     <div id="app">
         <!-- Sidebar -->
         <aside id="sidebar" class="sidebar">
@@ -26,7 +27,7 @@
                 </a>
             </div>
 
-            <nav class="sidebar-nav">
+            <nav class="sidebar-nav" aria-label="Main navigation">
                 <a href="#/browse" class="sidebar-link" data-nav-route="/browse">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
                     <span class="sidebar-link-text">Browse</span>
@@ -152,7 +153,7 @@
     </div>
 
     <!-- Mobile bottom nav -->
-    <nav id="mobile-nav" class="mobile-nav">
+    <nav id="mobile-nav" class="mobile-nav" aria-label="Mobile navigation">
         <a href="#/browse" class="mobile-nav-item" data-nav-route="/browse">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
             <span>Browse</span>
@@ -172,13 +173,13 @@
     </nav>
 
     <!-- Chromecast Modal -->
-    <div id="chromecast-modal" class="modal" role="dialog" aria-labelledby="chromecast-modal-title">
+    <div id="chromecast-modal" class="modal" role="dialog" aria-labelledby="chromecast-modal-title" aria-modal="true">
         <div class="modal-content">
             <div class="modal-header">
                 <h2 id="chromecast-modal-title">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-3px;margin-right:6px;opacity:0.6"><path d="M2 16.1A5 5 0 015.9 20M2 12.05A9 9 0 019.95 20M2 8V6a2 2 0 012-2h16a2 2 0 012 2v12a2 2 0 01-2 2h-6"/><line x1="2" y1="20" x2="2.01" y2="20"/></svg>Cast to device
                 </h2>
-                <button class="close-button" role="button" aria-label="Close">&times;</button>
+                <button class="close-button" aria-label="Close">&times;</button>
             </div>
             <div id="chromecast-device-list" aria-live="polite"></div>
             <div class="modal-actions">
@@ -207,13 +208,13 @@
     </div>
 
     <!-- Keyboard Shortcuts Modal -->
-    <div id="shortcuts-modal" class="modal" role="dialog" aria-labelledby="shortcuts-modal-title">
+    <div id="shortcuts-modal" class="modal" role="dialog" aria-labelledby="shortcuts-modal-title" aria-modal="true">
         <div class="modal-content" style="max-width:400px">
             <div class="modal-header">
                 <h2 id="shortcuts-modal-title">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-3px;margin-right:6px;opacity:0.6"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M8 16h8"/></svg>Keyboard Shortcuts
                 </h2>
-                <button class="close-button" role="button" aria-label="Close">&times;</button>
+                <button class="close-button" aria-label="Close">&times;</button>
             </div>
             <div class="shortcuts-grid">
                 <div class="shortcut-row">
@@ -254,7 +255,7 @@
     </div>
 
     <!-- Toast container -->
-    <div id="toast-container" class="toast-container"></div>
+    <div id="toast-container" class="toast-container" role="status" aria-live="polite" aria-atomic="false"></div>
 
     <script defer src="https://cdn.jsdelivr.net/npm/hls.js@1.5.15/dist/hls.min.js"></script>
     <script type="module" src="{{ url_for('static', filename='script.js', ) }}"></script>

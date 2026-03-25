@@ -127,6 +127,21 @@ document.addEventListener('DOMContentLoaded', () => {
     initShortcuts();
     initMiniPlayerControls();
 
+    // Modal background inert management — prevents tabbing/interaction behind open modals
+    const appEl = document.getElementById('app');
+    const mobileNav = document.getElementById('mobile-nav');
+    const modals = document.querySelectorAll('.modal');
+    const inertTargets = [appEl, mobileNav].filter(Boolean);
+
+    const observer = new MutationObserver(() => {
+        const anyVisible = [...modals].some(m => m.classList.contains('visible'));
+        inertTargets.forEach(el => {
+            if (anyVisible) el.setAttribute('inert', '');
+            else el.removeAttribute('inert');
+        });
+    });
+    modals.forEach(m => observer.observe(m, { attributes: true, attributeFilter: ['class'] }));
+
     // Update favorites badge
     updateFavoritesBadge();
     window.addEventListener('favorites-changed', updateFavoritesBadge);

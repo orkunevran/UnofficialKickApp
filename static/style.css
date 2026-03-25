@@ -101,11 +101,37 @@
 
 /* Light theme — profile */
 [data-theme="light"] .profile-banner {
-    background: linear-gradient(135deg, rgba(22, 163, 74, 0.08), rgba(245, 246, 248, 0.8));
+    background: linear-gradient(135deg, rgba(22, 163, 74, 0.06), rgba(245, 246, 248, 0.7), rgba(37, 99, 235, 0.04));
 }
 [data-theme="light"] .profile-avatar-wrap.live-ring {
     border-color: var(--primary-color);
     box-shadow: 0 0 0 2px var(--primary-color), 0 0 16px rgba(22, 163, 74, 0.2);
+}
+
+/* Light theme — VOD cards */
+[data-theme="light"] .vod-card {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+[data-theme="light"] .vod-card:hover {
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08), 0 0 0 1px var(--border-highlight);
+}
+[data-theme="light"] .vod-card-duration {
+    background: rgba(0, 0, 0, 0.7);
+}
+
+/* Light theme — stream details chips */
+[data-theme="light"] .stream-details > div {
+    background: rgba(255, 255, 255, 0.8);
+}
+
+/* Light theme — modal */
+[data-theme="light"] .modal-content {
+    background: rgba(245, 246, 248, 0.98);
+}
+
+/* Light theme — search suggestions highlight */
+[data-theme="light"] .search-suggestion-item.highlighted {
+    border-left-color: var(--primary-color);
 }
 
 /* Light theme — sort pills & filter elements */
@@ -499,11 +525,17 @@ body {
     gap: 12px;
     padding: 10px 14px;
     cursor: pointer;
-    transition: background 0.1s;
+    transition: background 0.12s ease;
+    border-bottom: 1px solid var(--border-color);
 }
+.search-suggestion-item:last-child { border-bottom: none; }
 .search-suggestion-item:hover,
 .search-suggestion-item.highlighted {
     background: var(--surface-hover);
+}
+.search-suggestion-item.highlighted {
+    border-left: 2px solid var(--primary-color);
+    padding-left: 12px;
 }
 .suggestion-avatar {
     width: 36px; height: 36px;
@@ -744,9 +776,26 @@ body {
     color: var(--text-secondary);
     text-decoration: none;
     font-size: 10px;
-    transition: color 0.15s;
+    transition: color 0.2s;
+    position: relative;
 }
-.mobile-nav-item.active { color: var(--primary-color); }
+.mobile-nav-item::before {
+    content: '';
+    position: absolute;
+    top: 2px;
+    width: 4px; height: 4px;
+    border-radius: 50%;
+    background: var(--primary-color);
+    transform: scale(0);
+    transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+    box-shadow: 0 0 6px var(--primary-color);
+}
+.mobile-nav-item.active {
+    color: var(--primary-color);
+}
+.mobile-nav-item.active::before {
+    transform: scale(1);
+}
 .mobile-nav-item.active svg { stroke: var(--primary-color); }
 
 /* ── Stream Cards ──────────────────────────────────────────────────────── */
@@ -1024,7 +1073,7 @@ body {
     border-radius: var(--radius-lg);
     overflow: hidden;
     position: relative;
-    background: linear-gradient(135deg, rgba(83,252,24,0.1), rgba(15,18,25,0.8));
+    background: linear-gradient(135deg, rgba(83,252,24,0.08), rgba(15,18,25,0.6), rgba(255,51,102,0.05));
 }
 .profile-banner img {
     width: 100%; height: 100%;
@@ -1033,7 +1082,19 @@ body {
 .profile-banner-overlay {
     position: absolute;
     inset: 0;
-    background: linear-gradient(to top, var(--bg-color) 0%, transparent 60%);
+    background:
+        linear-gradient(to top, var(--bg-color) 0%, transparent 50%),
+        linear-gradient(to right, rgba(0,0,0,0.15) 0%, transparent 40%);
+}
+/* Live ring: animated pulse on the avatar border */
+.profile-avatar-wrap.live-ring {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px var(--primary-color), 0 0 20px rgba(83, 252, 24, 0.3);
+    animation: ring-pulse 3s ease-in-out infinite;
+}
+@keyframes ring-pulse {
+    0%, 100% { box-shadow: 0 0 0 2px var(--primary-color), 0 0 16px rgba(83, 252, 24, 0.25); }
+    50% { box-shadow: 0 0 0 3px var(--primary-color), 0 0 24px rgba(83, 252, 24, 0.4); }
 }
 .profile-header {
     display: flex;
@@ -1055,10 +1116,6 @@ body {
 .profile-avatar-wrap img {
     width: 100%; height: 100%;
     object-fit: cover;
-}
-.profile-avatar-wrap.live-ring {
-    border-color: var(--primary-color);
-    box-shadow: 0 0 0 2px var(--primary-color), 0 0 20px rgba(83, 252, 24, 0.3);
 }
 .profile-identity { flex: 1; padding-bottom: 4px; }
 .profile-username {
@@ -1155,6 +1212,7 @@ body {
     gap: 0;
     border-bottom: 1px solid var(--border-color);
     margin: 20px 0 16px;
+    position: relative;
 }
 .profile-tab {
     padding: 10px 20px;
@@ -1165,12 +1223,25 @@ body {
     border: none;
     background: none;
     border-bottom: 2px solid transparent;
-    transition: all 0.15s;
+    transition: color 0.2s ease, border-color 0.25s ease;
+    position: relative;
 }
 .profile-tab:hover { color: var(--text-color); }
 .profile-tab.active {
     color: var(--primary-color);
     border-bottom-color: var(--primary-color);
+}
+/* Glow effect under active tab */
+.profile-tab.active::after {
+    content: '';
+    position: absolute;
+    bottom: -1px;
+    left: 20%;
+    right: 20%;
+    height: 2px;
+    background: var(--primary-color);
+    filter: blur(4px);
+    opacity: 0.6;
 }
 
 /* ── Video Player ──────────────────────────────────────────────────────── */
@@ -1181,18 +1252,42 @@ body {
     overflow: hidden;
     background: #000;
     margin: 16px 0;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.04);
+    position: relative;
+}
+/* Cinematic glow when video is playing */
+.video-container:has(video:not([src=""]):not([src])) {
+    box-shadow:
+        0 4px 20px rgba(0, 0, 0, 0.4),
+        0 0 0 1px rgba(83, 252, 24, 0.1),
+        0 0 40px rgba(83, 252, 24, 0.04);
 }
 .video-container video {
     width: 100%; height: 100%;
+    display: block;
 }
 .stream-details {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 12px;
+    gap: 10px;
     margin: 12px 0;
 }
-.stream-detail-label { font-size: 13px; color: var(--text-muted); }
+.stream-details > div {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--surface-color);
+    border: 1px solid var(--border-color);
+    border-radius: 20px;
+    padding: 5px 12px;
+    font-size: 13px;
+    transition: border-color 0.15s;
+}
+.stream-details > div:hover {
+    border-color: var(--border-highlight);
+}
+.stream-detail-label { color: var(--text-muted); font-weight: 400; }
 .stream-detail-value { font-weight: 600; color: var(--text-color); }
 .viewer-count {
     display: inline-flex;
@@ -1499,7 +1594,7 @@ body {
 .modal-content {
     position: absolute;
     top: 50%; left: 50%;
-    transform: translate(-50%, -50%);
+    transform: translate(-50%, -50%) scale(0.95);
     background: rgba(18, 22, 30, 0.98);
     backdrop-filter: blur(10px);
     border: 1px solid var(--border-color);
@@ -1514,6 +1609,22 @@ body {
     gap: 12px;
     max-height: calc(100vh - 32px);
     overflow: hidden;
+    transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.2s ease;
+    opacity: 0;
+}
+.modal.visible .modal-content {
+    transform: translate(-50%, -50%) scale(1);
+    opacity: 1;
+}
+/* Accent gradient along top edge */
+.modal-content::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 24px; right: 24px;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--primary-color), var(--live-color), transparent);
+    opacity: 0.4;
+    border-radius: 1px;
 }
 .modal-header {
     display: flex;
@@ -1776,7 +1887,13 @@ body {
     pointer-events: auto;
     opacity: 0;
     transform: translateX(20px);
+    border-left: 3px solid transparent;
+    overflow: hidden;
 }
+.toast-success { border-left-color: var(--success-color); box-shadow: var(--glass-shadow), -4px 0 12px -4px rgba(83, 252, 24, 0.15); }
+.toast-error   { border-left-color: var(--error-color);   box-shadow: var(--glass-shadow), -4px 0 12px -4px rgba(255, 51, 102, 0.15); }
+.toast-info    { border-left-color: var(--info-color);    box-shadow: var(--glass-shadow), -4px 0 12px -4px rgba(51, 153, 255, 0.12); }
+.toast-warning { border-left-color: var(--warning-color); box-shadow: var(--glass-shadow), -4px 0 12px -4px rgba(255, 170, 0, 0.12); }
 .toast-enter {
     animation: toast-in 0.3s ease forwards;
 }
@@ -1829,16 +1946,36 @@ body {
     text-align: center;
     padding: 60px 20px;
     color: var(--text-muted);
+    animation: fade-in 0.4s ease-out;
 }
 .empty-state-icon {
     margin-bottom: 16px;
-    opacity: 0.3;
+    position: relative;
+    display: inline-block;
+}
+.empty-state-icon::before {
+    content: '';
+    position: absolute;
+    inset: -24px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(83, 252, 24, 0.06) 0%, transparent 70%);
+    z-index: -1;
+    animation: empty-pulse 4s ease-in-out infinite;
+}
+.empty-state-icon svg {
+    opacity: 0.35;
+}
+@keyframes empty-pulse {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.15); opacity: 0.6; }
 }
 .empty-state-title {
+    font-family: var(--font-display);
     font-size: 18px;
     font-weight: 600;
     color: var(--text-color);
     margin-bottom: 8px;
+    letter-spacing: -0.01em;
 }
 .empty-state-text {
     font-size: 14px;
@@ -1856,9 +1993,11 @@ body {
     margin-bottom: 16px;
 }
 .settings-group-title {
+    font-family: var(--font-display);
     font-size: 15px;
     font-weight: 600;
     margin-bottom: 16px;
+    letter-spacing: -0.01em;
 }
 .settings-row {
     display: flex;
@@ -1885,7 +2024,7 @@ body {
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
     overflow: hidden;
-    transition: all 0.2s;
+    transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
     cursor: pointer;
     text-decoration: none;
     color: inherit;
@@ -1893,7 +2032,11 @@ body {
 }
 .vod-card:hover {
     border-color: var(--border-highlight);
-    transform: translateY(-1px);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25), 0 0 0 1px var(--border-highlight);
+}
+.vod-card:hover .vod-card-thumb img {
+    transform: scale(1.04);
 }
 .vod-card:focus-visible {
     outline: none;
@@ -1909,16 +2052,19 @@ body {
 .vod-card-thumb img {
     width: 100%; height: 100%;
     object-fit: cover;
+    transition: transform 0.3s ease;
 }
 .vod-card-duration {
     position: absolute;
     bottom: 6px; right: 6px;
-    background: rgba(0,0,0,0.8);
+    background: rgba(0, 0, 0, 0.75);
+    backdrop-filter: blur(4px);
     color: #fff;
     font-size: 11px;
     font-weight: 600;
-    padding: 2px 6px;
-    border-radius: 3px;
+    padding: 2px 7px;
+    border-radius: 4px;
+    letter-spacing: 0.02em;
 }
 .vod-card-info {
     padding: 10px 12px;

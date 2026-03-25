@@ -24,6 +24,8 @@
     --radius-lg: 16px;
     --transition-fast: 0.15s ease;
     --transition-normal: 0.25s ease;
+    --font-display: 'Syne', 'Inter', system-ui, sans-serif;
+    --grain-opacity: 0.025;
 }
 
 /* ── Light Theme ──────────────────────────────────────────────────────── */
@@ -45,6 +47,7 @@
     --live-color: #dc2626;
     --glass-shadow: 0 4px 16px 0 rgba(0, 0, 0, 0.08);
     --neon-glow: 0 0 10px rgba(22, 163, 74, 0.15);
+    --grain-opacity: 0.015;
 }
 [data-theme="light"] body { background: var(--bg-color); color: var(--text-color); }
 [data-theme="light"] .sidebar { background: rgba(255, 255, 255, 0.95); }
@@ -134,6 +137,30 @@
     border-color: rgba(0, 0, 0, 0.1);
 }
 
+/* Light theme — ambient orbs (softer for light background) */
+[data-theme="light"] .main-wrapper::before {
+    background: var(--primary-color);
+    opacity: 0.04;
+}
+[data-theme="light"] .main-wrapper::after {
+    background: var(--info-color);
+    opacity: 0.03;
+}
+
+/* Light theme — sidebar indicator */
+[data-theme="light"] .sidebar-link::before {
+    box-shadow: 0 0 6px rgba(22, 163, 74, 0.25);
+}
+[data-theme="light"] .sidebar-link.active svg {
+    filter: drop-shadow(0 0 2px rgba(22, 163, 74, 0.3));
+}
+
+/* Light theme — search focus */
+[data-theme="light"] .search-input:focus {
+    box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.1), 0 4px 16px rgba(0, 0, 0, 0.06);
+    background: rgba(255, 255, 255, 0.9);
+}
+
 /* ── Smooth theme transition ─────────────────────────────────────────── */
 html.theme-transitioning,
 html.theme-transitioning *,
@@ -154,14 +181,63 @@ body {
 #app {
     display: flex;
     height: 100vh;
+    position: relative;
 }
+/* Atmospheric grain overlay */
+#app::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 90;
+    pointer-events: none;
+    opacity: var(--grain-opacity);
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-repeat: repeat;
+    background-size: 200px;
+    mix-blend-mode: overlay;
+}
+/* Ambient glow orbs — positioned behind content for atmosphere */
 .main-wrapper {
     flex: 1;
     display: flex;
     flex-direction: column;
     min-width: 0;
     overflow: hidden;
+    position: relative;
 }
+.main-wrapper::before,
+.main-wrapper::after {
+    content: '';
+    position: fixed;
+    border-radius: 50%;
+    pointer-events: none;
+    filter: blur(120px);
+    z-index: 0;
+    opacity: 0.07;
+    will-change: transform;
+}
+.main-wrapper::before {
+    width: 500px; height: 500px;
+    background: var(--primary-color);
+    top: -15%; right: -5%;
+    animation: orb-drift-1 25s ease-in-out infinite alternate;
+}
+.main-wrapper::after {
+    width: 400px; height: 400px;
+    background: var(--live-color);
+    bottom: -10%; left: 10%;
+    animation: orb-drift-2 30s ease-in-out infinite alternate;
+}
+@keyframes orb-drift-1 {
+    from { transform: translate(0, 0) scale(1); }
+    to   { transform: translate(-40px, 60px) scale(1.1); }
+}
+@keyframes orb-drift-2 {
+    from { transform: translate(0, 0) scale(1); }
+    to   { transform: translate(50px, -40px) scale(0.9); }
+}
+/* Ensure content sits above the orbs */
+.top-bar, .content-area, .mini-player { position: relative; z-index: 1; }
 
 ::selection {
     background-color: rgba(83, 252, 24, 0.3);
@@ -264,17 +340,35 @@ body {
     font-weight: 500;
     transition: all 0.15s ease;
     white-space: nowrap;
+    position: relative;
+}
+.sidebar-link::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%) scaleY(0);
+    width: 3px;
+    height: 20px;
+    border-radius: 0 3px 3px 0;
+    background: var(--primary-color);
+    transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+    box-shadow: 0 0 8px rgba(83, 252, 24, 0.3);
 }
 .sidebar-link:hover {
     background: var(--surface-hover);
     color: var(--text-color);
 }
 .sidebar-link.active {
-    background: rgba(83, 252, 24, 0.1);
+    background: rgba(83, 252, 24, 0.08);
     color: var(--primary-color);
+}
+.sidebar-link.active::before {
+    transform: translateY(-50%) scaleY(1);
 }
 .sidebar-link.active svg {
     stroke: var(--primary-color);
+    filter: drop-shadow(0 0 3px rgba(83, 252, 24, 0.4));
 }
 .sidebar-link-muted { opacity: 0.6; }
 .sidebar-link-muted:hover { opacity: 1; }
@@ -334,12 +428,20 @@ body {
     position: relative;
     display: flex;
     align-items: center;
+    transition: max-width 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.search-container:focus-within {
+    max-width: 620px;
 }
 .search-icon {
     position: absolute;
     left: 12px;
     color: var(--text-secondary);
     pointer-events: none;
+    transition: color 0.2s ease;
+}
+.search-container:focus-within .search-icon {
+    color: var(--primary-color);
 }
 .search-input {
     width: 100%;
@@ -351,12 +453,17 @@ body {
     font-size: 14px;
     font-family: inherit;
     outline: none;
-    transition: border-color 0.15s, box-shadow 0.15s;
+    transition: border-color 0.2s, box-shadow 0.3s, background 0.2s;
 }
 .search-input::placeholder { color: var(--text-secondary); }
 .search-input:focus {
     border-color: var(--border-highlight);
-    box-shadow: 0 0 0 3px rgba(83, 252, 24, 0.1);
+    box-shadow: 0 0 0 3px rgba(83, 252, 24, 0.1), 0 0 20px rgba(83, 252, 24, 0.05);
+    background: rgba(255,255,255,0.08);
+}
+.search-container:focus-within .search-kbd {
+    opacity: 0;
+    transition: opacity 0.15s;
 }
 .search-kbd {
     position: absolute;
@@ -955,10 +1062,12 @@ body {
 }
 .profile-identity { flex: 1; padding-bottom: 4px; }
 .profile-username {
+    font-family: var(--font-display);
     font-size: 24px;
     font-weight: 700;
     display: inline;
     margin: 0;
+    letter-spacing: -0.02em;
 }
 .verified-badge {
     display: inline-flex;
@@ -1302,17 +1411,25 @@ body {
     margin-bottom: 20px;
 }
 .section-title {
+    font-family: var(--font-display);
     font-size: 22px;
     font-weight: 700;
     display: flex;
     align-items: center;
     gap: 8px;
+    letter-spacing: -0.02em;
 }
 .section-title::before {
     content: '';
     width: 4px; height: 24px;
-    background: var(--primary-color);
     border-radius: 2px;
+    background: linear-gradient(180deg, var(--primary-color) 0%, var(--live-color) 100%);
+    background-size: 100% 200%;
+    animation: accent-shimmer 4s ease-in-out infinite alternate;
+}
+@keyframes accent-shimmer {
+    from { background-position: 0% 0%; }
+    to   { background-position: 0% 100%; }
 }
 .section-count {
     font-size: 14px;

@@ -6,7 +6,7 @@
 import { route, navigate, init as initRouter } from './js/router.js?v=2.4.8';
 import { initializeChromecast } from './js/chromecast.js?v=2.4.8';
 import { initButtonDelegation, renderSearchResults, renderSearchLoading, renderSearchEmpty, handleSuggestionKeydown, updateFavoritesBadge } from './js/ui.js?v=2.4.8';
-import { appState, loadPreferences, preferences } from './js/state.js?v=2.4.8';
+import { appState, loadPreferences, preferences, savePreferences } from './js/state.js?v=2.4.8';
 import { initShortcuts } from './js/shortcuts.js?v=2.4.8';
 import { initMiniPlayerControls } from './js/player.js?v=2.5.0';
 import { getFavoriteCount } from './js/favorites.js?v=2.4.8';
@@ -16,6 +16,7 @@ import { initialsAvatar } from './js/utils.js?v=2.4.8';
 // Expose modules for cross-module access without circular imports
 window.__favModule = { getFavoriteCount };
 window.__routerModule = { navigate };
+window.__stateModule = { preferences, savePreferences };
 
 // ── View imports ──────────────────────────────────────────────────────────
 import { mount as mountBrowse } from './js/views/browse.js?v=2.5.0';
@@ -41,10 +42,79 @@ document.addEventListener('DOMContentLoaded', () => {
     // Load preferences
     loadPreferences();
 
-    // Apply saved theme
-    if (preferences.theme && preferences.theme !== 'dark') {
-        document.documentElement.dataset.theme = preferences.theme;
+    // ── Theme system ────────────────────────────────────────────────────────
+    function resolveTheme(pref) {
+        if (pref === 'light' || pref === 'dark') return pref;
+        // 'system' or unset — follow OS preference
+        return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
     }
+
+    function applyTheme(pref) {
+        const resolved = resolveTheme(pref);
+        // Add transition class, apply theme, then remove class after animation
+        document.documentElement.classList.add('theme-transitioning');
+        if (resolved === 'dark') {
+            delete document.documentElement.dataset.theme;
+        } else {
+            document.documentElement.dataset.theme = resolved;
+        }
+        updateThemeIcon(pref);
+        // Update <meta name="theme-color">
+        const meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.content = resolved === 'light' ? '#f5f6f8' : '#0b0e14';
+        requestAnimationFrame(() => {
+            setTimeout(() => document.documentElement.classList.remove('theme-transitioning'), 350);
+        });
+    }
+
+    function updateThemeIcon(pref) {
+        const sun = document.getElementById('theme-icon-sun');
+        const moon = document.getElementById('theme-icon-moon');
+        const auto = document.getElementById('theme-icon-auto');
+        if (!sun || !moon || !auto) return;
+        sun.style.display = pref === 'light' ? 'block' : 'none';
+        moon.style.display = pref === 'dark' ? 'block' : 'none';
+        auto.style.display = (pref === 'system' || !pref) ? 'block' : 'none';
+        const btn = document.getElementById('theme-toggle-btn');
+        if (btn) {
+            const labels = { system: 'Theme: System', light: 'Theme: Light', dark: 'Theme: Dark' };
+            btn.title = labels[pref] || labels.system;
+        }
+    }
+
+    // Expose for shortcuts module
+    window.__applyTheme = applyTheme;
+
+    // Apply initial theme (no transition on first load)
+    const initialTheme = preferences.theme || 'system';
+    const initialResolved = resolveTheme(initialTheme);
+    if (initialResolved === 'light') {
+        document.documentElement.dataset.theme = 'light';
+    }
+    updateThemeIcon(initialTheme);
+
+    // Theme toggle button
+    const themeToggleBtn = document.getElementById('theme-toggle-btn');
+    if (themeToggleBtn) {
+        themeToggleBtn.addEventListener('click', () => {
+            const order = ['system', 'light', 'dark'];
+            const current = preferences.theme || 'system';
+            const next = order[(order.indexOf(current) + 1) % order.length];
+            preferences.theme = next;
+            savePreferences();
+            applyTheme(next);
+            // Sync settings dropdown if visible
+            const sel = document.getElementById('settings-theme');
+            if (sel) sel.value = next;
+        });
+    }
+
+    // Follow OS changes when theme is 'system'
+    window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+        if ((preferences.theme || 'system') === 'system') {
+            applyTheme('system');
+        }
+    });
 
     // Pre-fetch static config (languages never change at runtime)
     fetch('/config/languages').then(r => r.ok ? r.json() : null).then(cfg => {

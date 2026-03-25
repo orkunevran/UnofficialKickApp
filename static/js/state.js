@@ -27,6 +27,7 @@ export const featuredSortState = {
 export const preferences = {
     language: null,       // null = use server default
     viewMode: 'grid',    // 'grid' or 'list'
+    theme: 'system',     // 'system' | 'light' | 'dark'
     sidebarCollapsed: false,
     chromecast: {
         lastDeviceUUID: null,

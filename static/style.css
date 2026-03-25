@@ -48,9 +48,18 @@
 }
 [data-theme="light"] body { background: var(--bg-color); color: var(--text-color); }
 [data-theme="light"] .sidebar { background: rgba(255, 255, 255, 0.95); }
+[data-theme="light"] .modal-content { background: rgba(245, 246, 248, 0.98); }
 [data-theme="light"] ::selection { background-color: rgba(22, 163, 74, 0.2); }
 [data-theme="light"] ::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.15); }
 [data-theme="light"] ::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.25); }
+
+/* ── Smooth theme transition ─────────────────────────────────────────── */
+html.theme-transitioning,
+html.theme-transitioning *,
+html.theme-transitioning *::before,
+html.theme-transitioning *::after {
+    transition: background-color 0.3s ease, color 0.2s ease, border-color 0.3s ease, box-shadow 0.3s ease !important;
+}
 
 /* ── Base layout (replaces Tailwind utilities) ────────────────────────── */
 body {
@@ -337,6 +346,20 @@ body {
 }
 .chromecast-btn:hover { background: var(--surface-hover); opacity: 1; }
 .chromecast-btn.active { background: rgba(83, 252, 24, 0.15); opacity: 1; }
+
+/* ── Theme toggle button ─────────────────────────────────────────────── */
+.theme-toggle-btn {
+    background: none; border: none; cursor: pointer;
+    padding: 8px; border-radius: var(--radius-sm);
+    transition: background 0.15s, opacity 0.15s;
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0.7;
+    color: var(--text-color);
+    position: relative;
+}
+.theme-toggle-btn:hover { background: var(--surface-hover); opacity: 1; }
+.theme-toggle-btn svg { transition: transform 0.3s ease; }
+.theme-toggle-btn:active svg { transform: rotate(30deg); }
 
 .chromecast-disconnect-quick {
     background: none; border: none; cursor: pointer;
@@ -1267,6 +1290,50 @@ body {
 .modal-actions .btn-danger:hover {
     background: rgba(255, 107, 107, 0.12);
     border-color: rgba(255, 107, 107, 0.4);
+}
+
+/* ── Shortcuts modal ─────────────────────────────────────────────────── */
+.shortcuts-grid {
+    display: grid;
+    gap: 0;
+}
+.shortcut-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border-color);
+}
+.shortcut-row:last-child { border-bottom: none; }
+.shortcut-label {
+    font-size: 13px;
+    color: var(--text-muted);
+}
+.shortcut-keys {
+    display: flex;
+    gap: 4px;
+}
+.shortcut-key {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    height: 26px;
+    padding: 0 8px;
+    background: var(--surface-color);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: 'Inter', system-ui, monospace;
+    color: var(--text-color);
+    line-height: 1;
+}
+.shortcuts-footer {
+    text-align: center;
+    font-size: 12px;
+    color: var(--text-secondary);
+    padding-top: 4px;
 }
 .rescan-icon {
     flex-shrink: 0;

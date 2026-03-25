@@ -21,7 +21,7 @@ export async function mount(params, contentEl) {
     } catch { /* use fallback */ }
 
     const currentLang = preferences.language || defaultLang;
-    const currentTheme = preferences.theme || 'dark';
+    const currentTheme = preferences.theme || 'system';
 
     contentEl.innerHTML = `
         <div class="section-header">
@@ -33,8 +33,9 @@ export async function mount(params, contentEl) {
             <div class="settings-row">
                 <span class="settings-label">Theme</span>
                 <select id="settings-theme" class="filter-select">
-                    <option value="dark" ${currentTheme === 'dark' ? 'selected' : ''}>Dark</option>
+                    <option value="system" ${currentTheme === 'system' ? 'selected' : ''}>System</option>
                     <option value="light" ${currentTheme === 'light' ? 'selected' : ''}>Light</option>
+                    <option value="dark" ${currentTheme === 'dark' ? 'selected' : ''}>Dark</option>
                 </select>
             </div>
         </div>
@@ -72,7 +73,7 @@ export async function mount(params, contentEl) {
             <div class="settings-group-title">About</div>
             <div class="settings-row">
                 <span class="settings-label">Version</span>
-                <span style="color:var(--text-muted);font-size:13px">3.0.0</span>
+                <span style="color:var(--text-muted);font-size:13px">3.1.0</span>
             </div>
             <div class="settings-row">
                 <span class="settings-label">API Documentation</span>
@@ -85,7 +86,10 @@ export async function mount(params, contentEl) {
             <div style="font-size:13px;color:var(--text-muted);line-height:2">
                 <div><kbd class="search-kbd" style="display:inline-flex;position:static;margin-right:8px">/</kbd> Focus search</div>
                 <div><kbd class="search-kbd" style="display:inline-flex;position:static;margin-right:8px">Esc</kbd> Close modal / clear search</div>
-                <div><kbd class="search-kbd" style="display:inline-flex;position:static;margin-right:8px">?</kbd> Show shortcuts</div>
+                <div><kbd class="search-kbd" style="display:inline-flex;position:static;margin-right:8px">?</kbd> Show shortcuts help</div>
+                <div><kbd class="search-kbd" style="display:inline-flex;position:static;margin-right:8px">T</kbd> Cycle theme</div>
+                <div><kbd class="search-kbd" style="display:inline-flex;position:static;margin-right:4px">G</kbd><kbd class="search-kbd" style="display:inline-flex;position:static;margin-right:8px">B</kbd> Go to Browse</div>
+                <div><kbd class="search-kbd" style="display:inline-flex;position:static;margin-right:4px">G</kbd><kbd class="search-kbd" style="display:inline-flex;position:static;margin-right:8px">F</kbd> Go to Favorites</div>
             </div>
         </div>`;
 
@@ -117,8 +121,9 @@ export async function mount(params, contentEl) {
         const theme = e.target.value;
         preferences.theme = theme;
         savePreferences();
-        document.documentElement.dataset.theme = theme;
-        toast(`Theme switched to ${theme}`, 'success');
+        window.__applyTheme?.(theme);
+        const labels = { system: 'System (auto)', light: 'Light', dark: 'Dark' };
+        toast(`Theme: ${labels[theme] || theme}`, 'success');
     };
 
     // Language change

@@ -1,6 +1,62 @@
 /**
  * Global keyboard shortcuts.
+ *
+ * Single keys:  /  → focus search
+ *               ?  → show shortcuts modal
+ *               t  → cycle theme (system → light → dark)
+ *             Esc  → close modal / blur input
+ *
+ * Two-key "go" combos (press g, then within 800ms press a second key):
+ *   g b → Browse    g f → Favorites    g h → History    g s → Settings
  */
+
+let _goPrefix = false;
+let _goTimer = null;
+
+function _clearGoPrefix() {
+    _goPrefix = false;
+    clearTimeout(_goTimer);
+}
+
+function _showShortcutsModal() {
+    const modal = document.getElementById('shortcuts-modal');
+    if (!modal) return;
+    modal.style.display = 'block';
+    requestAnimationFrame(() => modal.classList.add('visible'));
+
+    // Any key or click dismisses
+    const dismiss = () => {
+        modal.classList.remove('visible');
+        setTimeout(() => { modal.style.display = 'none'; }, 200);
+        document.removeEventListener('keydown', dismiss);
+        modal.removeEventListener('click', onBackdropClick);
+    };
+    const onBackdropClick = (e) => {
+        if (e.target === modal || e.target.closest('.close-button')) dismiss();
+    };
+    // Delay listener registration so the '?' keydown doesn't immediately dismiss
+    setTimeout(() => {
+        document.addEventListener('keydown', dismiss, { once: true });
+        modal.addEventListener('click', onBackdropClick);
+    }, 100);
+}
+
+function _cycleTheme() {
+    const { preferences, savePreferences } = window.__stateModule || {};
+    if (!preferences) return;
+
+    const order = ['system', 'light', 'dark'];
+    const current = preferences.theme || 'system';
+    const next = order[(order.indexOf(current) + 1) % order.length];
+
+    preferences.theme = next;
+    savePreferences();
+    window.__applyTheme?.(next);
+
+    // Sync settings dropdown if visible
+    const sel = document.getElementById('settings-theme');
+    if (sel) sel.value = next;
+}
 
 export function initShortcuts() {
     document.addEventListener('keydown', (e) => {
@@ -20,6 +76,20 @@ export function initShortcuts() {
             return;
         }
 
+        // "Go" prefix combos — g was pressed, now check the second key
+        if (_goPrefix) {
+            _clearGoPrefix();
+            const { navigate } = window.__routerModule || {};
+            if (!navigate) return;
+            switch (e.key) {
+                case 'b': e.preventDefault(); navigate('/browse'); return;
+                case 'f': e.preventDefault(); navigate('/favorites'); return;
+                case 'h': e.preventDefault(); navigate('/history'); return;
+                case 's': e.preventDefault(); navigate('/settings'); return;
+            }
+            // Unrecognized second key — fall through to normal handling
+        }
+
         switch (e.key) {
             case '/': {
                 e.preventDefault();
@@ -27,7 +97,29 @@ export function initShortcuts() {
                 if (searchInput) searchInput.focus();
                 break;
             }
+            case '?': {
+                e.preventDefault();
+                _showShortcutsModal();
+                break;
+            }
+            case 't': {
+                _cycleTheme();
+                break;
+            }
+            case 'g': {
+                // Start "go" prefix — wait for second key
+                _goPrefix = true;
+                _goTimer = setTimeout(_clearGoPrefix, 800);
+                break;
+            }
             case 'Escape': {
+                // Close shortcuts modal
+                const shortcutsModal = document.getElementById('shortcuts-modal');
+                if (shortcutsModal && shortcutsModal.style.display === 'block') {
+                    shortcutsModal.classList.remove('visible');
+                    setTimeout(() => { shortcutsModal.style.display = 'none'; }, 200);
+                    return;
+                }
                 // Close chromecast modal
                 const modal = document.getElementById('chromecast-modal');
                 if (modal && modal.style.display === 'block') {

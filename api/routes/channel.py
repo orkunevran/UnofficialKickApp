@@ -24,6 +24,27 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/streams", tags=["streams"])
 
 
+def _extract_thumbnail(livestream_data: dict, fallback_pic: str | None) -> str | None:
+    """Extract the best available thumbnail URL from livestream data.
+
+    Priority: thumbnail.src → thumbnail.url → profile picture fallback.
+    """
+    thumb = livestream_data.get("thumbnail")
+    if isinstance(thumb, dict):
+        return thumb.get("src") or thumb.get("url") or fallback_pic
+    return fallback_pic
+
+
+def _extract_category_name(livestream_data: dict) -> str | None:
+    """Safely extract the first category name from livestream data."""
+    categories = livestream_data.get("categories")
+    if isinstance(categories, list) and categories:
+        first = categories[0]
+        if isinstance(first, dict):
+            return first.get("name")
+    return None
+
+
 @router.get("/play/{channel_slug}")
 async def play_stream(channel_slug: str, cache: CacheDep, client: KickClientDep, cb: CircuitBreakerDep):
     if not validate_slug(channel_slug):
@@ -50,8 +71,6 @@ async def play_stream(channel_slug: str, cache: CacheDep, client: KickClientDep,
         if not playback_url:
             return error_json("Live playback URL not found in API response.", 500)
 
-        thumbnail = livestream_data.get("thumbnail")
-        categories = livestream_data.get("categories")
         profile_pic = data.get("user", {}).get("profile_pic")
 
         response_data = {
@@ -59,12 +78,10 @@ async def play_stream(channel_slug: str, cache: CacheDep, client: KickClientDep,
             "status": "live",
             "playback_url": playback_url,
             "livestream_id": livestream_data.get("id"),
-            "livestream_thumbnail_url": (thumbnail.get("src") if thumbnail else None)
-                                       or (thumbnail.get("url") if thumbnail else None)
-                                       or profile_pic,
+            "livestream_thumbnail_url": _extract_thumbnail(livestream_data, profile_pic),
             "livestream_title": livestream_data.get("session_title"),
             "livestream_viewer_count": livestream_data.get("viewer_count"),
-            "livestream_category": categories[0].get("name") if categories else None,
+            "livestream_category": _extract_category_name(livestream_data),
         }
         payload = {"status": "success", "message": "", "data": response_data}
         cache_json_response(cache, key, payload, 200, timeout=Config.LIVE_CACHE_DURATION_SECONDS)

@@ -143,4 +143,4 @@ def warm_caches_from_featured(cache, streams: list) -> None:
                     "_partial": True,
                 }
             }
-            cache.set(play_key, (partial, 200), timeout=15)
+            cache.set(play_key, (partial, 200), timeout=Config.LIVE_CACHE_DURATION_SECONDS)

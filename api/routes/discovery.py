@@ -57,17 +57,24 @@ async def viewer_count(request: Request, cache: CacheDep, client: KickClientDep,
 
 
 @router.get("/viewers/batch")
-async def viewer_count_batch(request: Request, cache: CacheDep, client: KickClientDep, cb: CircuitBreakerDep, ids: str = Query("")):
+async def viewer_count_batch(
+    request: Request, cache: CacheDep, client: KickClientDep, cb: CircuitBreakerDep,
+    ids: str = Query(""),
+):
     """Batch viewer count — single upstream call for multiple livestream IDs.
 
     Query: ``?ids=101621100,101647164,...`` (comma-separated, max 50).
     Returns ``{ "status": "success", "data": { "101621100": 1044, ... } }``.
     """
     raw_ids = [s.strip() for s in ids.split(",") if s.strip()]
-    try:
-        int_ids = [int(x) for x in raw_ids if int(x) > 0]
-    except (ValueError, TypeError):
-        return error_json("Invalid ID list.", 400)
+    int_ids: list[int] = []
+    for raw in raw_ids:
+        try:
+            val = int(raw)
+        except (ValueError, TypeError):
+            return error_json("Invalid ID list.", 400)
+        if val > 0:
+            int_ids.append(val)
 
     if not int_ids:
         return error_json("Missing livestream IDs.", 400)

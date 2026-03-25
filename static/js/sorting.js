@@ -1,4 +1,4 @@
-import { getNestedProperty } from './utils.js?v=2.4.8';
+import { getNestedProperty } from './utils.js';
 
 const FEATURED_COLUMN_TYPES = {
     'session_title': 'string',

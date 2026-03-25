@@ -2,14 +2,14 @@
  * Channel view — profile + tabs (Stream / VODs / Clips).
  */
 
-import { fetchChannelData, fetchLiveStatus, fetchViewerCount } from '../api.js?v=2.4.8';
-import { renderChannelProfile, renderStreamTabContent, renderProfileSkeleton, renderVodGrid, renderClipGrid } from '../ui.js?v=2.4.8';
-import { appState } from '../state.js?v=2.4.8';
-import { addToHistory } from '../history.js?v=2.4.8';
-import { toast } from '../toast.js?v=2.4.8';
-import { escapeHtml, debounce } from '../utils.js?v=2.4.8';
-import { navigate } from '../router.js?v=2.4.8';
-import { startMiniPlayer, getCurrentStream, stopMiniPlayer, reclaimHls, hideMiniPlayer } from '../player.js?v=2.5.0';
+import { fetchChannelData, fetchLiveStatus, fetchViewerCount } from '../api.js';
+import { renderChannelProfile, renderStreamTabContent, renderProfileSkeleton, renderVodGrid, renderClipGrid } from '../ui.js';
+import { appState } from '../state.js';
+import { addToHistory } from '../history.js';
+import { toast } from '../toast.js';
+import { escapeHtml, debounce } from '../utils.js';
+import { navigate } from '../router.js';
+import { startMiniPlayer, getCurrentStream, stopMiniPlayer, reclaimHls, hideMiniPlayer } from '../player.js';
 
 let viewerRefreshTimer = null;
 let hlsInstance = null;

@@ -7,8 +7,8 @@
  * playback is seamless with no rebuffering.
  */
 
-import { castStream } from './chromecast_logic.js?v=2.4.8';
-import { escapeHtml } from './utils.js?v=2.4.8';
+import { castStream } from './chromecast_logic.js';
+import { escapeHtml } from './utils.js';
 
 let hlsInstance = null;   // HLS.js instance owned by the mini player
 let currentStream = null; // { slug, title, channel, playbackUrl, thumbnailUrl }

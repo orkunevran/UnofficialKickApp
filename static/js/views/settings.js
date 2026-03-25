@@ -2,10 +2,10 @@
  * Settings view — preferences for language, view mode, etc.
  */
 
-import { preferences, savePreferences } from '../state.js?v=2.4.8';
-import { toast } from '../toast.js?v=2.4.8';
-import { clearHistory } from '../history.js?v=2.4.8';
-import { clearFavorites } from '../favorites.js?v=2.4.8';
+import { preferences, savePreferences } from '../state.js';
+import { toast } from '../toast.js';
+import { clearHistory } from '../history.js';
+import { clearFavorites } from '../favorites.js';
 
 export async function mount(params, contentEl) {
     // Fetch languages for the selector

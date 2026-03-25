@@ -1,5 +1,5 @@
-import { toast } from './toast.js?v=2.4.8';
-import { postChromecastCast } from './api.js?v=2.4.8';
+import { toast } from './toast.js';
+import { postChromecastCast } from './api.js';
 
 let isCasting = false;
 

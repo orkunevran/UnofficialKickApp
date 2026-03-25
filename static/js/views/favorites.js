@@ -4,11 +4,11 @@
  * then does a single sorted re-render (no flashing).
  */
 
-import { getFavorites, removeFavorite } from '../favorites.js?v=2.4.8';
-import { fetchLiveStatus } from '../api.js?v=2.4.8';
-import { escapeHtml, initialsAvatar, formatViewerCount } from '../utils.js?v=2.4.8';
-import { navigate } from '../router.js?v=2.4.8';
-import { updateFavoritesBadge } from '../ui.js?v=2.4.8';
+import { getFavorites, removeFavorite } from '../favorites.js';
+import { fetchLiveStatus } from '../api.js';
+import { escapeHtml, initialsAvatar, formatViewerCount } from '../utils.js';
+import { navigate } from '../router.js';
+import { updateFavoritesBadge } from '../ui.js';
 
 // Module-level cache so returning to the tab is instant
 let _cachedResults = null;   // [{fav, liveData}, ...]

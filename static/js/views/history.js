@@ -3,10 +3,10 @@
  * Renders instantly from localStorage with in-place DOM removal.
  */
 
-import { getHistory, clearHistory, removeFromHistory } from '../history.js?v=2.4.8';
-import { escapeHtml, formatRelativeTime, initialsAvatar } from '../utils.js?v=2.4.8';
-import { navigate } from '../router.js?v=2.4.8';
-import { toast } from '../toast.js?v=2.4.8';
+import { getHistory, clearHistory, removeFromHistory } from '../history.js';
+import { escapeHtml, formatRelativeTime, initialsAvatar } from '../utils.js';
+import { navigate } from '../router.js';
+import { toast } from '../toast.js';
 
 function renderHistoryItem(item) {
     const hasProfile = !!item.profilePicture;

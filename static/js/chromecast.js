@@ -2,11 +2,11 @@
  * Chromecast modal — device discovery, selection, and casting UI.
  */
 
-import { toast } from './toast.js?v=2.4.8';
-import { castStream } from './chromecast_logic.js?v=2.4.8';
-import { escapeHtml } from './utils.js?v=2.4.8';
-import { preferences, updatePreference } from './state.js?v=2.4.8';
-import { fetchChromecastDevices, postChromecastSelect, postChromecastStop, fetchChromecastStatus } from './api.js?v=2.4.8';
+import { toast } from './toast.js';
+import { castStream } from './chromecast_logic.js';
+import { escapeHtml } from './utils.js';
+import { preferences, updatePreference } from './state.js';
+import { fetchChromecastDevices, postChromecastSelect, postChromecastStop, fetchChromecastStatus } from './api.js';
 
 // ── SVG Icons ────────────────────────────────────────────────────────────
 

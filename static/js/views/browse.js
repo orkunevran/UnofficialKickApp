@@ -2,11 +2,11 @@
  * Browse view — Featured streams with card grid, filters, infinite scroll, auto-refresh.
  */
 
-import { fetchFeaturedStreams, fetchBatchViewerCounts } from '../api.js?v=2.4.8';
-import { renderStreamGrid, renderCardSkeleton, updateFavoritesBadge, patchStreamGrid } from '../ui.js?v=2.4.8';
-import { appState, featuredSortState, preferences } from '../state.js?v=2.4.8';
-import { applyFeaturedStreamsSort } from '../sorting.js?v=2.4.8';
-import { toast } from '../toast.js?v=2.4.8';
+import { fetchFeaturedStreams, fetchBatchViewerCounts } from '../api.js';
+import { renderStreamGrid, renderCardSkeleton, updateFavoritesBadge, patchStreamGrid } from '../ui.js';
+import { appState, featuredSortState, preferences } from '../state.js';
+import { applyFeaturedStreamsSort } from '../sorting.js';
+import { toast } from '../toast.js';
 
 const REFRESH_INTERVAL_MS = 120_000;
 const DEFAULT_PAGE_SIZE = 14;

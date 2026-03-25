@@ -2,11 +2,11 @@
  * UI rendering module — card-based grids instead of tables.
  */
 
-import { escapeHtml, formatDuration, formatDate, formatViewerCount, formatUptime, initialsAvatar, copyToClipboard } from './utils.js?v=2.4.8';
-import { appState, vodsSortState, featuredSortState } from './state.js?v=2.4.8';
-import { castStream } from './chromecast_logic.js?v=2.4.8';
-import { isFavorite, toggleFavorite } from './favorites.js?v=2.4.8';
-import { navigate } from './router.js?v=2.4.8';
+import { escapeHtml, formatDuration, formatDate, formatViewerCount, formatUptime, initialsAvatar, copyToClipboard } from './utils.js';
+import { appState, vodsSortState, featuredSortState } from './state.js';
+import { castStream } from './chromecast_logic.js';
+import { isFavorite, toggleFavorite } from './favorites.js';
+import { navigate } from './router.js';
 
 // ── Skeleton Loaders ──────────────────────────────────────────────────────
 

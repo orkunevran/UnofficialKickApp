@@ -1,17 +1,17 @@
 /**
- * Kick App v2 — Main entry point.
- * Thin orchestrator: initializes router, search, shortcuts, chromecast.
+ * Kick App v3.1.0 — Main entry point.
+ * Thin orchestrator: initializes router, search, theme, shortcuts, chromecast.
  */
 
-import { route, navigate, init as initRouter } from './js/router.js?v=2.4.8';
-import { initializeChromecast } from './js/chromecast.js?v=2.4.8';
-import { initButtonDelegation, renderSearchResults, renderSearchLoading, renderSearchEmpty, handleSuggestionKeydown, updateFavoritesBadge } from './js/ui.js?v=2.4.8';
-import { appState, loadPreferences, preferences, savePreferences } from './js/state.js?v=2.4.8';
-import { initShortcuts } from './js/shortcuts.js?v=2.4.8';
-import { initMiniPlayerControls } from './js/player.js?v=2.5.0';
-import { getFavoriteCount } from './js/favorites.js?v=2.4.8';
-import { fetchSearchResults, fetchChannelSearch, fetchChannelAvatar } from './js/api.js?v=2.4.8';
-import { initialsAvatar } from './js/utils.js?v=2.4.8';
+import { route, navigate, init as initRouter } from './js/router.js';
+import { initializeChromecast } from './js/chromecast.js';
+import { initButtonDelegation, renderSearchResults, renderSearchLoading, renderSearchEmpty, handleSuggestionKeydown, updateFavoritesBadge } from './js/ui.js';
+import { appState, loadPreferences, preferences, savePreferences } from './js/state.js';
+import { initShortcuts } from './js/shortcuts.js';
+import { initMiniPlayerControls } from './js/player.js';
+import { getFavoriteCount } from './js/favorites.js';
+import { fetchSearchResults, fetchChannelSearch, fetchChannelAvatar } from './js/api.js';
+import { initialsAvatar } from './js/utils.js';
 
 // Expose modules for cross-module access without circular imports
 window.__favModule = { getFavoriteCount };
@@ -19,11 +19,11 @@ window.__routerModule = { navigate };
 window.__stateModule = { preferences, savePreferences };
 
 // ── View imports ──────────────────────────────────────────────────────────
-import { mount as mountBrowse } from './js/views/browse.js?v=2.5.0';
-import { mount as mountChannel } from './js/views/channel.js?v=2.5.0';
-import { mount as mountFavorites } from './js/views/favorites.js?v=2.4.8';
-import { mount as mountHistory } from './js/views/history.js?v=2.4.8';
-import { mount as mountSettings } from './js/views/settings.js?v=2.4.8';
+import { mount as mountBrowse } from './js/views/browse.js';
+import { mount as mountChannel } from './js/views/channel.js';
+import { mount as mountFavorites } from './js/views/favorites.js';
+import { mount as mountHistory } from './js/views/history.js';
+import { mount as mountSettings } from './js/views/settings.js';
 
 // ── Register routes ───────────────────────────────────────────────────────
 route('/browse', mountBrowse);

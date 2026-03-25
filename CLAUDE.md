@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**kick-api** is a lightweight, self-hosted FastAPI proxy API for Kick.com live streams and VODs. It provides both a web UI and a RESTful API with Swagger documentation. The application is designed to be easy to deploy (Docker support) and run on various platforms including Raspberry Pi.
+**Unofficial Kick App** (v3.1.0) is a lightweight, self-hosted FastAPI proxy API and web UI for Kick.com live streams and VODs. It provides a SPA frontend with Chromecast support, designed to run locally, in Docker, or on a Raspberry Pi.
 
 ## Development Workflow
 
@@ -26,14 +26,14 @@ curl http://localhost:8081/config/languages
 
 ### Running Tests
 ```bash
-# Run all tests
-pytest tests/
+# Run all 70 tests
+pytest tests/ -v
 
 # Run a single test file
 pytest tests/test_fastapi_parity.py
 
 # Run a single test by name
-pytest tests/test_fastapi_parity.py -k "test_fastapi_routes_match_expected_contract"
+pytest tests/test_circuit_breaker.py -k "test_half_open_allows_only_one_probe"
 ```
 
 Tests use `monkeypatch` to stub `kick_api_client` and `chromecast_service` methods. The `httpx.ASGITransport` is used to make requests directly against the FastAPI app without a live server.
@@ -139,9 +139,11 @@ app.py                          # FastAPI app initialization, lifespan, router r
 - Log output will show `"sitecustomize: requests.Session -> Cloudscraper"` if the patch is active
 
 **Configuration:**
-- All configurable values are in `config.py` and come from environment variables
-- Key settings: `FLASK_DEBUG`, `PORT`, `LOG_LEVEL`, `KICK_API_BASE_URL`, `KICK_FEATURED_LIVESTREAMS_URL`, `KICK_ALL_LIVESTREAMS_URL`, cache timeouts, supported languages
-- Default port is 8081 (dev) / 8080 (Docker)
+- All configurable values are in `config.py` (pydantic-settings with env var validation)
+- Key settings: `FLASK_DEBUG`, `PORT`, `LOG_LEVEL`, `KICK_API_BASE_URL`, cache timeouts, supported languages
+- CORS: `CORS_ORIGINS` (comma-separated), `CORS_ALLOW_CREDENTIALS`
+- Security: `SECURITY_HEADERS_ENABLED` (default True), `LOG_FORMAT_JSON`
+- Default port is 8081
 
 ## API Endpoints
 
@@ -155,19 +157,47 @@ Stream endpoints (prefix: `/streams`):
 - `GET /streams/search?q=<query>` - Channel search (Typesense)
 - `GET /streams/avatar/{channel_slug}` - Channel profile picture URL
 - `GET /streams/viewers?id=<livestream_id>` - Viewer count for a live stream
+- `GET /streams/viewers/batch?ids=<id1>,<id2>,...` - Batch viewer counts (up to 50)
 
 Config endpoint:
 - `GET /config/languages` - Supported language codes and default language
 
+Health & operational endpoints:
+- `GET /health` - Component-level health check (cache utilization, circuit breaker state); 200 or 503
+- `GET /health/live` - Minimal liveness probe (always 200) — used by Docker HEALTHCHECK
+- `GET /metrics` - Cache stats, circuit breaker state, upstream call count, uptime
+- `GET /docs` - Interactive Swagger/OpenAPI documentation
+
 Chromecast endpoints (prefix: `/api/chromecast`):
 - `GET /api/chromecast/devices` - List discovered devices
 - `GET /api/chromecast/status` - Current cast status
+- `GET /api/chromecast/status/stream` - SSE stream for live Chromecast status updates
 - `GET /api/chromecast/last-device` - Last used device
 - `POST /api/chromecast/select` - Select a device `{"uuid": "..."}`
 - `POST /api/chromecast/cast` - Start casting `{"stream_url": "...", "title": "..."}`
 - `POST /api/chromecast/stop` - Stop casting `{"uuid": "..."}`
 
-Swagger/OpenAPI docs available at `/docs` when the app is running.
+## Frontend Architecture
+
+The web UI is a vanilla ES modules SPA (no build step):
+- **Router**: hash-based (`static/js/router.js`) with View Transitions API support
+- **Theme**: three-state system/light/dark with OS `prefers-color-scheme` tracking
+- **Accessibility**: WCAG 2.1 AA — combobox search, tab ARIA, focus trapping, skip link
+- **Keyboard shortcuts**: `/` search, `?` help, `t` theme, `g+b/f/h/s` navigation
+- **Design system**: Syne display font, grain texture overlay, ambient glow orbs, card animations
+- **Mini-player**: HLS handoff via `detachMedia`/`attachMedia`, drag-to-resize panel
+- **Module entry**: `static/script.js` → router, search, theme, shortcuts, chromecast
+
+## Testing
+
+70 tests across 7 modules (all passing):
+- `test_fastapi_parity.py` — API contract tests (all endpoints)
+- `test_transformers.py` — data transformation edge cases
+- `test_cache_service.py` — LRU eviction, TTL, thread safety, init_app
+- `test_circuit_breaker.py` — state machine transitions, half-open probe gating
+- `test_kick_api_service.py` — Typesense key concurrency, viewer count
+- `test_chromecast_service.py` — device discovery lifecycle
+- `test_lifespan.py` — app startup/shutdown sequence
 
 ## Raspberry Pi Deployment Details
 

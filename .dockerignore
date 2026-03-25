@@ -12,5 +12,7 @@ __pycache__
 .vscode
 *.md
 !requirements.txt
+tests
+static/art
 chromecast_test.py
 kick-api.code-workspace

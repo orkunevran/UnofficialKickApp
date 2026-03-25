@@ -1,0 +1,770 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Signal Propagation — Generative Art</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&family=Lora:wght@400;500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --anthropic-dark: #141413;
+            --anthropic-light: #faf9f5;
+            --anthropic-mid-gray: #b0aea5;
+            --anthropic-light-gray: #e8e6dc;
+            --anthropic-orange: #d97757;
+            --anthropic-blue: #6a9bcc;
+            --anthropic-green: #788c5d;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Poppins', sans-serif;
+            background: linear-gradient(135deg, var(--anthropic-light) 0%, #f5f3ee 100%);
+            min-height: 100vh;
+            color: var(--anthropic-dark);
+        }
+
+        .container {
+            display: flex;
+            min-height: 100vh;
+            padding: 20px;
+            gap: 20px;
+        }
+
+        .sidebar {
+            width: 320px;
+            flex-shrink: 0;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 24px;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(20, 20, 19, 0.1);
+            overflow-y: auto;
+            overflow-x: hidden;
+        }
+
+        .sidebar h1 {
+            font-family: 'Lora', serif;
+            font-size: 24px;
+            font-weight: 500;
+            color: var(--anthropic-dark);
+            margin-bottom: 8px;
+        }
+
+        .sidebar .subtitle {
+            color: var(--anthropic-mid-gray);
+            font-size: 14px;
+            margin-bottom: 32px;
+            line-height: 1.4;
+        }
+
+        .control-section { margin-bottom: 32px; }
+
+        .control-section h3 {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--anthropic-dark);
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .control-section h3::before {
+            content: '•';
+            color: var(--anthropic-orange);
+            font-weight: bold;
+        }
+
+        .seed-input {
+            width: 100%;
+            background: var(--anthropic-light);
+            padding: 12px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            margin-bottom: 12px;
+            border: 1px solid var(--anthropic-light-gray);
+            text-align: center;
+        }
+
+        .seed-input:focus {
+            outline: none;
+            border-color: var(--anthropic-orange);
+            box-shadow: 0 0 0 2px rgba(217, 119, 87, 0.1);
+            background: white;
+        }
+
+        .seed-controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .control-group { margin-bottom: 20px; }
+
+        .control-group label {
+            display: block;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--anthropic-dark);
+            margin-bottom: 8px;
+        }
+
+        .slider-container {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .slider-container input[type="range"] {
+            flex: 1;
+            height: 4px;
+            background: var(--anthropic-light-gray);
+            border-radius: 2px;
+            outline: none;
+            -webkit-appearance: none;
+        }
+
+        .slider-container input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 16px; height: 16px;
+            background: var(--anthropic-orange);
+            border-radius: 50%;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .slider-container input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.1);
+            background: #c86641;
+        }
+
+        .slider-container input[type="range"]::-moz-range-thumb {
+            width: 16px; height: 16px;
+            background: var(--anthropic-orange);
+            border-radius: 50%;
+            border: none;
+            cursor: pointer;
+        }
+
+        .value-display {
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            color: var(--anthropic-mid-gray);
+            min-width: 60px;
+            text-align: right;
+        }
+
+        .color-group { margin-bottom: 16px; }
+
+        .color-group label {
+            display: block;
+            font-size: 12px;
+            color: var(--anthropic-mid-gray);
+            margin-bottom: 4px;
+        }
+
+        .color-picker-container {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .color-picker-container input[type="color"] {
+            width: 32px; height: 32px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            background: none;
+            padding: 0;
+        }
+
+        .color-value {
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            color: var(--anthropic-mid-gray);
+        }
+
+        .button {
+            background: var(--anthropic-dark);
+            color: var(--anthropic-light);
+            border: none;
+            padding: 10px 16px;
+            border-radius: 8px;
+            font-family: 'Poppins', sans-serif;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            width: 100%;
+        }
+
+        .button:hover {
+            background: #2a2a28;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(20, 20, 19, 0.15);
+        }
+
+        .button:active { transform: translateY(0); }
+
+        .button-row {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .button-row .button { flex: 1; }
+
+        .button.secondary {
+            background: var(--anthropic-light);
+            color: var(--anthropic-dark);
+            border: 1px solid var(--anthropic-light-gray);
+        }
+
+        .button.secondary:hover {
+            background: var(--anthropic-light-gray);
+        }
+
+        .canvas-area {
+            flex: 1;
+            display: flex;
+            align-items: flex-start;
+            justify-content: center;
+        }
+
+        #canvas-container {
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(20, 20, 19, 0.15);
+            line-height: 0;
+        }
+
+        #canvas-container canvas { display: block; }
+
+        .loading {
+            padding: 60px;
+            text-align: center;
+            color: var(--anthropic-mid-gray);
+            font-family: 'Lora', serif;
+            font-style: italic;
+        }
+
+        .frame-counter {
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            color: var(--anthropic-mid-gray);
+            text-align: center;
+            margin-top: 8px;
+        }
+
+        @media (max-width: 900px) {
+            .container { flex-direction: column; }
+            .sidebar { width: 100%; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="sidebar">
+            <h1>Signal Propagation</h1>
+            <p class="subtitle">Broadcast waves radiating from source nodes, interfering through layered noise fields. Each seed reveals a unique network topology.</p>
+
+            <!-- Seed Section (FIXED) -->
+            <div class="control-section">
+                <h3>Seed</h3>
+                <input type="text" id="seed-input" class="seed-input" value="12345" onchange="updateSeed()">
+                <div class="seed-controls">
+                    <button class="button secondary" onclick="previousSeed()">← Prev</button>
+                    <button class="button secondary" onclick="nextSeed()">Next →</button>
+                </div>
+                <button class="button secondary" onclick="randomSeedAndUpdate()">Random Seed</button>
+            </div>
+
+            <!-- Parameters Section (CUSTOM) -->
+            <div class="control-section">
+                <h3>Parameters</h3>
+
+                <div class="control-group">
+                    <label>Source Nodes</label>
+                    <div class="slider-container">
+                        <input type="range" id="sourceCount" min="2" max="12" step="1" value="5" oninput="updateParam('sourceCount', this.value)">
+                        <span class="value-display" id="sourceCount-value">5</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Particles per Source</label>
+                    <div class="slider-container">
+                        <input type="range" id="particlesPerSource" min="50" max="500" step="10" value="200" oninput="updateParam('particlesPerSource', this.value)">
+                        <span class="value-display" id="particlesPerSource-value">200</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Noise Scale</label>
+                    <div class="slider-container">
+                        <input type="range" id="noiseScale" min="0.001" max="0.012" step="0.0005" value="0.004" oninput="updateParam('noiseScale', this.value)">
+                        <span class="value-display" id="noiseScale-value">0.004</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Wave Frequency</label>
+                    <div class="slider-container">
+                        <input type="range" id="waveFrequency" min="0.01" max="0.15" step="0.005" value="0.06" oninput="updateParam('waveFrequency', this.value)">
+                        <span class="value-display" id="waveFrequency-value">0.06</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Propagation Speed</label>
+                    <div class="slider-container">
+                        <input type="range" id="propSpeed" min="0.5" max="3.0" step="0.1" value="1.4" oninput="updateParam('propSpeed', this.value)">
+                        <span class="value-display" id="propSpeed-value">1.4</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Trail Persistence</label>
+                    <div class="slider-container">
+                        <input type="range" id="trailAlpha" min="2" max="30" step="1" value="8" oninput="updateParam('trailAlpha', this.value)">
+                        <span class="value-display" id="trailAlpha-value">8</span>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label>Drag Coefficient</label>
+                    <div class="slider-container">
+                        <input type="range" id="drag" min="0.980" max="0.999" step="0.001" value="0.993" oninput="updateParam('drag', this.value)">
+                        <span class="value-display" id="drag-value">0.993</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Colors Section -->
+            <div class="control-section">
+                <h3>Colors</h3>
+
+                <div class="color-group">
+                    <label>Signal Warm</label>
+                    <div class="color-picker-container">
+                        <input type="color" id="color1" value="#d4845a" onchange="updateColor('color1', this.value)">
+                        <span class="color-value" id="color1-value">#d4845a</span>
+                    </div>
+                </div>
+
+                <div class="color-group">
+                    <label>Signal Cool</label>
+                    <div class="color-picker-container">
+                        <input type="color" id="color2" value="#5a9ec4" onchange="updateColor('color2', this.value)">
+                        <span class="color-value" id="color2-value">#5a9ec4</span>
+                    </div>
+                </div>
+
+                <div class="color-group">
+                    <label>Interference Accent</label>
+                    <div class="color-picker-container">
+                        <input type="color" id="color3" value="#53fc18" onchange="updateColor('color3', this.value)">
+                        <span class="color-value" id="color3-value">#53fc18</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Actions Section (FIXED) -->
+            <div class="control-section">
+                <h3>Actions</h3>
+                <div class="button-row">
+                    <button class="button" onclick="initializeSystem()">Regenerate</button>
+                    <button class="button secondary" onclick="resetParameters()">Reset</button>
+                </div>
+                <button class="button secondary" onclick="downloadArt()" style="margin-top:8px">Download PNG</button>
+            </div>
+
+            <div class="frame-counter">Frame: <span id="frame-count">0</span></div>
+        </div>
+
+        <div class="canvas-area">
+            <div id="canvas-container">
+                <div class="loading">Tuning broadcast frequencies...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ═══════════════════════════════════════════════════════════════════════
+        // PARAMETERS
+        // ═══════════════════════════════════════════════════════════════════════
+
+        let params = {
+            seed: 12345,
+            sourceCount: 5,
+            particlesPerSource: 200,
+            noiseScale: 0.004,
+            waveFrequency: 0.06,
+            propSpeed: 1.4,
+            trailAlpha: 8,
+            drag: 0.993,
+            colorPalette: ['#d4845a', '#5a9ec4', '#53fc18']
+        };
+
+        let defaultParams = JSON.parse(JSON.stringify(params));
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // SIGNAL PROPAGATION ALGORITHM
+        // ═══════════════════════════════════════════════════════════════════════
+
+        let sources = [];
+        let particles = [];
+        let frameNum = 0;
+        const CANVAS_SIZE = 1200;
+        const GOLDEN_ANGLE = 137.508;
+
+        function setup() {
+            let canvas = createCanvas(CANVAS_SIZE, CANVAS_SIZE);
+            canvas.parent('canvas-container');
+            colorMode(HSB, 360, 100, 100, 100);
+            initializeSystem();
+            document.querySelector('.loading').style.display = 'none';
+        }
+
+        function initializeSystem() {
+            randomSeed(params.seed);
+            noiseSeed(params.seed);
+            frameNum = 0;
+
+            // Generate source nodes on golden-angle spiral
+            sources = [];
+            let cx = CANVAS_SIZE / 2;
+            let cy = CANVAS_SIZE / 2;
+            for (let i = 0; i < params.sourceCount; i++) {
+                let angle = radians(i * GOLDEN_ANGLE);
+                // Radius: Fermat spiral with seeded jitter
+                let maxR = CANVAS_SIZE * 0.32;
+                let r = maxR * sqrt((i + 1) / params.sourceCount) + random(-30, 30);
+                let x = cx + cos(angle) * r;
+                let y = cy + sin(angle) * r;
+                // Each source gets a hue derived from palette
+                let paletteIdx = i % params.colorPalette.length;
+                let col = hexToHSB(params.colorPalette[paletteIdx]);
+                // Add hue variation per source
+                col[0] = (col[0] + random(-15, 15) + 360) % 360;
+                sources.push({
+                    x: x, y: y,
+                    hue: col[0], sat: col[1], bri: col[2],
+                    phase: random(TWO_PI),
+                    pulseRate: random(0.02, 0.05)
+                });
+            }
+
+            // Spawn particles from each source
+            particles = [];
+            for (let s = 0; s < sources.length; s++) {
+                let src = sources[s];
+                for (let i = 0; i < params.particlesPerSource; i++) {
+                    particles.push(new SignalParticle(src, s));
+                }
+            }
+
+            background(250 / 255 * 360, 1, 98); // near-white warm
+            // Actually use HSB background
+            background(40, 2, 98);
+        }
+
+        // ── Noise field vector ──────────────────────────────────────────────
+        function fieldVector(x, y) {
+            // Three octave noise for turbulent topology
+            let ns = params.noiseScale;
+            let n1 = noise(x * ns, y * ns, frameNum * 0.001);
+            let n2 = noise(x * ns * 2.3 + 500, y * ns * 2.3 + 500, frameNum * 0.0008) * 0.5;
+            let n3 = noise(x * ns * 5.1 + 1000, y * ns * 5.1 + 1000) * 0.25;
+            let angle = (n1 + n2 + n3) * TWO_PI * 2.5;
+            return p5.Vector.fromAngle(angle);
+        }
+
+        // ── Interference intensity ──────────────────────────────────────────
+        // How many source signals overlap near a point (0-1 normalized)
+        function interferenceAt(x, y) {
+            let count = 0;
+            for (let s of sources) {
+                let d = dist(x, y, s.x, s.y);
+                if (d < CANVAS_SIZE * 0.4) {
+                    count += 1.0 - d / (CANVAS_SIZE * 0.4);
+                }
+            }
+            return constrain(count / max(sources.length * 0.4, 1), 0, 1);
+        }
+
+        function draw() {
+            // Translucent wash for trail accumulation
+            noStroke();
+            fill(40, 2, 98, params.trailAlpha / 100 * 12);
+            rect(0, 0, width, height);
+
+            frameNum++;
+            let deadCount = 0;
+
+            for (let p of particles) {
+                p.update();
+                p.display();
+                if (p.isDead()) deadCount++;
+            }
+
+            // Respawn dead particles at their source
+            for (let p of particles) {
+                if (p.isDead()) {
+                    let src = sources[p.sourceIdx];
+                    p.respawn(src);
+                }
+            }
+
+            // Draw source node pulses (subtle)
+            for (let s of sources) {
+                let pulse = sin(frameNum * s.pulseRate + s.phase) * 0.5 + 0.5;
+                let r = 4 + pulse * 6;
+                noStroke();
+                fill(s.hue, 40, 95, 15 + pulse * 10);
+                ellipse(s.x, s.y, r * 2, r * 2);
+                // Inner bright dot
+                fill(s.hue, 20, 100, 60);
+                ellipse(s.x, s.y, 3, 3);
+            }
+
+            // Frame counter
+            if (frameNum % 5 === 0) {
+                document.getElementById('frame-count').textContent = frameNum;
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // SIGNAL PARTICLE
+        // ═══════════════════════════════════════════════════════════════════════
+
+        class SignalParticle {
+            constructor(source, sourceIdx) {
+                this.sourceIdx = sourceIdx;
+                this.respawn(source);
+            }
+
+            respawn(source) {
+                this.pos = createVector(source.x + random(-3, 3), source.y + random(-3, 3));
+                // Radial initial velocity with slight noise
+                let angle = random(TWO_PI);
+                let speed = random(0.8, 2.2) * params.propSpeed;
+                this.vel = p5.Vector.fromAngle(angle).mult(speed);
+                this.acc = createVector(0, 0);
+
+                // Inherit source color with variation
+                this.hue = (source.hue + random(-8, 8) + 360) % 360;
+                this.sat = source.sat + random(-10, 10);
+                this.bri = source.bri;
+
+                this.originX = source.x;
+                this.originY = source.y;
+                this.phase = source.phase + random(TWO_PI);
+                this.life = 1.0;
+                this.maxLife = random(250, 600);
+                this.age = 0;
+                this.weight = random(0.5, 2.0);
+            }
+
+            update() {
+                // Field force from noise
+                let field = fieldVector(this.pos.x, this.pos.y);
+                field.mult(0.15);
+                this.acc.add(field);
+
+                // Subtle attraction back toward center (prevents all particles escaping)
+                let toCenter = createVector(CANVAS_SIZE / 2 - this.pos.x, CANVAS_SIZE / 2 - this.pos.y);
+                let centerDist = toCenter.mag();
+                if (centerDist > CANVAS_SIZE * 0.35) {
+                    toCenter.normalize().mult(0.02 * (centerDist / CANVAS_SIZE));
+                    this.acc.add(toCenter);
+                }
+
+                this.vel.add(this.acc);
+                this.vel.mult(params.drag);
+                this.pos.add(this.vel);
+                this.acc.mult(0);
+
+                this.age++;
+                this.life = 1.0 - this.age / this.maxLife;
+            }
+
+            display() {
+                if (this.life <= 0) return;
+
+                let speed = this.vel.mag();
+                let distFromOrigin = dist(this.pos.x, this.pos.y, this.originX, this.originY);
+
+                // Phase modulation — sinusoidal wave fronts
+                let phaseMod = sin(distFromOrigin * params.waveFrequency + this.phase + frameNum * 0.02);
+                let waveAlpha = map(phaseMod, -1, 1, 0.1, 1.0);
+
+                // Interference boost — bright where signals converge
+                let interference = interferenceAt(this.pos.x, this.pos.y);
+                let interferenceBri = interference > 0.5 ? map(interference, 0.5, 1, 0, 1) : 0;
+
+                // Color: blend toward accent at high interference
+                let h = this.hue;
+                let s = constrain(this.sat + speed * 5, 20, 100);
+                let b = constrain(this.bri + speed * 3, 50, 100);
+
+                if (interferenceBri > 0.3) {
+                    let accentHSB = hexToHSB(params.colorPalette[2]);
+                    h = lerpHue(h, accentHSB[0], interferenceBri * 0.4);
+                    s = lerp(s, accentHSB[1], interferenceBri * 0.3);
+                    b = lerp(b, accentHSB[2], interferenceBri * 0.2);
+                }
+
+                let alpha = waveAlpha * this.life * map(speed, 0, 2, 15, 55);
+                alpha = constrain(alpha, 0, 60);
+
+                let w = this.weight * map(speed, 0, 2, 0.3, 1.5) * (0.6 + phaseMod * 0.4);
+                w = max(0.3, w * this.life);
+
+                stroke(h, s, b, alpha);
+                strokeWeight(w);
+                point(this.pos.x, this.pos.y);
+            }
+
+            isDead() {
+                return this.life <= 0 ||
+                    this.pos.x < -20 || this.pos.x > CANVAS_SIZE + 20 ||
+                    this.pos.y < -20 || this.pos.y > CANVAS_SIZE + 20;
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // COLOR UTILITIES
+        // ═══════════════════════════════════════════════════════════════════════
+
+        function hexToHSB(hex) {
+            let r = parseInt(hex.slice(1, 3), 16) / 255;
+            let g = parseInt(hex.slice(3, 5), 16) / 255;
+            let b = parseInt(hex.slice(5, 7), 16) / 255;
+            let mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+            let h, s, v = mx;
+            let d = mx - mn;
+            s = mx === 0 ? 0 : d / mx;
+            if (mx === mn) { h = 0; }
+            else if (mx === r) { h = (g - b) / d + (g < b ? 6 : 0); }
+            else if (mx === g) { h = (b - r) / d + 2; }
+            else { h = (r - g) / d + 4; }
+            h /= 6;
+            return [h * 360, s * 100, v * 100];
+        }
+
+        function lerpHue(h1, h2, t) {
+            let diff = h2 - h1;
+            if (diff > 180) diff -= 360;
+            if (diff < -180) diff += 360;
+            return (h1 + diff * t + 360) % 360;
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // UI HANDLERS
+        // ═══════════════════════════════════════════════════════════════════════
+
+        function updateParam(paramName, value) {
+            let num = parseFloat(value);
+            if (paramName === 'sourceCount' || paramName === 'particlesPerSource' || paramName === 'trailAlpha') {
+                num = parseInt(value);
+            }
+            params[paramName] = num;
+            document.getElementById(paramName + '-value').textContent = value;
+            // Structural changes need full rebuild
+            if (paramName === 'sourceCount' || paramName === 'particlesPerSource') {
+                initializeSystem();
+            }
+        }
+
+        function updateColor(colorId, value) {
+            let idx = parseInt(colorId.replace('color', '')) - 1;
+            params.colorPalette[idx] = value;
+            document.getElementById(colorId + '-value').textContent = value;
+            // Rebuild to re-derive source colors from palette
+            initializeSystem();
+        }
+
+        // ═══════════════════════════════════════════════════════════════════════
+        // SEED CONTROLS (FIXED)
+        // ═══════════════════════════════════════════════════════════════════════
+
+        function updateSeedDisplay() {
+            document.getElementById('seed-input').value = params.seed;
+        }
+
+        function updateSeed() {
+            let input = document.getElementById('seed-input');
+            let newSeed = parseInt(input.value);
+            if (newSeed && newSeed > 0) {
+                params.seed = newSeed;
+                initializeSystem();
+            } else {
+                updateSeedDisplay();
+            }
+        }
+
+        function previousSeed() {
+            params.seed = Math.max(1, params.seed - 1);
+            updateSeedDisplay();
+            initializeSystem();
+        }
+
+        function nextSeed() {
+            params.seed = params.seed + 1;
+            updateSeedDisplay();
+            initializeSystem();
+        }
+
+        function randomSeedAndUpdate() {
+            params.seed = Math.floor(Math.random() * 999999) + 1;
+            updateSeedDisplay();
+            initializeSystem();
+        }
+
+        function resetParameters() {
+            params = JSON.parse(JSON.stringify(defaultParams));
+
+            document.getElementById('sourceCount').value = params.sourceCount;
+            document.getElementById('sourceCount-value').textContent = params.sourceCount;
+            document.getElementById('particlesPerSource').value = params.particlesPerSource;
+            document.getElementById('particlesPerSource-value').textContent = params.particlesPerSource;
+            document.getElementById('noiseScale').value = params.noiseScale;
+            document.getElementById('noiseScale-value').textContent = params.noiseScale;
+            document.getElementById('waveFrequency').value = params.waveFrequency;
+            document.getElementById('waveFrequency-value').textContent = params.waveFrequency;
+            document.getElementById('propSpeed').value = params.propSpeed;
+            document.getElementById('propSpeed-value').textContent = params.propSpeed;
+            document.getElementById('trailAlpha').value = params.trailAlpha;
+            document.getElementById('trailAlpha-value').textContent = params.trailAlpha;
+            document.getElementById('drag').value = params.drag;
+            document.getElementById('drag-value').textContent = params.drag;
+
+            document.getElementById('color1').value = params.colorPalette[0];
+            document.getElementById('color1-value').textContent = params.colorPalette[0];
+            document.getElementById('color2').value = params.colorPalette[1];
+            document.getElementById('color2-value').textContent = params.colorPalette[1];
+            document.getElementById('color3').value = params.colorPalette[2];
+            document.getElementById('color3-value').textContent = params.colorPalette[2];
+
+            updateSeedDisplay();
+            initializeSystem();
+        }
+
+        function downloadArt() {
+            saveCanvas('signal-propagation-' + params.seed, 'png');
+        }
+
+        window.addEventListener('load', function () {
+            updateSeedDisplay();
+        });
+    </script>
+</body>
+</html>

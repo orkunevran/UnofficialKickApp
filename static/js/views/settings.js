@@ -81,7 +81,7 @@ export async function mount(params, contentEl) {
             </div>
             <div class="settings-row">
                 <span class="settings-label">Generative Art</span>
-                <a href="/static/art/signal-drift.html" target="_blank" class="btn-secondary">Signal Drift</a>
+                <a href="/static/art/signal-propagation.html" target="_blank" class="btn-secondary">Signal Propagation</a>
             </div>
         </div>
 

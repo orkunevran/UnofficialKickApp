@@ -320,7 +320,7 @@ function updateDeviceStatus(el, text, type) {
         el.classList.add('connecting');
         statusEl.innerHTML = `<span class="mini-spinner"></span> ${escapeHtml(text)}`;
     } else if (type === 'success') {
-        statusEl.innerHTML = `<span style="color:var(--kick-color)">${escapeHtml(text)}</span>`;
+        statusEl.innerHTML = `<span style="color:var(--primary-color)">${escapeHtml(text)}</span>`;
     } else if (type === 'failed') {
         el.classList.add('connect-failed');
         statusEl.innerHTML = `<span style="color:var(--error-color)">${escapeHtml(text)}</span>`;

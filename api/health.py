@@ -9,6 +9,7 @@ import time
 from typing import Any
 
 from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
 
 router = APIRouter(tags=["health"])
 
@@ -57,11 +58,14 @@ async def health(request: Request):
             overall = "degraded"
 
     status_code = 200 if overall != "unhealthy" else 503
-    return {
-        "status": overall,
-        "uptime_seconds": round(time.monotonic() - _start_time),
-        "components": components,
-    }
+    return JSONResponse(
+        content={
+            "status": overall,
+            "uptime_seconds": round(time.monotonic() - _start_time),
+            "components": components,
+        },
+        status_code=status_code,
+    )
 
 
 @router.get("/health/live")

@@ -22,7 +22,6 @@ class Settings(BaseSettings):
     KICK_ALL_LIVESTREAMS_URL: str = "https://kick.com/stream/livestreams/"
 
     # Cache Settings
-    CACHE_TYPE: str = "SimpleCache"
     CACHE_DEFAULT_TIMEOUT: int = Field(300, ge=1)
     CACHE_MAX_SIZE: int = Field(2000, ge=100, le=50000)
     LIVE_CACHE_DURATION_SECONDS: int = Field(30, ge=1)

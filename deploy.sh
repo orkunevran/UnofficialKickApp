@@ -79,7 +79,7 @@ sleep 8
 
 echo ""
 echo "=== Step 7: Health check ==="
-HEALTH=$(curl -s -o /dev/null -w "%{http_code}" http://${PI_HOST}:8081/config/languages)
+HEALTH=$(curl -s -o /dev/null -w "%{http_code}" http://${PI_HOST}:8081/health/live)
 if [ "$HEALTH" = "200" ]; then
   echo "Health check PASSED (HTTP 200)"
 else

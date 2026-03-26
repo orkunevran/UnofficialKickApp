@@ -247,7 +247,6 @@ The application is configured with environment variables (or a `.env` file):
 | `KICK_API_BASE_URL` | `https://kick.com/api/v2/channels/` | Kick channel API base URL |
 | `KICK_FEATURED_LIVESTREAMS_URL` | `https://kick.com/stream/featured-livestreams/` | Featured livestreams URL |
 | `KICK_ALL_LIVESTREAMS_URL` | `https://kick.com/stream/livestreams/` | Public livestream discovery URL |
-| `CACHE_TYPE` | `SimpleCache` | Cache adapter backend |
 | `CACHE_DEFAULT_TIMEOUT` | `300` | Default cache timeout in seconds |
 | `CACHE_MAX_SIZE` | `2000` | Maximum cache entries before LRU eviction |
 | `LIVE_CACHE_DURATION_SECONDS` | `30` | Cache duration for live stream data |

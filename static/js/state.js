@@ -39,11 +39,17 @@ export function loadPreferences() {
     try {
         const saved = JSON.parse(localStorage.getItem(PREFS_KEY));
         if (saved) Object.assign(preferences, saved);
-    } catch { /* ignore */ }
+    } catch { /* corrupt or unavailable localStorage — use defaults */ }
 }
 
 export function savePreferences() {
-    localStorage.setItem(PREFS_KEY, JSON.stringify(preferences));
+    try {
+        localStorage.setItem(PREFS_KEY, JSON.stringify(preferences));
+    } catch {
+        // QuotaExceededError (storage full / Safari private browsing)
+        // or SecurityError (restrictive iframe sandbox). Non-fatal —
+        // preferences won't persist but the app remains functional.
+    }
 }
 
 export function updatePreference(key, value) {

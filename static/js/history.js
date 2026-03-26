@@ -15,7 +15,11 @@ function load() {
 }
 
 function save(history) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+    try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+    } catch {
+        // Storage full or unavailable — non-fatal
+    }
 }
 
 export function getHistory(limit = MAX_ENTRIES) {

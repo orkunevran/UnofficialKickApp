@@ -30,13 +30,19 @@ export function formatDuration(seconds) {
 export function formatDate(dateString) {
     if (!dateString) return 'N/A';
     try {
-        const date = new Date(dateString.replace(' ', 'T') + 'Z');
+        // Kick API returns timestamps like "2026-01-01 00:00:00" (no T, no TZ).
+        // Normalize the space to T for Date parsing. Only append Z if the
+        // string has no existing timezone indicator (+, -, Z at the end).
+        let normalized = dateString.replace(' ', 'T');
+        if (!/[Zz+\-]\d{0,4}$/.test(normalized)) normalized += 'Z';
+        const date = new Date(normalized);
+        if (isNaN(date.getTime())) return dateString;
         return date.toLocaleDateString(undefined, {
             year: 'numeric',
             month: 'short',
             day: 'numeric'
         });
-    } catch (e) {
+    } catch {
         return dateString;
     }
 }
@@ -63,9 +69,11 @@ export function formatRelativeTime(dateString) {
 export function formatUptime(startTime) {
     if (!startTime) return '';
     try {
-        const start = new Date(startTime.replace(' ', 'T') + 'Z');
+        let normalized = startTime.replace(' ', 'T');
+        if (!/[Zz+\-]\d{0,4}$/.test(normalized)) normalized += 'Z';
+        const start = new Date(normalized);
         const diffMs = Date.now() - start.getTime();
-        if (diffMs < 0) return '';
+        if (diffMs < 0 || isNaN(diffMs)) return '';
         const mins = Math.floor(diffMs / 60000);
         if (mins < 60) return `${mins}m`;
         const h = Math.floor(mins / 60);

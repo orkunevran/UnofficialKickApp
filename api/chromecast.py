@@ -9,7 +9,11 @@ from fastapi.responses import StreamingResponse
 
 from api.deps import ChromecastDep
 from api.errors import error_json, success_json
-from api.schemas import ChromecastCastRequest, ChromecastSelectRequest, ChromecastStopRequest
+from api.schemas import (
+    ChromecastCastRequest,
+    ChromecastSelectRequest,
+    ChromecastStopRequest,
+)
 
 logger = logging.getLogger(__name__)
 

@@ -1,16 +1,17 @@
-import pychromecast
 import ipaddress
+import logging
 import re
+import socket
 import ssl
 import threading
-import logging
-import socket
 import time
 import traceback
-import zeroconf
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from pychromecast.discovery import CastBrowser, SimpleCastListener
+
+import pychromecast
+import zeroconf
 from pychromecast.dial import get_device_info
+from pychromecast.discovery import CastBrowser, SimpleCastListener
 from pychromecast.models import CastInfo
 from pychromecast.socket_client import ConnectionStatus
 

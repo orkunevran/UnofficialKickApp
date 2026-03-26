@@ -14,7 +14,7 @@ from api.cache import (
     request_cache_key,
 )
 from api.deps import CacheDep, CircuitBreakerDep, KickClientDep
-from api.routes._common import kick_call, SUBCATEGORY_RE
+from api.routes._common import SUBCATEGORY_RE, kick_call
 from config import Config
 from services.transformers import build_featured_response, warm_caches_from_featured
 

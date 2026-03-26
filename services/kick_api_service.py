@@ -1,10 +1,13 @@
-import re
-import time
-import threading
-import cloudscraper
-from urllib.parse import quote_plus
-from urllib3.util.retry import Retry
 import logging
+import re
+import threading
+import time
+from urllib.parse import quote_plus
+
+import cloudscraper
+import requests
+from urllib3.util.retry import Retry
+
 from config import Config
 
 logger = logging.getLogger(__name__)

@@ -172,7 +172,7 @@ function initSidebar() {
     toggle.addEventListener('click', () => {
         sidebar.classList.toggle('collapsed');
         preferences.sidebarCollapsed = sidebar.classList.contains('collapsed');
-        localStorage.setItem('kick-api-preferences', JSON.stringify(preferences));
+        savePreferences();
     });
 }
 

@@ -10,7 +10,6 @@ from typing import Any
 
 from config import Config
 
-
 # ── Channel profile ──────────────────────────────────────────────────
 
 def build_channel_profile(data: dict[str, Any], channel_slug: str) -> dict[str, Any]:

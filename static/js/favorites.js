@@ -14,7 +14,11 @@ function load() {
 }
 
 function save(favorites) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(favorites));
+    try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(favorites));
+    } catch {
+        // Storage full or unavailable — non-fatal, event still dispatches
+    }
     window.dispatchEvent(new CustomEvent('favorites-changed', { detail: { favorites } }));
 }
 

@@ -176,7 +176,7 @@ def _expected_response(method, path, params, json_body, sample_api_data):
                 "status": "live",
                 "playback_url": channel_data["playback_url"],
                 "livestream_id": livestream["id"],
-                "livestream_thumbnail_url": livestream["thumbnail"]["url"],
+                "livestream_thumbnail_url": livestream["thumbnail"]["src"],
                 "livestream_title": livestream["session_title"],
                 "livestream_viewer_count": livestream["viewer_count"],
                 "livestream_category": livestream["categories"][0]["name"],

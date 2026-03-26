@@ -33,7 +33,7 @@ Thumbs.db
 # Docker
 .env
 .env.*
-!/.env.example # if you have an example .env file you want to keep
+!.env.example
 
 # IDE specific (if any)
 .vscode/

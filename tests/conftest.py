@@ -30,7 +30,7 @@ def sample_api_data():
         "recent_categories": [{"name": "Just Chatting"}, {"name": "Gaming"}],
         "livestream": {
             "id": 9876,
-            "thumbnail": {"url": "https://img.example/thumb.png"},
+            "thumbnail": {"src": "https://img.example/thumb.png"},
             "categories": [{"name": "Just Chatting"}],
             "session_title": "Live Session",
             "viewer_count": 321,

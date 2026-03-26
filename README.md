@@ -78,6 +78,7 @@ The app will be available at `http://localhost:8081`.
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+cp .env.example .env  # customize if needed
 python app.py
 # or: uvicorn app:app --reload
 ```
@@ -90,17 +91,20 @@ The app will be available at `http://localhost:8081`.
 pytest tests/ -v
 ```
 
-The test suite includes 68 tests across 7 modules:
+The test suite includes 102 tests across 10 modules:
 
 | Module | Coverage |
 | --- | --- |
-| `test_fastapi_parity.py` | API contract tests for all endpoints |
-| `test_transformers.py` | Data transformation edge cases |
-| `test_cache_service.py` | Cache LRU eviction, TTL, thread safety |
-| `test_circuit_breaker.py` | State machine transitions |
-| `test_kick_api_service.py` | Typesense key concurrency and fallback |
-| `test_chromecast_service.py` | Device discovery lifecycle |
-| `test_lifespan.py` | App startup/shutdown sequence |
+| `test_fastapi_parity.py` | API contract tests for all endpoints (26 tests) |
+| `test_transformers.py` | Data transformation edge cases (17 tests) |
+| `test_route_helpers.py` | Thumbnail extraction, category parsing (14 tests) |
+| `test_cache_service.py` | Cache LRU eviction, TTL, thread safety (11 tests) |
+| `test_inflight_tracker.py` | Async dedup: waiters, timeout, sweep (11 tests) |
+| `test_circuit_breaker.py` | State machine transitions, half-open probe (8 tests) |
+| `test_chromecast_service.py` | Device discovery lifecycle (6 tests) |
+| `test_health_and_middleware.py` | Health endpoint, security headers (4 tests) |
+| `test_kick_api_service.py` | Typesense key concurrency and fallback (4 tests) |
+| `test_lifespan.py` | App startup/shutdown sequence (1 test) |
 
 Tests use `monkeypatch` to stub service methods and `httpx.ASGITransport` for direct FastAPI testing without a live server.
 
@@ -138,6 +142,8 @@ Tests use `monkeypatch` to stub service methods and `httpx.ASGITransport` for di
 
 | Method | Endpoint | Description |
 | --- | --- | --- |
+| `GET` | `/health` | Component-level health check (cache, circuit breaker); 200 or 503 |
+| `GET` | `/health/live` | Minimal liveness probe (always 200) |
 | `GET` | `/metrics` | Cache stats, circuit breaker state, upstream call count, uptime |
 | `GET` | `/docs` | Interactive Swagger/OpenAPI documentation |
 

@@ -56,6 +56,9 @@ def _install_stubs(monkeypatch, sample_api_data):
     def fake_get_viewer_count(livestream_id, timeout=5):
         return sample_api_data["viewer_count"]
 
+    def fake_get_viewer_counts_batch(livestream_ids, timeout=5):
+        return {lid: 100 + lid for lid in livestream_ids}
+
     monkeypatch.setattr(kick_api_client, "get_channel_data", fake_get_channel_data)
     monkeypatch.setattr(kick_api_client, "get_channel_videos", fake_get_channel_videos)
     monkeypatch.setattr(kick_api_client, "get_featured_livestreams", fake_get_featured_livestreams)
@@ -63,6 +66,7 @@ def _install_stubs(monkeypatch, sample_api_data):
     monkeypatch.setattr(kick_api_client, "get_channel_clips", fake_get_channel_clips)
     monkeypatch.setattr(kick_api_client, "search_channels_typesense", fake_search_channels_typesense)
     monkeypatch.setattr(kick_api_client, "get_viewer_count", fake_get_viewer_count)
+    monkeypatch.setattr(kick_api_client, "get_viewer_counts_batch", fake_get_viewer_counts_batch)
 
     monkeypatch.setattr(chromecast_service, "configure", lambda config: None)
     monkeypatch.setattr(chromecast_service, "scan_for_devices_async", lambda force=False, known_hosts=None: False)
@@ -256,6 +260,14 @@ def _expected_response(method, path, params, json_body, sample_api_data):
             "data": {"viewer_count": sample_api_data["viewer_count"]},
         }
 
+    if path == "/streams/viewers/batch":
+        # Stub returns {id: 100 + id} for each ID
+        return {
+            "status": "success",
+            "message": "",
+            "data": {"9876": 9976, "42": 142},
+        }
+
     if path == "/api/chromecast/devices":
         return {
             "status": "success",
@@ -324,6 +336,7 @@ def patched_app(monkeypatch, sample_api_data):
         ("GET", "/streams/search", {"q": "kick"}, None),
         ("GET", "/streams/avatar/live-user", None, None),
         ("GET", "/streams/viewers", {"id": "123"}, None),
+        ("GET", "/streams/viewers/batch", {"ids": "9876,42"}, None),
         ("GET", "/api/chromecast/devices", None, None),
         ("GET", "/api/chromecast/devices", {"known_hosts": "192.168.1.10"}, None),
         ("GET", "/api/chromecast/status", None, None),
@@ -355,6 +368,8 @@ def test_fastapi_routes_match_expected_contract(
         ("GET", "/streams/viewers", {"id": "abc"}, None, 400, {"status": "error", "message": "Missing or invalid livestream ID.", "data": {}}),
         ("POST", "/api/chromecast/select", None, {}, 400, {"status": "error", "message": "Device UUID is required.", "data": {}}),
         ("POST", "/api/chromecast/cast", None, {}, 400, {"status": "error", "message": "Stream URL is required.", "data": {}}),
+        ("GET", "/streams/viewers/batch", {"ids": "abc"}, None, 400, {"status": "error", "message": "Invalid ID list.", "data": {}}),
+        ("GET", "/streams/viewers/batch", {"ids": ""}, None, 400, {"status": "error", "message": "Missing livestream IDs.", "data": {}}),
     ],
 )
 def test_validation_errors_match_expected_contract(

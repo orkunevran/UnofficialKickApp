@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
@@ -30,27 +31,57 @@ BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "templates"
 STATIC_DIR = BASE_DIR / "static"
 
-logging.basicConfig(level=Config.LOG_LEVEL, format="%(asctime)s %(levelname)s [%(request_id)s] %(message)s")
-# Replace all formatters with CorrelationIDFormatter so request_id is injected
-# at format time — works for all loggers including uvicorn's and background threads
-_cid_fmt = CorrelationIDFormatter("%(asctime)s %(levelname)s [%(request_id)s] %(message)s")
-for _handler in logging.getLogger().handlers:
-    _handler.setFormatter(_cid_fmt)
-# Also patch uvicorn's loggers which may create their own handlers later
-for _name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
-    _uv_logger = logging.getLogger(_name)
-    for _h in _uv_logger.handlers:
-        _h.setFormatter(_cid_fmt)
+
+# ── Logging setup ─────────────────────────────────────────────────────────
+class _JSONFormatter(logging.Formatter):
+    """Structured JSON log formatter for production log aggregation.
+
+    Each log line is a single JSON object with ts, level, request_id,
+    logger, and message fields. Exception tracebacks are included as
+    an 'exception' field when present. Works with ELK, Loki, Datadog,
+    and other log aggregation pipelines that expect structured input.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        from api.middleware import request_id_var
+        if not hasattr(record, "request_id"):
+            record.request_id = request_id_var.get("-")
+        entry = {
+            "ts": self.formatTime(record, self.datefmt),
+            "level": record.levelname,
+            "request_id": record.request_id,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        if record.exc_info and record.exc_info[1]:
+            entry["exception"] = self.formatException(record.exc_info)
+        return json.dumps(entry, default=str)
+
+
+def _setup_logging() -> None:
+    """Configure logging with either plain-text or structured JSON format.
+
+    When LOG_FORMAT_JSON=True, all log output becomes single-line JSON
+    objects suitable for machine parsing. When False (default), the
+    traditional human-readable format with correlation IDs is used.
+    """
+    fmt: logging.Formatter
+    if Config.LOG_FORMAT_JSON:
+        fmt = _JSONFormatter()
+    else:
+        fmt = CorrelationIDFormatter("%(asctime)s %(levelname)s [%(request_id)s] %(message)s")
+
+    logging.basicConfig(level=Config.LOG_LEVEL, format="%(message)s")
+    for handler in logging.getLogger().handlers:
+        handler.setFormatter(fmt)
+    # Patch uvicorn loggers which may create their own handlers
+    for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
+        for h in logging.getLogger(name).handlers:
+            h.setFormatter(fmt)
+
+
+_setup_logging()
 logger = logging.getLogger(__name__)
-
-
-# Suppress noisy /api/chromecast/status polling lines from uvicorn access log
-class _StatusPollFilter(logging.Filter):
-    def filter(self, record: logging.LogRecord) -> bool:
-        return "/api/chromecast/status" not in record.getMessage()
-
-
-logging.getLogger("uvicorn.access").addFilter(_StatusPollFilter())
 
 
 def _flask_style_url_for(endpoint: str, **values):
@@ -110,14 +141,13 @@ async def lifespan(fastapi_app: FastAPI):
         recovery_timeout=Config.CIRCUIT_BREAKER_RECOVERY_SECONDS,
     )
 
+    executor = None
     if Config.ASYNCIO_THREAD_WORKERS > 0:
-        loop = asyncio.get_event_loop()
-        loop.set_default_executor(
-            ThreadPoolExecutor(
-                max_workers=Config.ASYNCIO_THREAD_WORKERS,
-                thread_name_prefix="kick-worker",
-            )
+        executor = ThreadPoolExecutor(
+            max_workers=Config.ASYNCIO_THREAD_WORKERS,
+            thread_name_prefix="kick-worker",
         )
+        asyncio.get_running_loop().set_default_executor(executor)
         logger.info("asyncio default executor set to %d workers.", Config.ASYNCIO_THREAD_WORKERS)
 
     cache.init_app(settings)
@@ -128,22 +158,28 @@ async def lifespan(fastapi_app: FastAPI):
     # Periodic background scan keeps the device list fresh without user action
     async def _periodic_chromecast_scan():
         interval = Config.CHROMECAST_PERIODIC_SCAN_INTERVAL
-        while True:
-            await asyncio.sleep(interval)
-            try:
-                await asyncio.to_thread(chromecast_service.scan_for_devices_async)
-                logger.debug("Periodic Chromecast scan completed.")
-            except Exception:
-                logger.warning("Periodic Chromecast scan failed.", exc_info=True)
+        try:
+            while True:
+                await asyncio.sleep(interval)
+                try:
+                    await asyncio.to_thread(chromecast_service.scan_for_devices_async)
+                    logger.debug("Periodic Chromecast scan completed.")
+                except Exception:
+                    logger.warning("Periodic Chromecast scan failed.", exc_info=True)
+        except asyncio.CancelledError:
+            logger.debug("Periodic Chromecast scan task cancelled.")
 
     # Periodic sweep of stale in-flight dedup entries (prevents memory leaks)
     async def _periodic_inflight_sweep():
-        while True:
-            await asyncio.sleep(60)
-            try:
-                inflight_tracker.sweep_stale()
-            except Exception:
-                logger.debug("In-flight sweep failed.", exc_info=True)
+        try:
+            while True:
+                await asyncio.sleep(60)
+                try:
+                    inflight_tracker.sweep_stale()
+                except Exception:
+                    logger.debug("In-flight sweep failed.", exc_info=True)
+        except asyncio.CancelledError:
+            logger.debug("In-flight sweep task cancelled.")
 
     scan_task = asyncio.create_task(_periodic_chromecast_scan())
     sweep_task = asyncio.create_task(_periodic_inflight_sweep())
@@ -152,8 +188,19 @@ async def lifespan(fastapi_app: FastAPI):
 
     scan_task.cancel()
     sweep_task.cancel()
+    # Wait for tasks to acknowledge cancellation before proceeding
+    for task in (scan_task, sweep_task):
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
     logger.info("Shutting down Chromecast service from FastAPI lifespan.")
     await asyncio.to_thread(chromecast_service.shutdown)
+
+    if executor is not None:
+        executor.shutdown(wait=False)
+        logger.info("Thread pool executor shut down.")
 
 
 app = FastAPI(

@@ -215,7 +215,7 @@ class KickAPIClient:
                 KickAPIClient._ts_key_cache = self.TYPESENSE_KEY_FALLBACK
                 return self.TYPESENSE_KEY_FALLBACK
 
-    def search_channels_typesense(self, query: str, timeout: int = 8) -> list:
+    def search_channels_typesense(self, query: str, timeout: int = 8) -> list[dict[str, object]]:
         """
         Search all Kick channels via Typesense.
         Returns live channels first (sorted by followers), then offline matches.

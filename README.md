@@ -300,7 +300,7 @@ docker run -d \
   kick-api:latest
 ```
 
-The Dockerfile uses a multi-stage build (build dependencies in stage 1, slim runtime in stage 2) and runs a single Uvicorn worker to keep the Chromecast singleton in-process. A `sitecustomize.py` patch replaces `requests.Session` with Cloudscraper at import time.
+The Dockerfile uses a multi-stage build (build dependencies in stage 1, slim runtime in stage 2) and runs a single Uvicorn worker to keep the Chromecast singleton in-process.
 
 ## Kick API Reference
 

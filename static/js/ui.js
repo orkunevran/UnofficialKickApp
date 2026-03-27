@@ -351,6 +351,13 @@ export function renderSearchResults(results, onSelect) {
     const frag = document.createDocumentFragment();
     container.setAttribute('role', 'listbox');
     container.setAttribute('aria-label', 'Search results');
+
+    // Header with result count
+    const header = document.createElement('div');
+    header.className = 'search-suggestions-header';
+    header.textContent = `${results.length} channel${results.length !== 1 ? 's' : ''} found`;
+    frag.appendChild(header);
+
     results.forEach((r, idx) => {
         const item = document.createElement('div');
         item.className = 'search-suggestion-item';
@@ -359,25 +366,34 @@ export function renderSearchResults(results, onSelect) {
         item.setAttribute('role', 'option');
         item.setAttribute('id', `search-option-${idx}`);
         item.setAttribute('aria-selected', 'false');
+        item.style.animationDelay = `${idx * 30}ms`;
 
-        const liveBadge = r.is_live ? '<span class="suggestion-live">LIVE</span>' : '';
+        const liveBadge = r.is_live ? '<span class="suggestion-live"><span class="suggestion-live-dot"></span>LIVE</span>' : '';
+        const verifiedBadge = r.verified ? '<svg class="suggestion-verified" width="14" height="14" viewBox="0 0 24 24" fill="var(--primary-color)" stroke="var(--primary-color)" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01" fill="none"/></svg>' : '';
         const viewerInfo = r.is_live && r.viewer_count
-            ? `${Number(r.viewer_count).toLocaleString('en-US')} viewers` : '';
-        const followerInfo = !viewerInfo && r.followers_count
-            ? `${Number(r.followers_count).toLocaleString('en-US')} followers` : '';
-        const metaParts = [viewerInfo || followerInfo, r.category].filter(Boolean).join(' · ');
+            ? `<span class="suggestion-viewers"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>${Number(r.viewer_count).toLocaleString('en-US')}</span>` : '';
+        const followerInfo = !r.is_live && r.followers_count
+            ? `<span class="suggestion-followers">${Number(r.followers_count).toLocaleString('en-US')} followers</span>` : '';
+        const categoryPill = r.category
+            ? `<span class="suggestion-category">${escapeHtml(r.category)}</span>` : '';
+        const avatarRingClass = r.is_live ? ' suggestion-avatar-live' : '';
 
         item.innerHTML = `
-            ${r.profile_picture
-                ? `<img src="${escapeHtml(r.profile_picture)}" alt="${escapeHtml(r.username || r.slug)}" class="suggestion-avatar">`
-                : initialsAvatar(r.username || r.slug)}
+            <div class="suggestion-avatar-wrap${avatarRingClass}">
+                ${r.profile_picture
+                    ? `<img src="${escapeHtml(r.profile_picture)}" alt="${escapeHtml(r.username || r.slug)}" class="suggestion-avatar">`
+                    : initialsAvatar(r.username || r.slug)}
+            </div>
             <div class="suggestion-info">
                 <div class="suggestion-name-row">
                     <span class="suggestion-name">${escapeHtml(r.username || r.slug)}</span>
+                    ${verifiedBadge}
                     ${liveBadge}
                 </div>
                 ${r.stream_title ? `<span class="suggestion-title">${escapeHtml(r.stream_title)}</span>` : ''}
-                ${metaParts ? `<span class="suggestion-meta">${escapeHtml(metaParts)}</span>` : ''}
+                <div class="suggestion-meta-row">
+                    ${viewerInfo}${followerInfo}${categoryPill}
+                </div>
             </div>`;
         item.addEventListener('click', () => onSelect(r.slug));
         frag.appendChild(item);
@@ -390,14 +406,21 @@ export function renderSearchResults(results, onSelect) {
 export function renderSearchLoading() {
     const container = document.getElementById('searchSuggestions');
     if (!container) return;
-    container.innerHTML = '<div class="search-suggestions-spinner"><span class="sentinel-spinner-ring"></span> Searching channels...</div>';
+    container.innerHTML = `<div class="search-suggestions-status">
+        <span class="sentinel-spinner-ring"></span>
+        <span>Searching channels...</span>
+    </div>`;
     container.style.display = 'block';
 }
 
 export function renderSearchEmpty() {
     const container = document.getElementById('searchSuggestions');
     if (!container) return;
-    container.innerHTML = '<div class="search-suggestions-empty">No channels found</div>';
+    container.innerHTML = `<div class="search-suggestions-empty">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.4"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <span>No channels found</span>
+        <span class="search-empty-hint">Try a different search or press Enter to visit directly</span>
+    </div>`;
     container.style.display = 'block';
 }
 

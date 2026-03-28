@@ -8,10 +8,9 @@ from fastapi.responses import RedirectResponse
 from api.cache import (
     cache_json_response,
     cached_value_to_response,
-    dedup_get,
     dedup_set,
+    dedup_get,
     extract_channel_data_from_live_cache,
-    extract_redirect_location,
 )
 from api.deps import CacheDep, CircuitBreakerDep, KickClientDep
 from api.errors import ApiError, error_json, success_json
@@ -101,30 +100,8 @@ async def go_to_live_stream(channel_slug: str, cache: CacheDep, client: KickClie
         return error_json(f"Invalid channel slug: '{channel_slug}'.", 400)
 
     key = f"live_redirect:/streams/go/{channel_slug}"
-    cached = cache.get(key)
-    redirect_url = extract_redirect_location(cached)
-    if redirect_url:
-        return RedirectResponse(redirect_url, status_code=307)
-
-    live_key = f"live:/streams/play/{channel_slug}"
-    live_data = extract_channel_data_from_live_cache(cache.get(live_key))
-    if live_data is not None:
-        if live_data.get("status") == "offline":
-            return error_json(f"Channel '{channel_slug}' is currently offline.", 404)
-        playback_url = live_data.get("playback_url")
-        if playback_url:
-            cache.set(key, playback_url, timeout=Config.LIVE_CACHE_DURATION_SECONDS)
-            return RedirectResponse(playback_url, status_code=307)
-
-    # Dedup concurrent cache-miss fetches for the same channel
-    dedup_cached = await dedup_get(cache, key)
-    if dedup_cached is not None:
-        redirect_url = extract_redirect_location(dedup_cached)
-        if redirect_url:
-            return RedirectResponse(redirect_url, status_code=307)
-
     try:
-        logger.info("Fetching live stream redirect for: %s", channel_slug)
+        logger.info("Fetching fresh live stream redirect for: %s", channel_slug)
         data = await kick_call(client.get_channel_data, channel_slug, safe_value=channel_slug, circuit_breaker=cb)
         livestream_data = data.get("livestream")
 
@@ -135,7 +112,7 @@ async def go_to_live_stream(channel_slug: str, cache: CacheDep, client: KickClie
         if not playback_url:
             return error_json("Live playback URL not found in API response.", 500)
 
-        cache.set(key, playback_url, timeout=Config.LIVE_CACHE_DURATION_SECONDS)
+        # Do not cache the redirect to avoid stale HLS manifest tokens
         return RedirectResponse(playback_url, status_code=307)
     finally:
         dedup_set(key)

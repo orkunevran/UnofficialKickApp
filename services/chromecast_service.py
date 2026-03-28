@@ -41,6 +41,7 @@ class ChromecastService:
         self._lock = threading.Lock()
         self._connection_failure_counts = {}
         self._registered_uuids = set()
+        self._known_chromecast_hosts = set()
         self._browser = None
         self._zc = None  # Long-lived: created once, reused across scans
         self._cast_listener = None
@@ -197,6 +198,7 @@ class ChromecastService:
                     continue
 
                 try:
+                    self._known_chromecast_hosts.add(host)
                     discovered_chromecasts.append(self._build_host_chromecast(host, device_status))
                 except Exception as e:
                     logger.warning("Failed to create Chromecast object for %s: %s", host, e)
@@ -291,10 +293,15 @@ class ChromecastService:
                     pass
 
             self._cast_listener = _Listener()
+            
+            merged_known_hosts = list(self._known_chromecast_hosts)
+            if known_hosts:
+                merged_known_hosts.extend(known_hosts)
+                
             self._browser = CastBrowser(
                 self._cast_listener,
                 zeroconf_instance=self._zc,
-                known_hosts=known_hosts,
+                known_hosts=merged_known_hosts,
             )
             self._browser.start_discovery()
             # Use _shutdown_event.wait() instead of time.sleep() so shutdown()
@@ -315,7 +322,8 @@ class ChromecastService:
                 except Exception as e:
                     logger.warning("Failed to create cast for UUID %s: %s", uuid, e)
 
-            if not discovered_chromecasts and known_hosts is None:
+            if not discovered_chromecasts:
+                logger.info("No chromecasts discovered (even with known hosts). Running fallback scan...")
                 fallback_chromecasts = self._scan_private_networks_for_chromecasts()
                 if fallback_chromecasts:
                     discovered_chromecasts = fallback_chromecasts

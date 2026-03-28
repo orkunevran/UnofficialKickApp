@@ -8,8 +8,6 @@ from fastapi.responses import RedirectResponse
 from api.cache import (
     cache_json_response,
     cached_value_to_response,
-    extract_redirect_location,
-    extract_vods_from_cached_response,
 )
 from api.deps import CacheDep, CircuitBreakerDep, KickClientDep
 from api.errors import error_json, success_json
@@ -50,26 +48,15 @@ async def play_vod_by_id(channel_slug: str, vod_id: int, cache: CacheDep, client
         return error_json("Invalid VOD ID.", 400)
 
     logger.info("Request to play VOD by ID: %s for channel: %s", vod_id, channel_slug)
-    redirect_key = f"vod:{channel_slug}:{vod_id}"
-    cached_redirect = cache.get(redirect_key)
-    redirect_url = extract_redirect_location(cached_redirect)
-    if redirect_url:
-        return RedirectResponse(redirect_url, status_code=307)
-
-    cached_vods_key = f"vods:/streams/vods/{channel_slug}"
-    cached_vods = cache.get(cached_vods_key)
-    vod_data = extract_vods_from_cached_response(cached_vods)
-
-    if not vod_data:
-        raw_vod_data_list = await kick_call(client.get_channel_videos, channel_slug, safe_value=channel_slug, circuit_breaker=cb)
-        vod_data = process_vod_data(raw_vod_data_list)
+    # Always fetch fresh VOD data to ensure the source_url token is not expired
+    raw_vod_data_list = await kick_call(client.get_channel_videos, channel_slug, safe_value=channel_slug, circuit_breaker=cb)
+    vod_data = process_vod_data(raw_vod_data_list)
 
     for vod_item in vod_data:
         if isinstance(vod_item, dict) and vod_item.get("vod_id") == vod_id:
             source = vod_item.get("source_url")
             if source:
-                cache.set(redirect_key, source, timeout=Config.VOD_CACHE_DURATION_SECONDS)
-                logger.info("Redirecting to VOD source: %s", source)
+                logger.info("Redirecting to fresh VOD source: %s", source)
                 return RedirectResponse(source, status_code=307)
 
     logger.warning("VOD with ID %s not found for channel %s", vod_id, channel_slug)

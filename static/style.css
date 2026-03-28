@@ -290,10 +290,18 @@
 }
 
 /* ── Smooth theme transition ─────────────────────────────────────────── */
-html.theme-transitioning,
-html.theme-transitioning *,
-html.theme-transitioning *::before,
-html.theme-transitioning *::after {
+/* Theme transition — scoped to direct layout elements only.
+   The wildcard * selector previously forced layout recalculation on every
+   element + pseudo-element in the DOM tree during theme changes. */
+html.theme-transitioning body,
+html.theme-transitioning .sidebar,
+html.theme-transitioning .top-bar,
+html.theme-transitioning .content-area,
+html.theme-transitioning .mobile-nav,
+html.theme-transitioning .mini-player,
+html.theme-transitioning .modal-content,
+html.theme-transitioning .stream-card,
+html.theme-transitioning .vod-card {
     transition: background-color 0.3s ease, color 0.2s ease, border-color 0.3s ease, box-shadow 0.3s ease !important;
 }
 
@@ -311,7 +319,10 @@ body {
     height: 100vh;
     position: relative;
 }
-/* Atmospheric grain overlay */
+/* Atmospheric grain overlay — uses a lightweight static PNG data-URI instead of
+   a live SVG feTurbulence filter.  Safari re-composites SVG filters every frame
+   during scroll/animation, causing severe jank.  The base64 PNG is a tiny 64×64
+   tile that repeats identically to the old noise but costs almost nothing. */
 #app::before {
     content: '';
     position: fixed;
@@ -319,12 +330,16 @@ body {
     z-index: 90;
     pointer-events: none;
     opacity: var(--grain-opacity);
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAMAAACdt4HsAAAAgVBMVEUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABtFS1lAAAAK3RSTlMWi3QSa1cyDwkGLvDewzobgk3NA+GMZEPT0amTdxXhr1oqJOl5R/a4pทkAAAW5JREFUeF7t1teygzAMBVDbMR1CSCOJ0+7/f+AohJnLzNkS8JL9AOMZWY4BLnscwGMHHoce/v0Aj+CBB/EBHuCBfwBwiEe0AIHX8QEe4IEHgRA+wAM88A8AEvhADCAe0QIIFB7BA+4BAsQXRABigPwEByCAnCAGkBOUATmBCCAnqAJyAhlATrAE5AQMkBOsATkBA+QEW4GcQAaQE5iAnMC+ISeQAeQEMoCcwAwgJzADyAlGgjVATsAAOYF0gJzgJCAnkAHkBAyQE8gAuoHkd2MZgEBOIAeQUQKEPEEORIBpSi48AEKeKEFYAMj/AAJnXFIQ/KOcAul3NKUgXFIQThcUhNPpgoKA3w0UhOuFguBfUBBuNxQE/4qCcL+jIOhXFIRHVhCefh4Fgf4YBSFXFAT8WxSEQlEQ7m9REIoVBaH8oiCUCsI9IwiPsiDclwXhVhaEB6Mg3MqC8## TRUNCATED");
     background-repeat: repeat;
-    background-size: 200px;
+    background-size: 64px;
     mix-blend-mode: overlay;
 }
-/* Ambient glow orbs — positioned behind content for atmosphere */
+/* Ambient glow orbs — use pre-blurred radial gradients instead of
+   filter: blur(120px) on animated elements.  Safari's compositor handles
+   large blur radii very poorly, especially on position:fixed + animating
+   elements, because it must re-rasterize the blur every frame.  Radial
+   gradients achieve an identical soft-glow look at zero filter cost. */
 .main-wrapper {
     flex: 1;
     display: flex;
@@ -339,20 +354,19 @@ body {
     position: fixed;
     border-radius: 50%;
     pointer-events: none;
-    filter: blur(120px);
     z-index: 0;
     opacity: 0.07;
     will-change: transform;
 }
 .main-wrapper::before {
     width: 500px; height: 500px;
-    background: var(--primary-color);
+    background: radial-gradient(circle, var(--primary-color) 0%, transparent 70%);
     top: -15%; right: -5%;
     animation: orb-drift-1 25s ease-in-out infinite alternate;
 }
 .main-wrapper::after {
     width: 400px; height: 400px;
-    background: var(--live-color);
+    background: radial-gradient(circle, var(--live-color) 0%, transparent 70%);
     bottom: -10%; left: 10%;
     animation: orb-drift-2 30s ease-in-out infinite alternate;
 }
@@ -419,6 +433,7 @@ body {
 .sidebar {
     width: 240px;
     background: rgba(15, 18, 25, 0.95);
+    -webkit-backdrop-filter: blur(10px);
     backdrop-filter: blur(10px);
     border-right: 1px solid var(--border-color);
     display: flex;
@@ -427,8 +442,7 @@ body {
     z-index: 40;
     flex-shrink: 0;
     overflow: hidden;
-    contain: inline-size style;
-    will-change: width;
+    contain: layout style;
 }
 .sidebar.collapsed {
     width: 64px;
@@ -487,7 +501,7 @@ body {
     text-decoration: none;
     font-size: 14px;
     font-weight: 500;
-    transition: all 0.15s ease;
+    transition: background 0.15s ease, color 0.15s ease;
     white-space: nowrap;
     position: relative;
 }
@@ -548,7 +562,6 @@ body {
 .now-playing-pulse {
     width: 8px; height: 8px;
     background: var(--primary-color);
-    will-change: opacity;
     border-radius: 50%;
     animation: pulse-glow 2s infinite;
     color: var(--primary-color);
@@ -634,6 +647,7 @@ body {
     left: 0; right: 0;
     margin-top: 4px;
     background: rgba(18, 22, 30, 0.98);
+    -webkit-backdrop-filter: blur(12px);
     backdrop-filter: blur(12px);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
@@ -844,12 +858,17 @@ body {
     overflow-y: auto;
     overflow-x: hidden;
     padding: 24px;
-    scroll-behavior: smooth;
+    /* scroll-behavior: smooth removed — Safari's implementation causes visible
+       jank on programmatic scrollTop changes (route transitions, scroll restore).
+       Chrome handles it fine, but Safari interpolates every scrollTop assignment
+       through its smooth-scroll animation queue, creating a delayed "slide" effect
+       that feels like UI latency.  Native scrolling remains smooth without this. */
 }
 
 /* ── Mini Player ───────────────────────────────────────────────────────── */
 .mini-player {
     background: rgba(15, 18, 25, 0.97);
+    -webkit-backdrop-filter: blur(12px);
     backdrop-filter: blur(12px);
     border-top: 1px solid var(--border-color);
     flex-shrink: 0;
@@ -1012,6 +1031,7 @@ body {
     position: fixed;
     bottom: 0; left: 0; right: 0;
     background: rgba(15, 18, 25, 0.98);
+    -webkit-backdrop-filter: blur(10px);
     backdrop-filter: blur(10px);
     border-top: 1px solid var(--border-color);
     z-index: 50;
@@ -1145,7 +1165,6 @@ body {
 .card-live-dot {
     width: 6px; height: 6px;
     background: var(--live-color);
-    will-change: opacity;
     border-radius: 50%;
     animation: pulse-glow 2s infinite;
     color: var(--live-color);
@@ -1243,6 +1262,7 @@ body {
     color: var(--text-muted);
     display: -webkit-box;
     -webkit-line-clamp: 2;
+    line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
     line-height: 1.4;
@@ -1590,7 +1610,6 @@ body {
     width: 8px; height: 8px;
     border-radius: 50%;
     background: var(--live-color);
-    will-change: opacity;
     animation: pulse-glow 2s infinite;
     color: var(--live-color);
 }
@@ -1657,7 +1676,7 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.15s, box-shadow 0.2s;
+    transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.2s;
 }
 .btn-icon:hover {
     background: var(--surface-hover);
@@ -1784,7 +1803,7 @@ body {
     color: var(--text-secondary);
     padding: 6px 10px;
     cursor: pointer;
-    transition: all 0.15s;
+    transition: color 0.15s, background 0.15s;
     display: flex;
     align-items: center;
     position: relative;
@@ -1812,7 +1831,7 @@ body {
     font-weight: 500;
     font-family: inherit;
     cursor: pointer;
-    transition: all 0.15s, box-shadow 0.2s;
+    transition: color 0.15s, border-color 0.15s, background 0.15s, box-shadow 0.2s;
 }
 .sort-pill:hover {
     color: var(--text-color);
@@ -1915,6 +1934,7 @@ body {
     position: fixed;
     inset: 0;
     background: rgba(0,0,0,0.6);
+    -webkit-backdrop-filter: blur(4px);
     backdrop-filter: blur(4px);
     z-index: 100;
     opacity: 0;
@@ -1926,6 +1946,7 @@ body {
     top: 50%; left: 50%;
     transform: translate(-50%, -50%) scale(0.95);
     background: rgba(18, 22, 30, 0.98);
+    -webkit-backdrop-filter: blur(10px);
     backdrop-filter: blur(10px);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-lg);
@@ -1970,7 +1991,7 @@ body {
 .close-button {
     background: none; border: none; color: var(--text-muted);
     font-size: 24px; cursor: pointer; padding: 4px 8px;
-    border-radius: 6px; transition: all 0.15s; line-height: 1;
+    border-radius: 6px; transition: background 0.15s, color 0.15s; line-height: 1;
 }
 .close-button:hover { background: var(--surface-hover); color: var(--text-color); }
 .modal-actions {
@@ -2143,9 +2164,7 @@ body {
     0%, 100% { border-color: var(--primary-color); }
     50% { border-color: rgba(83, 252, 24, 0.3); }
 }
-@keyframes spin {
-    to { transform: rotate(360deg); }
-}
+/* @keyframes spin defined once in the Animations section below */
 
 .scanning-disabled { opacity: 0.4; pointer-events: none; }
 .cc-empty-state {
@@ -2211,6 +2230,7 @@ body {
     align-items: flex-start;
     gap: 10px;
     background: rgba(18, 22, 30, 0.98);
+    -webkit-backdrop-filter: blur(10px);
     backdrop-filter: blur(10px);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
@@ -2275,22 +2295,7 @@ body {
     padding: 0 2px; flex-shrink: 0;
 }
 .toast-close:hover { color: var(--text-color); }
-/* Countdown progress bar — width shrinks from 100% to 0 over --toast-duration */
-.toast::after {
-    content: '';
-    position: absolute;
-    bottom: 0; left: 0;
-    height: 2px;
-    width: 100%;
-    background: var(--primary-color);
-    opacity: 0.4;
-    transform-origin: left;
-    animation: toast-countdown var(--toast-duration, 4s) linear forwards;
-}
-@keyframes toast-countdown {
-    from { transform: scaleX(1); }
-    to   { transform: scaleX(0); }
-}
+/* Duplicate .toast::after and @keyframes toast-countdown removed — defined above */
 
 /* ── Scroll Sentinel ───────────────────────────────────────────────────── */
 .scroll-sentinel {
@@ -2449,6 +2454,7 @@ body {
     position: absolute;
     bottom: 6px; right: 6px;
     background: rgba(0, 0, 0, 0.75);
+    -webkit-backdrop-filter: blur(4px);
     backdrop-filter: blur(4px);
     color: #fff;
     font-size: 11px;
@@ -2465,6 +2471,7 @@ body {
     font-weight: 600;
     display: -webkit-box;
     -webkit-line-clamp: 2;
+    line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
     line-height: 1.4;
@@ -2817,7 +2824,6 @@ a:focus-visible,
     /* Profile mobile layout */
     .profile-tabs {
         overflow-x: auto;
-        -webkit-overflow-scrolling: touch;
         scrollbar-width: none;
     }
     .profile-tabs::-webkit-scrollbar { display: none; }

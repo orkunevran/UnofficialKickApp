@@ -148,8 +148,9 @@ function startViewerRefresh(livestreamId) {
             el.dataset.lastKnownViewerCount = String(num);
             if (el.textContent !== prev) {
                 el.classList.remove('viewer-updated');
-                void el.offsetWidth;
-                el.classList.add('viewer-updated');
+                requestAnimationFrame(() => {
+                    requestAnimationFrame(() => el.classList.add('viewer-updated'));
+                });
             }
         } else if (num === 0) {
             // Don't overwrite a known-good count with 0 — may be stale data

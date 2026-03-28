@@ -172,7 +172,14 @@ function populateCategorySelector(streams) {
     }
 }
 
-async function loadInitialPages(language, contentEl, browseView) {
+async function loadInitialPages(language, contentEl, browseView, forceClear = false) {
+    if (forceClear) {
+        pageCache.clear();
+        pageMetaCache.clear();
+        loadedPageCount = 0;
+        rebuildAndRender(contentEl, { renderMode: 'full' }); // Render skeleton immediately
+    }
+
     const generation = ++refreshGeneration;
     refreshInFlight = true;
     const hadCachedData = pageCache.size > 0;
@@ -186,12 +193,8 @@ async function loadInitialPages(language, contentEl, browseView) {
         const result = await fetchPageData(language, 1, generation);
         if (generation !== refreshGeneration) return;
 
-        const newCache = new Map();
-        const newMeta = new Map();
-        applyPageResult(newCache, newMeta, result);
+        applyPageResult(pageCache, pageMetaCache, result);
 
-        pageCache = newCache;
-        pageMetaCache = newMeta;
         activeGeneration = refreshGeneration;
         syncLoadedRange();
         // Patch in-place when returning to browse with cached content already on screen
@@ -204,6 +207,7 @@ async function loadInitialPages(language, contentEl, browseView) {
     } finally {
         if (generation === refreshGeneration) refreshInFlight = false;
         if (inlineSpinner) inlineSpinner.classList.remove('is-active');
+        browseView?.classList.remove('browse-bootstrapping');
         // Init observer AFTER refreshInFlight is cleared so the callback isn't blocked
         if (generation === refreshGeneration && hasNextPage) {
             initScrollObserver(contentEl);
@@ -499,13 +503,13 @@ export async function mount(params, contentEl) {
         currentLanguage = langSel.value;
         currentCategory = '';
         catSel.value = '';
-        void loadInitialPages(currentLanguage, contentEl, browseView);
+        void loadInitialPages(currentLanguage, contentEl, browseView, true);
     };
     langSel.addEventListener('change', onLanguageChange);
 
     const onCategoryChange = () => {
         currentCategory = catSel.value;
-        void loadInitialPages(currentLanguage, contentEl, browseView);
+        void loadInitialPages(currentLanguage, contentEl, browseView, true);
     };
     catSel.addEventListener('change', onCategoryChange);
 
@@ -543,7 +547,7 @@ export async function mount(params, contentEl) {
         pill.classList.add('active', featuredSortState.direction);
 
         if (currentCategory && col === 'viewer_count') {
-            void loadInitialPages(currentLanguage, contentEl, browseView);
+            void loadInitialPages(currentLanguage, contentEl, browseView, true);
         } else {
             rebuildAndRender(contentEl);
         }

@@ -58,7 +58,15 @@ function matchRoute(path) {
 async function resolve() {
     const path = getPath();
     const matched = matchRoute(path);
-    const shouldAnimate = Boolean(document.startViewTransition && currentRoute);
+
+    if (currentRoute && currentRoute.path === path) {
+        return; // Prevent tearing down DOM when clicking the currently active tab
+    }
+
+    // Safari has partial/experimental View Transitions support that causes
+    // visual glitches (blank frames, doubled content).  Only use on Chrome/Chromium.
+    const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+    const shouldAnimate = Boolean(document.startViewTransition && currentRoute && !isSafari);
 
     // Save scroll position for current route
     const contentArea = document.getElementById('content-area');
@@ -85,10 +93,10 @@ async function resolve() {
     if (contentArea) contentArea.setAttribute('aria-busy', 'true');
     const render = () => matched.route.handler(matched.params, contentArea);
     if (shouldAnimate) {
-        const transition = document.startViewTransition(async () => {
+        document.startViewTransition(async () => {
             currentCleanup = await render();
+            restoreScroll(path, contentArea);
         });
-        transition.finished.then(() => restoreScroll(path, contentArea)).catch(() => {});
     } else {
         currentCleanup = await render();
         restoreScroll(path, contentArea);
@@ -100,7 +108,7 @@ function restoreScroll(path, contentArea) {
     if (!contentArea) return;
     const saved = scrollPositions.get(path);
     if (saved != null) {
-        requestAnimationFrame(() => { contentArea.scrollTop = saved; });
+        contentArea.scrollTop = saved;
     } else {
         contentArea.scrollTop = 0;
     }

@@ -740,8 +740,9 @@ export function updateFavoritesBadge() {
     const count = getFavoriteCount();
     badge.textContent = count;
     badge.classList.toggle('hidden', count === 0);
-    // Pulse animation on change
+    // Pulse animation on change — double-RAF avoids forced synchronous reflow
     badge.classList.remove('pulse');
-    void badge.offsetWidth; // reflow to re-trigger
-    badge.classList.add('pulse');
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => badge.classList.add('pulse'));
+    });
 }

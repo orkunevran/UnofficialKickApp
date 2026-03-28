@@ -50,6 +50,7 @@ function initVideoPlayer(playbackUrl, channelSlug) {
     if (video.canPlayType('application/vnd.apple.mpegurl')) {
         video.src = playbackUrl;
         video.play().catch(() => {});
+        video.closest('.video-container')?.classList.add('video-active');
     } else if (window.Hls && window.Hls.isSupported()) {
         hlsInstance = new window.Hls({
             lowLatencyMode: true,
@@ -64,6 +65,7 @@ function initVideoPlayer(playbackUrl, channelSlug) {
         hlsInstance.attachMedia(video);
         hlsInstance.on(window.Hls.Events.MANIFEST_PARSED, () => {
             video.play().catch(() => {});
+            video.closest('.video-container')?.classList.add('video-active');
             renderQualityPicker(hlsInstance);
         });
     }
@@ -90,7 +92,10 @@ function _initPipButton(video) {
 function destroyVideoPlayer() {
     if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
     const video = document.getElementById('liveVideoPlayer');
-    if (video) { video.pause(); video.src = ''; video.load(); }
+    if (video) {
+        video.closest('.video-container')?.classList.remove('video-active');
+        video.pause(); video.src = ''; video.load();
+    }
 }
 
 function renderQualityPicker(hls) {

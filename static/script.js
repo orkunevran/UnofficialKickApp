@@ -13,6 +13,10 @@ import { getFavoriteCount } from './js/favorites.js';
 import { fetchSearchResults, fetchChannelSearch, fetchChannelAvatar } from './js/api.js';
 import { initialsAvatar } from './js/utils.js';
 
+// Safari perf: add class so CSS can swap expensive effects for lightweight alternatives
+const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+if (isSafari) document.documentElement.classList.add('safari');
+
 // Expose modules for cross-module access without circular imports
 window.__favModule = { getFavoriteCount };
 window.__routerModule = { navigate };

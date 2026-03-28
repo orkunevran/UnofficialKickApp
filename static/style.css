@@ -107,7 +107,7 @@
     backdrop-filter: blur(10px);
 }
 [data-theme="light"] .mini-player {
-    background: rgba(255, 255, 255, 0.97);
+    background: var(--bg-color);
 }
 
 /* Light theme — profile */
@@ -209,7 +209,7 @@
 [data-theme="light"] .mini-player-thumb {
     border-color: rgba(0, 0, 0, 0.08);
 }
-[data-theme="light"] .mini-player-thumb:has(video:not(.hidden)) {
+[data-theme="light"] .mini-player-thumb.has-video {
     border-color: rgba(22, 163, 74, 0.2);
     box-shadow: 0 0 8px rgba(22, 163, 74, 0.06);
 }
@@ -867,9 +867,7 @@ body {
 
 /* ── Mini Player ───────────────────────────────────────────────────────── */
 .mini-player {
-    background: rgba(15, 18, 25, 0.97);
-    -webkit-backdrop-filter: blur(12px);
-    backdrop-filter: blur(12px);
+    background: var(--bg-color);
     border-top: 1px solid var(--border-color);
     flex-shrink: 0;
     z-index: 35;
@@ -908,8 +906,9 @@ body {
     border: 1px solid rgba(255, 255, 255, 0.08);
     transition: border-color 0.3s, box-shadow 0.3s;
 }
-/* Glow border when video is active */
-.mini-player-thumb:has(video:not(.hidden)) {
+/* Glow border when video is active — use a class toggled by JS instead of
+   :has() which Safari re-evaluates continuously during video playback */
+.mini-player-thumb.has-video {
     border-color: rgba(83, 252, 24, 0.2);
     box-shadow: 0 0 12px rgba(83, 252, 24, 0.08);
 }
@@ -933,8 +932,6 @@ body {
     width: 6px; height: 6px;
     border-radius: 50%;
     background: var(--live-color);
-    color: var(--live-color);
-    animation: pulse-glow 2s infinite;
     z-index: 2;
 }
 .mini-player-info {
@@ -979,7 +976,6 @@ body {
 }
 #mini-player-play:hover {
     color: var(--primary-color);
-    filter: drop-shadow(0 0 4px rgba(83, 252, 24, 0.4));
 }
 #mini-player-close:hover {
     color: var(--error-color);
@@ -1012,7 +1008,9 @@ body {
     height: 0;
     overflow: hidden;
     background: #000;
-    transition: height 0.25s ease;
+    /* transition removed — Safari chokes when transitioning height while
+       video is rendering. JS drag already disables it via inline style;
+       double-click toggle uses a class-based approach instead. */
 }
 .mini-player-expanded-video video {
     width: 100%;
@@ -1567,8 +1565,9 @@ body {
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.04);
     position: relative;
 }
-/* Cinematic glow when video is playing */
-.video-container:has(video:not([src=""]):not([src])) {
+/* Cinematic glow when video is playing — use class toggled by JS instead of
+   :has() which Safari re-evaluates continuously during playback */
+.video-container.video-active {
     box-shadow:
         0 4px 20px rgba(0, 0, 0, 0.4),
         0 0 0 1px rgba(83, 252, 24, 0.1),
@@ -2877,6 +2876,62 @@ a:focus-visible,
     background: var(--surface-hover);
 }
 
+/* ── Safari Performance ────────────────────────────────────────────────── */
+/* Safari's compositor handles backdrop-filter, animated box-shadow, and
+   filter: drop-shadow much worse than Chrome.  The html.safari class is
+   set by script.js at load time via UA detection.  Background colors are
+   already 0.95–0.98 opacity so removing blur is visually negligible. */
+
+/* (a) Kill all backdrop-filter — biggest single win */
+html.safari .sidebar,
+html.safari .search-suggestions,
+html.safari .mobile-nav,
+html.safari .mini-player,
+html.safari .modal,
+html.safari .modal-content,
+html.safari .toast,
+html.safari .tooltip,
+html.safari .top-bar {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+}
+
+/* (b) Freeze ambient orbs — stop continuous compositor work on fixed elements */
+html.safari .main-wrapper::before,
+html.safari .main-wrapper::after {
+    animation: none !important;
+    will-change: auto !important;
+}
+
+/* (c) Disable grain overlay blend mode (expensive compositing) */
+html.safari #app::before {
+    mix-blend-mode: normal !important;
+    opacity: calc(var(--grain-opacity) * 0.5) !important;
+}
+
+/* (d) Replace infinite box-shadow / pulse animations with static state */
+html.safari .pulse-dot,
+html.safari .card-live-dot,
+html.safari .suggestion-live-dot,
+html.safari .indicator-dot {
+    animation: none !important;
+    opacity: 1 !important;
+}
+html.safari .favorite-btn.ring-pulse,
+html.safari .section-title::before,
+html.safari .modal-input:focus {
+    animation: none !important;
+}
+
+/* (e) Remove filter: drop-shadow on hover/active states */
+html.safari .sidebar-logo:hover img,
+html.safari .sidebar-link.active svg,
+html.safari .favorite-btn:hover svg,
+html.safari .favorite-btn.favorited svg,
+html.safari .vod-card.live svg {
+    filter: none !important;
+}
+
 /* ── Reduced Motion ────────────────────────────────────────────────────── */
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
@@ -2888,6 +2943,13 @@ a:focus-visible,
     .vod-card,
     .stream-list-item {
         animation: none !important;
+    }
+    .main-wrapper::before, .main-wrapper::after {
+        animation: none !important;
+        will-change: auto !important;
+    }
+    #app::before {
+        mix-blend-mode: normal !important;
     }
 }
 

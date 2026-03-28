@@ -577,16 +577,18 @@ export async function mount(params, contentEl) {
     }, REFRESH_INTERVAL_MS / 2);
     // Client-side uptime recalculation — zero API calls, just recalculates from start_time
     uptimeTimer = setInterval(() => {
-        contentEl.querySelectorAll('.stream-card[data-start-time]').forEach(card => {
-            const startTime = card.dataset.startTime;
-            if (!startTime) return;
-            const badge = card.querySelector('.card-uptime-badge');
-            if (!badge) return;
-            const dot = badge.querySelector('.card-live-dot');
-            const uptime = _formatUptime(startTime);
-            const dotHTML = dot ? dot.outerHTML : '<span class="card-live-dot"></span>';
-            const desired = dotHTML + (uptime || 'LIVE');
-            if (badge.innerHTML !== desired) badge.innerHTML = desired;
+        requestAnimationFrame(() => {
+            contentEl.querySelectorAll('.stream-card[data-start-time]').forEach(card => {
+                const startTime = card.dataset.startTime;
+                if (!startTime) return;
+                const badge = card.querySelector('.card-uptime-badge');
+                if (!badge) return;
+                const dot = badge.querySelector('.card-live-dot');
+                const uptime = _formatUptime(startTime);
+                const dotHTML = dot ? dot.outerHTML : '<span class="card-live-dot"></span>';
+                const desired = dotHTML + (uptime || 'LIVE');
+                if (badge.innerHTML !== desired) badge.innerHTML = desired;
+            });
         });
     }, 30_000);
 

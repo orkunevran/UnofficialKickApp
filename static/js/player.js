@@ -51,6 +51,7 @@ export function startMiniPlayer({ slug, title, channel, playbackUrl, thumbnailUr
         miniVideo.play().catch(() => {});
         hlsInstance = hls;
         miniVideo.classList.remove('hidden');
+        _syncThumbVideoClass(true);
         _hideThumbnail();
         _updatePlayPauseIcon(false);
     } else if (sourceVideo && miniVideo && sourceVideo.src) {
@@ -60,12 +61,14 @@ export function startMiniPlayer({ slug, title, channel, playbackUrl, thumbnailUr
         miniVideo.muted = false;
         miniVideo.play().catch(() => {});
         miniVideo.classList.remove('hidden');
+        _syncThumbVideoClass(true);
         _hideThumbnail();
         _updatePlayPauseIcon(false);
     } else {
         // No transferable player — show thumbnail fallback
         _showThumbnail(thumbnailUrl);
         if (miniVideo) miniVideo.classList.add('hidden');
+        _syncThumbVideoClass(false);
     }
 
     player.classList.remove('hidden');
@@ -94,6 +97,7 @@ export function hideMiniPlayer() {
     _collapseVideoPanel();
     const miniVideo = document.getElementById('miniPlayerVideo');
     if (miniVideo) { miniVideo.pause(); miniVideo.classList.add('hidden'); }
+    _syncThumbVideoClass(false);
     const player = document.getElementById('mini-player');
     if (player) player.classList.add('hidden');
     _updateSidebarIndicator('', false);
@@ -310,6 +314,11 @@ function _showThumbnail(url) {
 function _hideThumbnail() {
     const poster = document.getElementById('mini-player-poster');
     if (poster) poster.classList.add('hidden');
+}
+
+function _syncThumbVideoClass(hasVideo) {
+    const thumb = document.getElementById('mini-player-thumb');
+    if (thumb) thumb.classList.toggle('has-video', hasVideo);
 }
 
 function _updateSidebarIndicator(channel, show) {

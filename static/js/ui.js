@@ -395,10 +395,15 @@ export function renderSearchResults(results, onSelect) {
                     ${viewerInfo}${followerInfo}${categoryPill}
                 </div>
             </div>`;
-        item.addEventListener('click', () => onSelect(r.slug));
         frag.appendChild(item);
     });
     container.appendChild(frag);
+
+    // Delegated click handler — one listener instead of N per-item listeners
+    container.onclick = (e) => {
+        const item = e.target.closest('.search-suggestion-item');
+        if (item?.dataset.slug && suggestionOnSelect) suggestionOnSelect(item.dataset.slug);
+    };
     container.style.display = 'block';
     document.getElementById('channelSlugInput')?.setAttribute('aria-expanded', 'true');
 }

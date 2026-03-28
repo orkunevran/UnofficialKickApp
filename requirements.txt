@@ -1,10 +1,21 @@
-fastapi==0.115.6
-Jinja2==3.1.5
-pydantic-settings==2.7.1
-requests==2.32.3
-cloudscraper==1.2.71
-pychromecast==14.0.5
-zeroconf==0.136.2
-uvicorn==0.34.0
-httpx==0.28.1
-pytest==8.3.4
+# ── Core Framework ──────────────────────────────────────────────────────
+fastapi==0.135.2            # requires starlette>=0.46.0, pydantic>=2.9.0
+uvicorn==0.42.0             # ASGI server
+pydantic-settings==2.13.1   # env var validation (requires pydantic>=2.7.0)
+python-dotenv==1.2.2        # .env file loading
+
+# ── HTTP & Scraping ─────────────────────────────────────────────────────
+requests==2.33.0            # SECURITY: fixes CVE-2026-25645
+urllib3==2.6.3              # SECURITY: fixes CVE-2026-21441, CVE-2025-66418, CVE-2025-66471
+cloudscraper==1.2.71        # WARNING: last release Apr 2023, effectively abandoned
+
+# ── Templating ──────────────────────────────────────────────────────────
+Jinja2==3.1.6               # SECURITY: fixes CVE-2025-27516 (sandbox breakout)
+
+# ── Chromecast ──────────────────────────────────────────────────────────
+pychromecast==14.0.10       # requires Python >=3.11, zeroconf>=0.25.1
+zeroconf==0.148.0           # mDNS discovery (Cython-accelerated build)
+
+# ── Testing ─────────────────────────────────────────────────────────────
+httpx==0.28.1               # async HTTP client for FastAPI test transport
+pytest==9.0.2               # test runner

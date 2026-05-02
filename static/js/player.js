@@ -72,6 +72,7 @@ export function startMiniPlayer({ slug, title, channel, playbackUrl, thumbnailUr
     }
 
     player.classList.remove('hidden');
+    document.body.classList.add('has-mini-player');
     _updateSidebarIndicator(channel || slug, true);
 }
 
@@ -100,6 +101,7 @@ export function hideMiniPlayer() {
     _syncThumbVideoClass(false);
     const player = document.getElementById('mini-player');
     if (player) player.classList.add('hidden');
+    document.body.classList.remove('has-mini-player');
     _updateSidebarIndicator('', false);
 }
 
@@ -109,6 +111,7 @@ export function stopMiniPlayer() {
     _destroyVideo();
     const player = document.getElementById('mini-player');
     if (player) player.classList.add('hidden');
+    document.body.classList.remove('has-mini-player');
     _updateSidebarIndicator('', false);
 }
 
@@ -171,7 +174,6 @@ function _initResizeHandle() {
     let activated = false; // true once pointer moves past dead zone
 
     const onPointerDown = (e) => {
-        if (window.innerWidth < 768) return;
         e.preventDefault();
         startY = e.clientY;
         startH = _panelHeight;
@@ -216,7 +218,6 @@ function _initResizeHandle() {
 
     // Double-click toggles collapsed ↔ expanded
     handle.addEventListener('dblclick', () => {
-        if (window.innerWidth < 768) return;
         _panelHeight > 0 ? _collapseVideoPanel() : _expandVideoPanel(_DEFAULT_PANEL_H);
     });
 }

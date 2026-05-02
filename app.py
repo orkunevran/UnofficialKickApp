@@ -136,10 +136,18 @@ async def lifespan(fastapi_app: FastAPI):
     fastapi_app.state.kick_api_client = kick_api_client
     fastapi_app.state.chromecast_service = chromecast_service
     fastapi_app.state.inflight_tracker = inflight_tracker
-    fastapi_app.state.circuit_breaker = CircuitBreaker(
+    critical_cb = CircuitBreaker(
         failure_threshold=Config.CIRCUIT_BREAKER_FAILURE_THRESHOLD,
         recovery_timeout=Config.CIRCUIT_BREAKER_RECOVERY_SECONDS,
     )
+    non_critical_cb = CircuitBreaker(
+        failure_threshold=Config.CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+        recovery_timeout=Config.CIRCUIT_BREAKER_RECOVERY_SECONDS,
+    )
+    # Keep legacy single-breaker alias for compatibility with existing tests/consumers.
+    fastapi_app.state.circuit_breaker = critical_cb
+    fastapi_app.state.circuit_breaker_critical = critical_cb
+    fastapi_app.state.circuit_breaker_non_critical = non_critical_cb
 
     executor = None
     if Config.ASYNCIO_THREAD_WORKERS > 0:

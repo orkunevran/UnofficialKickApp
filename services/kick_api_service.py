@@ -35,8 +35,10 @@ class KickAPIClient:
         "Content-Type": "application/json",
     }
 
+    # Conservative retry policy: one retry limits worst-case tail latency for
+    # live-start critical paths while still smoothing transient 502/503/504 blips.
     _RETRY_STRATEGY = Retry(
-        total=2,
+        total=1,
         backoff_factor=0.3,
         status_forcelist=[502, 503, 504],
         allowed_methods=["GET"],

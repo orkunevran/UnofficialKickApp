@@ -37,7 +37,14 @@ def validate_slug(slug: Optional[str]) -> bool:
     return bool(slug and _SLUG_RE.match(slug))
 
 
-async def kick_call(func, *args, safe_value: str = "unknown", circuit_breaker=None, **kwargs):
+async def kick_call(
+    func,
+    *args,
+    safe_value: str = "unknown",
+    circuit_breaker=None,
+    circuit_breaker_name: str = "default",
+    **kwargs,
+):
     """Run a blocking KickAPIClient method via ``asyncio.to_thread``,
     convert ``requests.RequestException`` into ``ApiError``,
     and integrate with the circuit breaker if provided.
@@ -48,6 +55,11 @@ async def kick_call(func, *args, safe_value: str = "unknown", circuit_breaker=No
     by design (``CircuitBreaker`` uses its own internal lock).
     """
     if circuit_breaker is not None and not circuit_breaker.allow_request():
+        logger.warning(
+            "Circuit breaker lane=%s rejected request for %s.",
+            circuit_breaker_name,
+            safe_value,
+        )
         raise ApiError("Service temporarily unavailable — upstream failures detected.", 503)
 
     try:
@@ -62,4 +74,10 @@ async def kick_call(func, *args, safe_value: str = "unknown", circuit_breaker=No
         _increment_upstream_count()
         if circuit_breaker is not None:
             circuit_breaker.record_failure()
+            logger.warning(
+                "Upstream request failed in breaker lane=%s for %s: %s",
+                circuit_breaker_name,
+                safe_value,
+                type(exc).__name__,
+            )
         raise requests_exception_to_api_error(exc, safe_value) from exc

@@ -28,8 +28,7 @@ def _check_cache(request: Request) -> dict[str, Any]:
     }
 
 
-def _check_circuit_breaker(request: Request) -> dict[str, Any]:
-    cb = request.app.state.circuit_breaker
+def _check_circuit_breaker(cb) -> dict[str, Any]:
     state = cb.state
     return {
         "status": "healthy" if state == "closed" else ("degraded" if state == "half_open" else "unhealthy"),
@@ -44,13 +43,24 @@ async def health(request: Request):
     Returns 200 if all components are healthy or degraded,
     503 if any component is unhealthy.
     """
+    critical_cb = request.app.state.circuit_breaker_critical
+    non_critical_cb = request.app.state.circuit_breaker_non_critical
+    critical_status = _check_circuit_breaker(critical_cb)
+    non_critical_status = _check_circuit_breaker(non_critical_cb)
+
     components = {
         "cache": _check_cache(request),
-        "circuit_breaker": _check_circuit_breaker(request),
+        # Backwards-compatible legacy field.
+        "circuit_breaker": critical_status,
+        "circuit_breakers": {
+            "critical": critical_status,
+            "non_critical": non_critical_status,
+        },
     }
 
     overall = "healthy"
-    for comp in components.values():
+    statuses = [components["cache"], critical_status, non_critical_status]
+    for comp in statuses:
         if comp["status"] == "unhealthy":
             overall = "unhealthy"
             break

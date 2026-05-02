@@ -112,3 +112,10 @@ def test_get_viewer_count_hits_root_current_viewers_endpoint():
     assert count == 4720
     assert captured["url"] == "https://kick.com/current-viewers?ids[]=101329688"
     assert captured["timeout"] == (3, 5)
+
+
+def test_retry_strategy_is_single_retry_get_only():
+    """Retry policy should keep tail latency bounded and remain GET-only."""
+    retry = KickAPIClient._RETRY_STRATEGY
+    assert retry.total == 1
+    assert sorted(retry.allowed_methods) == ["GET"]

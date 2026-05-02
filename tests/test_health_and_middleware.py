@@ -45,8 +45,11 @@ def test_health_returns_component_status(monkeypatch):
                 assert "components" in body
                 assert "cache" in body["components"]
                 assert "circuit_breaker" in body["components"]
+                assert "circuit_breakers" in body["components"]
                 assert body["components"]["cache"]["status"] == "healthy"
                 assert body["components"]["circuit_breaker"]["status"] == "healthy"
+                assert body["components"]["circuit_breakers"]["critical"]["status"] == "healthy"
+                assert body["components"]["circuit_breakers"]["non_critical"]["status"] == "healthy"
                 assert body["uptime_seconds"] >= 0
 
     asyncio.run(_run())
@@ -77,7 +80,7 @@ def test_health_reports_degraded_when_circuit_open(monkeypatch):
     async def _run():
         async with fastapi_app.router.lifespan_context(fastapi_app):
             # Force the circuit breaker into open state
-            cb = fastapi_app.state.circuit_breaker
+            cb = fastapi_app.state.circuit_breaker_critical
             for _ in range(cb.failure_threshold):
                 cb.record_failure()
             assert cb.state == "open"
@@ -90,6 +93,8 @@ def test_health_reports_degraded_when_circuit_open(monkeypatch):
                 assert body["status"] == "unhealthy"
                 assert body["components"]["circuit_breaker"]["status"] == "unhealthy"
                 assert body["components"]["circuit_breaker"]["state"] == "open"
+                assert body["components"]["circuit_breakers"]["critical"]["state"] == "open"
+                assert body["components"]["circuit_breakers"]["non_critical"]["status"] == "healthy"
 
             # Reset for other tests
             cb.record_success()

@@ -24,7 +24,8 @@ class Settings(BaseSettings):
     # Cache Settings
     CACHE_DEFAULT_TIMEOUT: int = Field(300, ge=1)
     CACHE_MAX_SIZE: int = Field(2000, ge=100, le=50000)
-    LIVE_CACHE_DURATION_SECONDS: int = Field(30, ge=1)
+    LIVE_CACHE_DURATION_SECONDS: int = Field(60, ge=1)
+    LIVE_STALE_TTL_SECONDS: int = Field(120, ge=1)
     VOD_CACHE_DURATION_SECONDS: int = Field(300, ge=1)
     FEATURED_CACHE_DURATION_SECONDS: int = Field(120, ge=1)
 

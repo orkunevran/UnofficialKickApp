@@ -9,7 +9,7 @@ from api.cache import (
     cache_json_response,
     cached_value_to_response,
 )
-from api.deps import CacheDep, CircuitBreakerDep, KickClientDep
+from api.deps import CacheDep, CriticalCircuitBreakerDep, KickClientDep, NonCriticalCircuitBreakerDep
 from api.errors import error_json, success_json
 from api.routes._common import kick_call, validate_slug
 from config import Config
@@ -21,7 +21,7 @@ router = APIRouter(prefix="/streams", tags=["streams"])
 
 
 @router.get("/vods/{channel_slug}")
-async def list_vods(channel_slug: str, cache: CacheDep, client: KickClientDep, cb: CircuitBreakerDep):
+async def list_vods(channel_slug: str, cache: CacheDep, client: KickClientDep, cb: NonCriticalCircuitBreakerDep):
     if not validate_slug(channel_slug):
         return error_json(f"Invalid channel slug: '{channel_slug}'.", 400)
 
@@ -31,7 +31,13 @@ async def list_vods(channel_slug: str, cache: CacheDep, client: KickClientDep, c
     if cached is not None:
         return cached_value_to_response(cached)
 
-    raw_vod_data_list = await kick_call(client.get_channel_videos, channel_slug, safe_value=channel_slug, circuit_breaker=cb)
+    raw_vod_data_list = await kick_call(
+        client.get_channel_videos,
+        channel_slug,
+        safe_value=channel_slug,
+        circuit_breaker=cb,
+        circuit_breaker_name="non_critical",
+    )
     processed_vods = process_vod_data(raw_vod_data_list)
     response_data = {"vods": processed_vods}
     payload = {"status": "success", "message": "", "data": response_data}
@@ -40,7 +46,7 @@ async def list_vods(channel_slug: str, cache: CacheDep, client: KickClientDep, c
 
 
 @router.get("/vods/{channel_slug}/{vod_id}")
-async def play_vod_by_id(channel_slug: str, vod_id: int, cache: CacheDep, client: KickClientDep, cb: CircuitBreakerDep):
+async def play_vod_by_id(channel_slug: str, vod_id: int, cache: CacheDep, client: KickClientDep, cb: CriticalCircuitBreakerDep):
     if not validate_slug(channel_slug):
         return error_json(f"Invalid channel slug: '{channel_slug}'.", 400)
 
@@ -49,7 +55,13 @@ async def play_vod_by_id(channel_slug: str, vod_id: int, cache: CacheDep, client
 
     logger.info("Request to play VOD by ID: %s for channel: %s", vod_id, channel_slug)
     # Always fetch fresh VOD data to ensure the source_url token is not expired
-    raw_vod_data_list = await kick_call(client.get_channel_videos, channel_slug, safe_value=channel_slug, circuit_breaker=cb)
+    raw_vod_data_list = await kick_call(
+        client.get_channel_videos,
+        channel_slug,
+        safe_value=channel_slug,
+        circuit_breaker=cb,
+        circuit_breaker_name="critical",
+    )
     vod_data = process_vod_data(raw_vod_data_list)
 
     for vod_item in vod_data:

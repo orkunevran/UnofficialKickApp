@@ -51,6 +51,9 @@ def test_lifespan_initializes_singletons_and_shuts_down(monkeypatch):
                 assert fastapi_app.state.cache is cache
                 assert fastapi_app.state.inflight_tracker is inflight_tracker
                 assert isinstance(fastapi_app.state.circuit_breaker, CircuitBreaker)
+                assert isinstance(fastapi_app.state.circuit_breaker_critical, CircuitBreaker)
+                assert isinstance(fastapi_app.state.circuit_breaker_non_critical, CircuitBreaker)
+                assert fastapi_app.state.circuit_breaker is fastapi_app.state.circuit_breaker_critical
 
     asyncio.run(_exercise_app())
 
@@ -83,7 +86,10 @@ def test_metrics_endpoint_returns_all_sections(monkeypatch):
                 # Upstream stats shape
                 assert "call_count" in body["upstream"]
                 assert "circuit_breaker" in body["upstream"]
+                assert "circuit_breakers" in body["upstream"]
                 assert body["upstream"]["circuit_breaker"]["state"] == "closed"
+                assert body["upstream"]["circuit_breakers"]["critical"]["state"] == "closed"
+                assert body["upstream"]["circuit_breakers"]["non_critical"]["state"] == "closed"
                 # Inflight stats shape
                 assert "active_keys" in body["inflight"]
                 # Uptime

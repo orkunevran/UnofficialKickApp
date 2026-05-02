@@ -15,24 +15,51 @@ let _cachedResults = null;   // [{fav, liveData}, ...]
 let _cachedAt = 0;           // timestamp of last fetch
 const CACHE_FRESH_MS = 60_000; // 60s — don't re-fetch if cache is recent
 
-function renderFavoriteCard(fav, liveStatus = null) {
+function getFavoriteCardState(fav, liveStatus = null) {
     const isLive = liveStatus?.data?.status === 'live';
+    const isPending = liveStatus === null;
     const d = liveStatus?.data;
-    const thumbSrc = isLive ? (d?.livestream_thumbnail_url || '') : '';
-    const viewers = isLive ? d?.livestream_viewer_count : null;
-    const title = isLive ? d?.livestream_title : (liveStatus === null ? '' : 'Offline');
-    const category = isLive ? (d?.livestream_category || '') : '';
+    const channelName = fav.username || fav.slug;
+    const title = isLive
+        ? (d?.livestream_title || channelName)
+        : channelName;
 
+    return {
+        isLive,
+        isPending,
+        thumbSrc: isLive
+            ? (d?.livestream_thumbnail_url || fav.profilePicture || '')
+            : (fav.profilePicture || ''),
+        viewers: isLive ? d?.livestream_viewer_count : null,
+        title,
+        category: isLive ? (d?.livestream_category || '') : '',
+        statusLabel: isLive ? 'LIVE' : (isPending ? 'Checking' : 'Offline'),
+        ariaLabel: channelName + (isLive ? `, Live, ${d?.livestream_title || channelName}` : (isPending ? ', Checking live status' : ', Offline')),
+    };
+}
+
+function getFavoriteCardKey(fav, state) {
+    return [
+        state.isLive ? 'live' : 'offline',
+        state.isPending ? 'pending' : 'ready',
+        state.thumbSrc || '',
+        state.viewers ?? '',
+        state.title || '',
+        state.category || '',
+        fav.profilePicture || '',
+    ].join('|');
+}
+
+function renderFavoriteCardBody(fav, state) {
     const avatarHTML = fav.profilePicture
-        ? `<img src="${escapeHtml(fav.profilePicture)}" alt="" class="card-avatar" loading="lazy">`
+        ? `<img src="${escapeHtml(fav.profilePicture)}" alt="" class="card-avatar" loading="lazy" decoding="async">`
         : initialsAvatar(fav.username || fav.slug);
 
     return `
-        <div class="stream-card" data-slug="${escapeHtml(fav.slug)}" style="cursor:pointer" tabindex="0" role="article" aria-label="${escapeHtml(fav.username || fav.slug)}${isLive ? ', Live' : ''}${viewers != null ? ', ' + formatViewerCount(viewers) + ' viewers' : ''}">
             <div class="card-thumbnail">
-                ${thumbSrc ? `<img src="${escapeHtml(thumbSrc)}" alt="${escapeHtml(fav.username || fav.slug)} stream thumbnail" class="thumb-fade" onload="this.classList.add('loaded')" onerror="this.onerror=null;this.src='${escapeHtml(fav.profilePicture || '')}';this.style.objectFit='contain';this.classList.add('loaded');">` : '<div style="width:100%;height:100%;background:rgba(255,255,255,0.03);display:flex;align-items:center;justify-content:center;color:var(--text-secondary);font-size:13px">' + (liveStatus === null ? '' : (isLive ? '' : 'Offline')) + '</div>'}
-                ${isLive ? '<div class="card-live-badge"><span class="card-live-dot"></span>LIVE</div>' : ''}
-                ${viewers != null ? `<div class="card-viewers"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>${formatViewerCount(viewers)}</div>` : ''}
+                ${state.thumbSrc ? `<img src="${escapeHtml(state.thumbSrc)}" alt="${escapeHtml(fav.username || fav.slug)} stream thumbnail" class="thumb-fade" loading="lazy" decoding="async" onload="this.classList.add('loaded')" onerror="this.onerror=null;this.src='${escapeHtml(fav.profilePicture || '')}';this.style.objectFit='contain';this.classList.add('loaded');">` : `<div class="favorite-thumb-placeholder ${state.isPending ? 'pending' : ''}">${state.statusLabel}</div>`}
+                <div class="card-uptime-badge ${state.isLive ? '' : 'card-uptime-badge--muted'}">${state.isLive ? '<span class="card-live-dot"></span>' : ''}${state.statusLabel}</div>
+                ${state.viewers != null ? `<div class="card-viewers"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>${formatViewerCount(state.viewers)}</div>` : ''}
                 <div class="card-actions-overlay" style="opacity:1;background:linear-gradient(to top, rgba(0,0,0,0.5) 0%, transparent 60%)">
                     <button class="card-action-btn favorited" data-action="unfavorite" data-slug="${escapeHtml(fav.slug)}" title="Remove from favorites">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>
@@ -43,11 +70,66 @@ function renderFavoriteCard(fav, liveStatus = null) {
                 ${avatarHTML}
                 <div class="card-details">
                     <div class="card-channel">${escapeHtml(fav.username || fav.slug)}</div>
-                    <div class="card-title">${escapeHtml(title || '')}</div>
-                    ${category ? `<span class="card-category">${escapeHtml(category)}</span>` : ''}
+                    <div class="card-title">${escapeHtml(state.title)}</div>
+                    ${state.category ? `<span class="card-category">${escapeHtml(state.category)}</span>` : ''}
                 </div>
             </div>
+    `;
+}
+
+function renderFavoriteCard(fav, liveStatus = null) {
+    const state = getFavoriteCardState(fav, liveStatus);
+    const cardKey = getFavoriteCardKey(fav, state);
+    return `
+        <div class="stream-card" data-slug="${escapeHtml(fav.slug)}" data-card-key="${escapeHtml(cardKey)}" style="cursor:pointer" tabindex="0" role="article" aria-label="${escapeHtml(state.ariaLabel)}${state.viewers != null ? ', ' + formatViewerCount(state.viewers) + ' viewers' : ''}">
+            ${renderFavoriteCardBody(fav, state)}
         </div>`;
+}
+
+function renderFavoritesEmptyState() {
+    return `<div class="empty-state">
+        <div class="empty-state-icon"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg></div>
+        <div class="empty-state-title">No favorites yet</div>
+        <div class="empty-state-text">Browse streams and click the heart icon to add channels to your favorites.</div>
+        <a href="#/browse" class="btn-primary" style="margin-top:16px;display:inline-flex">Browse Streams</a>
+    </div>`;
+}
+
+function syncFavoriteGrid(grid, resolved) {
+    if (!grid) return;
+    const ordered = sortResolved(resolved);
+    const existing = new Map();
+    grid.querySelectorAll('.stream-card[data-slug]').forEach(card => {
+        existing.set(card.dataset.slug, card);
+    });
+
+    const seen = new Set();
+    ordered.forEach((entry, index) => {
+        const slug = entry.fav.slug;
+        const state = getFavoriteCardState(entry.fav, entry.liveData);
+        const cardKey = getFavoriteCardKey(entry.fav, state);
+        let card = existing.get(slug);
+        if (card) {
+            if (card.dataset.cardKey !== cardKey) {
+                card.setAttribute('aria-label', `${state.ariaLabel}${state.viewers != null ? ', ' + formatViewerCount(state.viewers) + ' viewers' : ''}`);
+                card.dataset.cardKey = cardKey;
+                card.innerHTML = renderFavoriteCardBody(entry.fav, state);
+            }
+        } else {
+            const wrapper = document.createElement('div');
+            wrapper.innerHTML = renderFavoriteCard(entry.fav, entry.liveData);
+            card = wrapper.firstElementChild;
+        }
+        seen.add(slug);
+        if (card) card.dataset.cardKey = cardKey;
+        if (grid.children[index] !== card) {
+            grid.insertBefore(card, grid.children[index] || null);
+        }
+    });
+
+    existing.forEach((card, slug) => {
+        if (!seen.has(slug)) card.remove();
+    });
 }
 
 function sortResolved(resolved) {
@@ -68,12 +150,10 @@ export async function mount(params, contentEl) {
                 <h1 class="section-title">Favorites</h1>
             </div>
             <div id="favorites-grid">
-                <div class="empty-state">
-                    <div class="empty-state-icon"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg></div>
-                    <div class="empty-state-title">No favorites yet</div>
-                    <div class="empty-state-text">Browse streams and click the heart icon to add channels to your favorites.</div>
-                    <a href="#/browse" class="btn-primary" style="margin-top:16px;display:inline-flex">Browse Streams</a>
+                <div class="favorites-empty-state">
+                    ${renderFavoritesEmptyState()}
                 </div>
+                <div class="stream-grid hidden"></div>
             </div>`;
         return;
     }
@@ -94,13 +174,29 @@ export async function mount(params, contentEl) {
             <h1 class="section-title">Favorites <span class="section-count">(${favorites.length})</span></h1>
         </div>
         <div id="favorites-grid">
+            <div class="favorites-empty-state hidden">
+                ${renderFavoritesEmptyState()}
+            </div>
             <div class="stream-grid">${sortResolved(currentResolved).map(r => renderFavoriteCard(r.fav, r.liveData)).join('')}</div>
         </div>`;
 
-    const grid = contentEl.querySelector('#favorites-grid');
+    let grid = contentEl.querySelector('#favorites-grid .stream-grid');
+    const emptyStateEl = contentEl.querySelector('#favorites-grid .favorites-empty-state');
+    let suppressNextFavoritesChange = false;
 
     function renderGrid() {
-        grid.innerHTML = `<div class="stream-grid">${sortResolved(currentResolved).map(r => renderFavoriteCard(r.fav, r.liveData)).join('')}</div>`;
+        if (currentResolved.length === 0) {
+            if (grid) grid.innerHTML = '';
+            if (emptyStateEl) emptyStateEl.classList.remove('hidden');
+            if (grid) grid.classList.add('hidden');
+            return;
+        }
+        if (!grid) {
+            grid = contentEl.querySelector('#favorites-grid .stream-grid');
+        }
+        if (emptyStateEl) emptyStateEl.classList.add('hidden');
+        if (grid) grid.classList.remove('hidden');
+        syncFavoriteGrid(grid, currentResolved);
     }
 
     // Only fetch live status if cache is stale
@@ -130,6 +226,7 @@ export async function mount(params, contentEl) {
             e.stopPropagation();
             const slug = unfavBtn.dataset.slug;
             if (slug) {
+                suppressNextFavoritesChange = true;
                 removeFavorite(slug);
                 updateFavoritesBadge();
                 // Remove card in-place — no full re-render
@@ -141,13 +238,8 @@ export async function mount(params, contentEl) {
                 if (countEl) countEl.textContent = currentResolved.length > 0 ? `(${currentResolved.length})` : '';
                 if (currentResolved.length === 0) {
                     _cachedResults = null;
-                    grid.innerHTML = `<div class="empty-state">
-                        <div class="empty-state-icon"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg></div>
-                        <div class="empty-state-title">No favorites yet</div>
-                        <div class="empty-state-text">Browse streams and click the heart icon to add channels to your favorites.</div>
-                        <a href="#/browse" class="btn-primary" style="margin-top:16px;display:inline-flex">Browse Streams</a>
-                    </div>`;
                     contentEl.querySelector('.section-count')?.remove();
+                    renderGrid();
                 }
             }
             return;
@@ -158,13 +250,15 @@ export async function mount(params, contentEl) {
     grid.addEventListener('click', handleGridClick);
 
     const onFavChange = () => {
-        const newFavs = getFavorites();
-        if (newFavs.length !== currentResolved.length) {
-            const slugs = new Set(newFavs.map(f => f.slug));
-            currentResolved = currentResolved.filter(r => slugs.has(r.fav.slug));
-            _cachedResults = currentResolved;
-            renderGrid();
+        if (suppressNextFavoritesChange) {
+            suppressNextFavoritesChange = false;
+            return;
         }
+        const newFavs = getFavorites();
+        const resolvedMap = new Map(currentResolved.map(r => [r.fav.slug, r]));
+        currentResolved = newFavs.map(fav => resolvedMap.get(fav.slug) || { fav, liveData: null });
+        _cachedResults = currentResolved;
+        renderGrid();
     };
     window.addEventListener('favorites-changed', onFavChange);
 

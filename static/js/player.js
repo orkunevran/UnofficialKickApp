@@ -1,330 +1,505 @@
 /**
- * Mini-player module.
+ * Unified player module.
  *
- * Keeps a live HLS stream playing in a small bottom bar while the user
- * browses other pages. The HLS.js instance is *transferred* from the
- * full-size channel player rather than destroyed and recreated, so
- * playback is seamless with no rebuffering.
+ * A single shared <video> element (#sharedVideo) stays alive for the whole
+ * session. The element is moved between a hidden parking layer, the mini-player
+ * containers, and the channel page slot so playback survives route changes
+ * without recreating the media element.
+ *
+ * Modes:
+ *   hidden — parked off-screen while stream state stays alive
+ *   mini   — rendered in the mini-player thumb or expanded panel
+ *   full   — rendered in the channel page .video-slot
  */
 
 import { castStream } from './chromecast_logic.js';
-import { escapeHtml } from './utils.js';
 
-let hlsInstance = null;   // HLS.js instance owned by the mini player
-let currentStream = null; // { slug, title, channel, playbackUrl, thumbnailUrl }
+// ── State ────────────────────────────────────────────────────────────────
+
+let _mode = 'hidden';         // 'hidden' | 'mini' | 'full'
+let _hlsInstance = null;
+let _currentStream = null;    // { slug, title, channel, playbackUrl, thumbnailUrl }
+let _cachedChannelData = null;
+let _fullSlot = null;
+let _panelHeight = 0;
+let _videoEventsBound = false;
+
+const _MIN_PANEL_H = 0;
+const _DEFAULT_PANEL_H = 300;
+const _SNAP_VALUE = 10;  // slider values below this snap to 0
+
+// ── DOM refs ─────────────────────────────────────────────────────────────
+
+const _layer = () => document.getElementById('video-layer');
+const _video = () => document.getElementById('sharedVideo');
+const _thumb = () => document.getElementById('mini-player-thumb');
+const _miniPlayer = () => document.getElementById('mini-player');
+const _expandedPanel = () => document.getElementById('mini-player-expanded-video');
+
+function _isSafari() {
+    return document.documentElement.classList.contains('safari');
+}
+
+function _supportsExpandedMini() {
+    return window.innerWidth >= 768;
+}
+
+function _moveVideoTo(container) {
+    const video = _video();
+    if (!video || !container) return;
+    if (video.parentElement !== container) container.appendChild(video);
+}
+
+function _styleVideoForMode(mode) {
+    const video = _video();
+    if (!video) return;
+
+    video.style.cssText = '';
+    video.style.width = '100%';
+    video.style.height = '100%';
+    video.style.display = 'block';
+    video.style.background = '#000';
+    video.style.objectPosition = 'center center';
+
+    if (mode === 'full') {
+        video.style.objectFit = 'contain';
+        video.style.pointerEvents = 'auto';
+        return;
+    }
+
+    if (mode === 'mini-expanded') {
+        video.style.objectFit = 'contain';
+        video.style.pointerEvents = 'none';
+        return;
+    }
+
+    if (mode === 'mini') {
+        video.style.objectFit = 'cover';
+        video.style.pointerEvents = 'none';
+        return;
+    }
+
+    video.style.objectFit = 'contain';
+    video.style.pointerEvents = 'none';
+}
+
+function _bindVideoStateEvents() {
+    const video = _video();
+    if (!video || _videoEventsBound) return;
+
+    const syncPaused = () => _updatePlayPauseIcon(video.paused);
+    video.addEventListener('play', () => _updatePlayPauseIcon(false));
+    video.addEventListener('pause', syncPaused);
+    video.addEventListener('ended', syncPaused);
+    video.addEventListener('emptied', syncPaused);
+    _videoEventsBound = true;
+}
+
+function _clearFullSlot() {
+    if (_fullSlot) {
+        _fullSlot.classList.remove('video-active');
+        _fullSlot = null;
+    }
+}
+
+function _syncPanelChrome() {
+    const panel = _expandedPanel();
+    const player = _miniPlayer();
+    const expanded = _supportsExpandedMini() && _panelHeight > 0;
+
+    if (panel) panel.style.height = expanded ? `${_panelHeight}px` : '0';
+    player?.classList.toggle('expanded', expanded);
+
+    // Keep slider thumb in sync when panel changes programmatically
+    const slider = document.getElementById('mini-player-slider');
+    if (slider) {
+        const maxH = Math.round(window.innerHeight * 0.6);
+        slider.value = maxH > 0 ? Math.round((_panelHeight / maxH) * 100) : 0;
+    }
+}
+
+function _renderMiniVideo() {
+    const thumb = _thumb();
+    const panel = _expandedPanel();
+    if (!thumb) return;
+
+    const useExpanded = _supportsExpandedMini() && _panelHeight > 0 && panel;
+    _syncPanelChrome();
+
+    _moveVideoTo(useExpanded ? panel : thumb);
+    _styleVideoForMode(useExpanded ? 'mini-expanded' : 'mini');
+    thumb.classList.toggle('has-video', !useExpanded);
+    // Show poster in thumb only when video has moved to the expanded panel;
+    // when video is directly in the thumb, hide the poster so live video shows.
+    if (useExpanded) {
+        _showMiniPoster();
+    } else {
+        _hideMiniPoster();
+    }
+}
+
+function _setPanelHeight(h, { syncMiniVideo = true } = {}) {
+    if (!_supportsExpandedMini()) {
+        _panelHeight = 0;
+        _syncPanelChrome();
+        return;
+    }
+
+    const maxH = Math.round(window.innerHeight * 0.6);
+    _panelHeight = Math.max(_MIN_PANEL_H, Math.min(maxH, h));
+    _syncPanelChrome();
+
+    if (syncMiniVideo && _mode === 'mini') {
+        _renderMiniVideo();
+    }
+}
+
+function _expandVideoPanel(h) {
+    if (!_supportsExpandedMini()) return;
+    _setPanelHeight(h);
+}
+
+function _collapseVideoPanel(opts = {}) {
+    _setPanelHeight(0, opts);
+}
+
+function _showMiniBar(skipAnimation) {
+    const player = _miniPlayer();
+    if (!player) return;
+
+    if (skipAnimation) player.classList.add('no-animate');
+    player.classList.remove('hidden');
+    if (skipAnimation) requestAnimationFrame(() => player.classList.remove('no-animate'));
+
+    if (_currentStream) {
+        const title = _currentStream.title || _currentStream.channel || _currentStream.slug || 'Live Stream';
+        document.getElementById('mini-player-title').textContent = title;
+        document.getElementById('mini-player-channel').textContent = _currentStream.channel || _currentStream.slug;
+    }
+
+    _updateSidebarIndicator(_currentStream?.channel || _currentStream?.slug, true);
+    _updatePlayPauseIcon(_video()?.paused ?? true);
+    document.body.classList.add('mini-active');
+}
+
+function _hideMiniBar() {
+    const player = _miniPlayer();
+    if (player) {
+        player.classList.add('hidden');
+        player.classList.remove('expanded');
+    }
+    document.body.classList.remove('mini-active');
+    _updateSidebarIndicator('', false);
+    _thumb()?.classList.remove('has-video');
+}
+
+function _showMiniPoster() {
+    const poster = document.getElementById('mini-player-poster');
+    if (!poster) return;
+
+    const thumbnailUrl = _currentStream?.thumbnailUrl;
+    if (!thumbnailUrl) {
+        poster.removeAttribute('src');
+        poster.classList.add('hidden');
+        return;
+    }
+
+    // Avoid showing the browser's broken-image glyph when channel thumbnails
+    // fail to load or return transient errors.
+    poster.onerror = () => {
+        poster.removeAttribute('src');
+        poster.classList.add('hidden');
+    };
+    poster.src = thumbnailUrl;
+    poster.classList.remove('hidden');
+}
+
+function _hideMiniPoster() {
+    const poster = document.getElementById('mini-player-poster');
+    if (poster) poster.classList.add('hidden');
+}
 
 // ── Public API ───────────────────────────────────────────────────────────
 
-export function isPlaying() {
-    return currentStream !== null;
-}
-
-export function getCurrentStream() {
-    return currentStream;
-}
+export function isPlaying() { return _currentStream !== null; }
+export function getCurrentStream() { return _currentStream; }
+export function getCachedChannelData() { return _cachedChannelData; }
+export function getHlsInstance() { return _hlsInstance; }
+export function getVideoElement() { return _video(); }
 
 /**
- * Activate the mini player with a live HLS stream.
- *
- * @param {object}  data           Stream metadata
- * @param {Hls}     [hls]          HLS.js instance to transfer (keeps playback alive)
- * @param {HTMLVideoElement} [sourceVideo] The video element HLS is currently attached to
+ * Load a stream onto the shared video. Does not change the current visual mode.
  */
-export function startMiniPlayer({ slug, title, channel, playbackUrl, thumbnailUrl }, hls, sourceVideo) {
-    currentStream = { slug, title, channel, playbackUrl, thumbnailUrl };
+export function loadStream(playbackUrl, streamInfo, channelData) {
+    _currentStream = streamInfo;
+    _cachedChannelData = channelData || null;
 
-    const player = document.getElementById('mini-player');
-    if (!player) return;
+    const video = _video();
+    if (!video) return;
 
-    // Update text info
-    document.getElementById('mini-player-title').textContent = title || channel || slug || 'Live Stream';
-    document.getElementById('mini-player-channel').textContent = channel || slug;
+    _bindVideoStateEvents();
 
-    const miniVideo = document.getElementById('miniPlayerVideo');
-
-    if (hls && miniVideo) {
-        // Transfer the live HLS instance to the mini player video element.
-        // detachMedia + attachMedia keeps buffers and avoids a re-fetch.
-        hls.detachMedia();
-        hls.attachMedia(miniVideo);
-        miniVideo.muted = false;
-        miniVideo.play().catch(() => {});
-        hlsInstance = hls;
-        miniVideo.classList.remove('hidden');
-        _syncThumbVideoClass(true);
-        _hideThumbnail();
-        _updatePlayPauseIcon(false);
-    } else if (sourceVideo && miniVideo && sourceVideo.src) {
-        // Native HLS (Safari) — copy the src directly
-        miniVideo.src = sourceVideo.src;
-        miniVideo.currentTime = sourceVideo.currentTime;
-        miniVideo.muted = false;
-        miniVideo.play().catch(() => {});
-        miniVideo.classList.remove('hidden');
-        _syncThumbVideoClass(true);
-        _hideThumbnail();
-        _updatePlayPauseIcon(false);
-    } else {
-        // No transferable player — show thumbnail fallback
-        _showThumbnail(thumbnailUrl);
-        if (miniVideo) miniVideo.classList.add('hidden');
-        _syncThumbVideoClass(false);
+    if (_hlsInstance) {
+        _hlsInstance.destroy();
+        _hlsInstance = null;
     }
 
-    player.classList.remove('hidden');
-    document.body.classList.add('has-mini-player');
-    _updateSidebarIndicator(channel || slug, true);
+    if (streamInfo?.thumbnailUrl) video.poster = streamInfo.thumbnailUrl;
+
+    // Treat Kick proxy redirect routes as HLS sources; the browser/HLS.js
+    // follows the redirect to the actual manifest.
+    const isRedirectStream = /\/streams\/(vods|go)\//i.test(playbackUrl);
+    const isHLS = isRedirectStream || /\.m3u8($|\?)/i.test(playbackUrl);
+
+    // Native HLS (Safari) — handles both live and VOD M3U8
+    if (isHLS && video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = playbackUrl;
+        video.muted = true;
+        video.play().catch(() => {});
+        return;
+    }
+
+    // HLS.js (Chrome, Firefox) — for M3U8 manifests
+    if (isHLS && window.Hls && window.Hls.isSupported()) {
+        const isLive = streamInfo?.type !== 'vod' && streamInfo?.type !== 'clip';
+        const hls = new window.Hls({
+            lowLatencyMode: isLive,
+            liveSyncDurationCount: 3,
+            liveMaxLatencyDurationCount: 6,
+            maxBufferLength: isLive ? 10 : 30,
+            maxMaxBufferLength: isLive ? 20 : 60,
+            liveDurationInfinity: isLive,
+            backBufferLength: isLive ? 15 : 60,
+        });
+
+        hls.loadSource(playbackUrl);
+        hls.attachMedia(video);
+        _hlsInstance = hls;
+        hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
+            video.muted = true;
+            video.play().catch(() => {});
+        });
+        return;
+    }
+
+    // Direct media (MP4, WebM clips) — native <video> playback
+    video.src = playbackUrl;
+    video.muted = false;
+    video.play().catch(() => {});
 }
 
 /**
- * Reclaim the HLS instance from the mini player back to a full-size video.
- * Returns the HLS.js instance (or null) so the caller can attach it.
+ * Switch the visual mode of the shared video.
  *
- * The mini player bar stays visible during the handoff to avoid a visual gap.
- * Call {@link hideMiniPlayer} once the target video is actually rendering.
+ * @param {'hidden'|'mini'|'full'} mode
+ * @param {HTMLElement} [slot]
+ * @param {object} [opts]
+ * @param {boolean} [opts.animate]
+ * @param {boolean} [opts.collapsePanel]
  */
-export function reclaimHls() {
-    const hls = hlsInstance;
-    hlsInstance = null;
-    currentStream = null;
+export function setMode(mode, slot, opts = {}) {
+    const video = _video();
+    if (!video) return;
+    if (mode === 'full' && !slot) return;
 
-    if (hls) hls.detachMedia();
-    // Don't hide the mini player yet — caller hides it after the main video is ready
-    return hls;
+    _bindVideoStateEvents();
+
+    const prev = _mode;
+    const shouldAnimate = Boolean(opts.animate)
+        && prev !== 'hidden'
+        && mode !== 'hidden'
+        && !_isSafari()
+        && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const fromRect = shouldAnimate ? video.getBoundingClientRect() : null;
+    const collapsePanel = Boolean(opts.collapsePanel);
+
+    _clearFullSlot();
+    if (mode !== 'mini' || collapsePanel) {
+        _collapseVideoPanel({ syncMiniVideo: false });
+    } else {
+        _syncPanelChrome();
+    }
+
+    if (mode === 'hidden') {
+        _mode = 'hidden';
+        video.controls = false;
+        _hideMiniPoster();
+        _hideMiniBar();
+        _moveVideoTo(_layer());
+        _styleVideoForMode('hidden');
+        return;
+    }
+
+    if (mode === 'mini') {
+        _mode = 'mini';
+        video.controls = false;
+        _showMiniBar(Boolean(fromRect));
+        _renderMiniVideo();
+        if (fromRect) _flipAnimate(video, fromRect);
+        return;
+    }
+
+    _mode = 'full';
+    _fullSlot = slot;
+    video.controls = true;
+    video.muted = false;
+    _hideMiniPoster();
+    _hideMiniBar();
+    _moveVideoTo(_fullSlot);
+    _styleVideoForMode('full');
+    _fullSlot.classList.add('video-active');
+    if (fromRect) _flipAnimate(video, fromRect);
 }
 
-/** Hide the mini player bar (called after the main video is rendering). */
-export function hideMiniPlayer() {
-    _collapseVideoPanel();
-    const miniVideo = document.getElementById('miniPlayerVideo');
-    if (miniVideo) { miniVideo.pause(); miniVideo.classList.add('hidden'); }
-    _syncThumbVideoClass(false);
-    const player = document.getElementById('mini-player');
-    if (player) player.classList.add('hidden');
-    document.body.classList.remove('has-mini-player');
-    _updateSidebarIndicator('', false);
+/**
+ * GPU-composited FLIP animation. Only transform is animated.
+ */
+function _flipAnimate(video, fromRect) {
+    const toRect = video.getBoundingClientRect();
+    if (!toRect.width || !toRect.height) return;
+
+    const dx = fromRect.left - toRect.left;
+    const dy = fromRect.top - toRect.top;
+    const sx = fromRect.width / toRect.width;
+    const sy = fromRect.height / toRect.height;
+
+    video.style.transformOrigin = '0 0';
+    video.style.transition = 'transform 0.3s cubic-bezier(0.4, 0, 0.2, 1), border-radius 0.3s cubic-bezier(0.4, 0, 0.2, 1)';
+    video.style.transform = `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`;
+
+    requestAnimationFrame(() => {
+        video.style.transform = 'none';
+
+        const cleanup = () => {
+            video.style.transform = '';
+            video.style.transformOrigin = '';
+            video.style.transition = '';
+        };
+        video.addEventListener('transitionend', cleanup, { once: true });
+        setTimeout(cleanup, 400);
+    });
 }
 
-export function stopMiniPlayer() {
-    currentStream = null;
-    _collapseVideoPanel();
-    _destroyVideo();
-    const player = document.getElementById('mini-player');
-    if (player) player.classList.add('hidden');
-    document.body.classList.remove('has-mini-player');
-    _updateSidebarIndicator('', false);
+export function cacheChannelData(data) {
+    _cachedChannelData = data;
 }
+
+export function stopStream() {
+    if (_hlsInstance) {
+        _hlsInstance.destroy();
+        _hlsInstance = null;
+    }
+
+    const video = _video();
+    if (video) {
+        video.pause();
+        video.removeAttribute('src');
+        video.removeAttribute('poster');
+        video.load();
+    }
+
+    _currentStream = null;
+    _cachedChannelData = null;
+    setMode('hidden', null, { collapsePanel: true });
+}
+
+// ── Mini-player bar controls ─────────────────────────────────────────────
 
 export function initMiniPlayerControls() {
-    const expandBtn  = document.getElementById('mini-player-expand');
-    const playBtn    = document.getElementById('mini-player-play');
-    const castBtn    = document.getElementById('mini-player-cast');
-    const closeBtn   = document.getElementById('mini-player-close');
+    _bindVideoStateEvents();
+    _syncPanelChrome();
+
+    const expandBtn = document.getElementById('mini-player-expand');
+    const playBtn = document.getElementById('mini-player-play');
+    const castBtn = document.getElementById('mini-player-cast');
+    const closeBtn = document.getElementById('mini-player-close');
 
     expandBtn?.addEventListener('click', () => {
-        if (currentStream?.slug) {
-            _collapseVideoPanel();
+        if (_currentStream?.slug) {
             const { navigate } = window.__routerModule || {};
-            if (navigate) navigate(`/channel/${currentStream.slug}`);
+            if (navigate) navigate(`/channel/${_currentStream.slug}`);
         }
     });
 
     playBtn?.addEventListener('click', _togglePlayPause);
 
     castBtn?.addEventListener('click', () => {
-        if (currentStream?.playbackUrl) {
-            castStream(currentStream.playbackUrl, currentStream.title || 'Kick Stream');
+        if (_currentStream?.playbackUrl) {
+            castStream(_currentStream.playbackUrl, _currentStream.title || 'Kick Stream');
         }
     });
 
-    closeBtn?.addEventListener('click', () => {
-        _collapseVideoPanel();
-        stopMiniPlayer();
-    });
+    closeBtn?.addEventListener('click', stopStream);
 
-    // Clicking the thumbnail/video area also expands
-    const thumb = document.getElementById('mini-player-thumb');
-    thumb?.addEventListener('click', () => {
-        if (currentStream?.slug) {
-            _collapseVideoPanel();
+    _thumb()?.addEventListener('click', () => {
+        if (_currentStream?.slug) {
             const { navigate } = window.__routerModule || {};
-            if (navigate) navigate(`/channel/${currentStream.slug}`);
+            if (navigate) navigate(`/channel/${_currentStream.slug}`);
         }
     });
 
-    _initResizeHandle();
+    _initResizeSlider();
 }
 
-// ── Resize / Expand Panel ────────────────────────────────────────────────
+function _initResizeSlider() {
+    const slider = document.getElementById('mini-player-slider');
+    if (!slider) return;
 
-const _MIN_PANEL_H = 0;
-const _DEFAULT_PANEL_H = 300;
-const _SNAP_THRESHOLD = 80;
-const _DRAG_DEAD_ZONE = 4; // px moved before drag activates
+    const getMaxH = () => Math.round(window.innerHeight * 0.6);
 
-let _panelHeight = 0;
-let _dragging = false;
+    slider.addEventListener('input', () => {
+        if (!_supportsExpandedMini() || _mode !== 'mini') return;
+        const h = Math.round((slider.value / 100) * getMaxH());
+        _setPanelHeight(h);
+    });
 
-function _initResizeHandle() {
-    const handle = document.getElementById('mini-player-resize');
-    if (!handle) return;
-
-    let startY = 0;
-    let startH = 0;
-    let activated = false; // true once pointer moves past dead zone
-
-    const onPointerDown = (e) => {
-        e.preventDefault();
-        startY = e.clientY;
-        startH = _panelHeight;
-        activated = false;
-        _dragging = true;
-        document.addEventListener('pointermove', onPointerMove);
-        document.addEventListener('pointerup', onPointerUp);
-    };
-
-    const onPointerMove = (e) => {
-        if (!_dragging) return;
-        const delta = startY - e.clientY;
-        // Don't commit to a drag until past the dead zone
-        if (!activated) {
-            if (Math.abs(delta) < _DRAG_DEAD_ZONE) return;
-            activated = true;
-            // Disable transition for smooth dragging
-            const panel = document.getElementById('mini-player-expanded-video');
-            if (panel) panel.style.transition = 'none';
-            document.body.style.cursor = 'ns-resize';
-            document.body.style.userSelect = 'none';
-        }
-        const maxH = Math.round(window.innerHeight * 0.6);
-        _setPanelHeight(Math.max(_MIN_PANEL_H, Math.min(maxH, startH + delta)));
-    };
-
-    const onPointerUp = () => {
-        _dragging = false;
-        document.body.style.cursor = '';
-        document.body.style.userSelect = '';
-        document.removeEventListener('pointermove', onPointerMove);
-        document.removeEventListener('pointerup', onPointerUp);
-        // Re-enable transition
-        const panel = document.getElementById('mini-player-expanded-video');
-        if (panel) panel.style.transition = '';
-        if (activated && _panelHeight < _SNAP_THRESHOLD) {
+    slider.addEventListener('change', () => {
+        if (Number(slider.value) < _SNAP_VALUE) {
+            slider.value = 0;
             _collapseVideoPanel();
         }
-    };
-
-    handle.addEventListener('pointerdown', onPointerDown);
-
-    // Double-click toggles collapsed ↔ expanded
-    handle.addEventListener('dblclick', () => {
-        _panelHeight > 0 ? _collapseVideoPanel() : _expandVideoPanel(_DEFAULT_PANEL_H);
     });
-}
 
-function _setPanelHeight(h) {
-    const panel = document.getElementById('mini-player-expanded-video');
-    const player = document.getElementById('mini-player');
-    if (!panel) return;
-
-    _panelHeight = h;
-    panel.style.height = h > 0 ? `${h}px` : '0';
-
-    if (h > 0) {
-        _moveVideoToPanel();
-        player?.classList.add('expanded');
-    } else {
-        _moveVideoToThumb();
-        player?.classList.remove('expanded');
-    }
-}
-
-function _expandVideoPanel(h) {
-    const maxH = Math.round(window.innerHeight * 0.6);
-    _setPanelHeight(Math.min(h, maxH));
-}
-
-function _collapseVideoPanel() {
-    _setPanelHeight(0);
-}
-
-function _moveVideoToPanel() {
-    const video = document.getElementById('miniPlayerVideo');
-    const panel = document.getElementById('mini-player-expanded-video');
-    if (video && panel && video.parentElement !== panel) {
-        panel.appendChild(video);
-        video.classList.remove('hidden');
-    }
-}
-
-function _moveVideoToThumb() {
-    const video = document.getElementById('miniPlayerVideo');
-    const thumb = document.getElementById('mini-player-thumb');
-    if (video && thumb && video.parentElement !== thumb) {
-        thumb.prepend(video);
-        video.classList.remove('hidden');
-    }
+    slider.addEventListener('dblclick', () => {
+        if (!_supportsExpandedMini() || _mode !== 'mini') return;
+        if (_panelHeight > 0) {
+            _collapseVideoPanel();
+        } else {
+            _expandVideoPanel(_DEFAULT_PANEL_H);
+        }
+    });
 }
 
 // ── Private helpers ──────────────────────────────────────────────────────
 
-function _destroyVideo() {
-    if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
-    const video = document.getElementById('miniPlayerVideo');
-    if (video) {
-        video.pause();
-        video.removeAttribute('src');
-        video.load();
-        video.classList.add('hidden');
-    }
-}
-
 function _togglePlayPause() {
-    const video = document.getElementById('miniPlayerVideo');
-    if (!video || video.classList.contains('hidden')) return;
+    const video = _video();
+    if (!video) return;
 
     if (video.paused) {
-        video.play().catch(() => {});
-        _updatePlayPauseIcon(false);
-    } else {
-        video.pause();
-        _updatePlayPauseIcon(true);
+        video.play()
+            .then(() => _updatePlayPauseIcon(false))
+            .catch(() => _updatePlayPauseIcon(video.paused));
+        return;
     }
+
+    video.pause();
 }
 
 function _updatePlayPauseIcon(paused) {
     const btn = document.getElementById('mini-player-play');
     if (!btn) return;
+
     btn.innerHTML = paused
         ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>'
         : '<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>';
     btn.title = paused ? 'Play' : 'Pause';
 }
 
-function _showThumbnail(url) {
-    const poster = document.getElementById('mini-player-poster');
-    if (!poster) return;
-    if (url) {
-        poster.src = url;
-        poster.classList.remove('hidden');
-    } else {
-        poster.classList.add('hidden');
-    }
-}
-
-function _hideThumbnail() {
-    const poster = document.getElementById('mini-player-poster');
-    if (poster) poster.classList.add('hidden');
-}
-
-function _syncThumbVideoClass(hasVideo) {
-    const thumb = document.getElementById('mini-player-thumb');
-    if (thumb) thumb.classList.toggle('has-video', hasVideo);
-}
-
 function _updateSidebarIndicator(channel, show) {
     const indicator = document.getElementById('sidebar-now-playing');
     if (!indicator) return;
+
     indicator.classList.toggle('hidden', !show);
     if (show) {
         const text = indicator.querySelector('.now-playing-text');

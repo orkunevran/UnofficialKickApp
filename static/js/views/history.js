@@ -4,7 +4,7 @@
  */
 
 import { getHistory, clearHistory, removeFromHistory } from '../history.js';
-import { escapeHtml, formatRelativeTime, initialsAvatar } from '../utils.js';
+import { escapeHtml, formatRelativeTime } from '../utils.js';
 import { navigate } from '../router.js';
 import { toast } from '../toast.js';
 
@@ -12,7 +12,7 @@ function renderHistoryItem(item) {
     const hasProfile = !!item.profilePicture;
     const imgSrc = item.profilePicture || item.thumbnailUrl || '';
     const avatarHTML = imgSrc
-        ? `<img src="${escapeHtml(imgSrc)}" alt="" style="width:100%;height:100%;object-fit:cover">`
+        ? `<img src="${escapeHtml(imgSrc)}" alt="" style="width:100%;height:100%;object-fit:cover" loading="lazy" decoding="async">`
         : '';
     const thumbClass = hasProfile ? 'history-thumb history-thumb--avatar' : 'history-thumb';
 

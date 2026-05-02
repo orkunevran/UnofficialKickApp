@@ -1,4 +1,6 @@
-const API_TIMEOUT_MS = 8000;
+// Mobile networks (3G/LTE) need more headroom: TLS handshake + DNS + server
+// response + body download can easily exceed 8s on congested connections.
+const API_TIMEOUT_MS = /Mobi|Android/i.test(navigator.userAgent) ? 15000 : 10000;
 
 // ── Connection status tracking ──────────────────────────────────────────
 let _consecutiveFailures = 0;
@@ -20,10 +22,28 @@ function _updateConnectionStatus(success) {
 
 function fetchWithTimeout(url, options = {}, timeoutMs = API_TIMEOUT_MS) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const upstreamSignal = options?.signal;
+    let didTimeout = false;
+
+    if (upstreamSignal?.aborted) {
+        controller.abort(upstreamSignal.reason);
+    } else if (upstreamSignal) {
+        upstreamSignal.addEventListener('abort', () => controller.abort(upstreamSignal.reason), { once: true });
+    }
+
+    const timer = setTimeout(() => {
+        didTimeout = true;
+        controller.abort();
+    }, timeoutMs);
     return fetch(url, { ...options, signal: controller.signal })
         .then(res => { _updateConnectionStatus(true); return res; })
-        .catch(err => { _updateConnectionStatus(false); throw err; })
+        .catch(err => {
+            // Ignore caller-initiated aborts (e.g. superseded live search query).
+            if (!(err?.name === 'AbortError' && !didTimeout)) {
+                _updateConnectionStatus(false);
+            }
+            throw err;
+        })
         .finally(() => clearTimeout(timer));
 }
 
@@ -137,13 +157,13 @@ export async function fetchChannelAvatar(slug) {
     }
 }
 
-export async function fetchChannelSearch(query) {
+export async function fetchChannelSearch(query, signal = null) {
     // Server-side Typesense search — covers all 500k+ Kick channels.
     // The backend handles key rotation; we simply call the proxy endpoint.
     // Returns null on any failure so callers can fall back to the local pool.
     try {
         const response = await fetchWithTimeout(
-            `/streams/search?q=${encodeURIComponent(query)}`, {}, 6000
+            `/streams/search?q=${encodeURIComponent(query)}`, { signal }, 3500
         );
         if (!response.ok) return null;
         return await response.json();

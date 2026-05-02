@@ -33,6 +33,10 @@ export const preferences = {
         lastDeviceUUID: null,
         lastDeviceName: null,
     },
+    defaultSort: { column: null, direction: 'desc' },
+    autoRefresh: true,
+    autoRefreshInterval: 120,   // seconds
+    historyEnabled: true,
 };
 
 export function loadPreferences() {

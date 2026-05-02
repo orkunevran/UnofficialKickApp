@@ -1,5 +1,5 @@
 /**
- * Settings view — preferences for language, view mode, etc.
+ * Settings view — preferences for language, view mode, sorting, refresh, etc.
  */
 
 import { preferences, savePreferences } from '../state.js';
@@ -22,6 +22,11 @@ export async function mount(params, contentEl) {
 
     const currentLang = preferences.language || defaultLang;
     const currentTheme = preferences.theme || 'system';
+    const sortCol = preferences.defaultSort?.column || '';
+    const sortDir = preferences.defaultSort?.direction || 'desc';
+    const autoRefresh = preferences.autoRefresh !== false;
+    const refreshInterval = preferences.autoRefreshInterval || 120;
+    const historyEnabled = preferences.historyEnabled !== false;
 
     contentEl.innerHTML = `
         <div class="section-header">
@@ -58,7 +63,50 @@ export async function mount(params, contentEl) {
         </div>
 
         <div class="settings-group">
+            <div class="settings-group-title">Browse</div>
+            <div class="settings-row">
+                <span class="settings-label">Default Sort</span>
+                <div style="display:flex;gap:8px">
+                    <select id="settings-sort-column" class="filter-select">
+                        <option value="" ${sortCol === '' ? 'selected' : ''}>Featured</option>
+                        <option value="viewer_count" ${sortCol === 'viewer_count' ? 'selected' : ''}>Viewers</option>
+                        <option value="session_title" ${sortCol === 'session_title' ? 'selected' : ''}>Title</option>
+                        <option value="channel.user.username" ${sortCol === 'channel.user.username' ? 'selected' : ''}>Channel</option>
+                    </select>
+                    <select id="settings-sort-direction" class="filter-select" ${sortCol === '' ? 'disabled' : ''}>
+                        <option value="desc" ${sortDir === 'desc' ? 'selected' : ''}>&#x25BE; Desc</option>
+                        <option value="asc" ${sortDir === 'asc' ? 'selected' : ''}>&#x25B4; Asc</option>
+                    </select>
+                </div>
+            </div>
+            <div class="settings-row">
+                <span class="settings-label">Auto-Refresh</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="settings-auto-refresh" ${autoRefresh ? 'checked' : ''}>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="settings-row ${autoRefresh ? '' : 'settings-row-disabled'}" id="settings-interval-row">
+                <span class="settings-label">Refresh Interval</span>
+                <select id="settings-refresh-interval" class="filter-select">
+                    <option value="30" ${refreshInterval === 30 ? 'selected' : ''}>30 seconds</option>
+                    <option value="60" ${refreshInterval === 60 ? 'selected' : ''}>1 minute</option>
+                    <option value="120" ${refreshInterval === 120 ? 'selected' : ''}>2 minutes</option>
+                    <option value="300" ${refreshInterval === 300 ? 'selected' : ''}>5 minutes</option>
+                    <option value="600" ${refreshInterval === 600 ? 'selected' : ''}>10 minutes</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="settings-group">
             <div class="settings-group-title">Data</div>
+            <div class="settings-row">
+                <span class="settings-label">History Tracking</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="settings-history-enabled" ${historyEnabled ? 'checked' : ''}>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
             <div class="settings-row">
                 <span class="settings-label">Clear watch history</span>
                 <button id="settings-clear-history" class="btn-secondary">Clear</button>
@@ -78,10 +126,6 @@ export async function mount(params, contentEl) {
             <div class="settings-row">
                 <span class="settings-label">API Documentation</span>
                 <a href="/docs" target="_blank" class="btn-secondary">Open Swagger</a>
-            </div>
-            <div class="settings-row">
-                <span class="settings-label">Generative Art</span>
-                <a href="/static/art/signal-propagation.html" target="_blank" class="btn-secondary">Signal Propagation</a>
             </div>
         </div>
 
@@ -120,7 +164,8 @@ export async function mount(params, contentEl) {
         confirmTimers.push(timer);
     }
 
-    // Theme change
+    // --- Event handlers ---
+
     const onThemeChange = (e) => {
         const theme = e.target.value;
         preferences.theme = theme;
@@ -130,21 +175,56 @@ export async function mount(params, contentEl) {
         toast(`Theme: ${labels[theme] || theme}`, 'success');
     };
 
-    // Language change
     const onLangChange = (e) => {
         preferences.language = e.target.value;
         savePreferences();
         toast('Default language updated', 'success');
     };
 
-    // View mode
     const onViewChange = (e) => {
         preferences.viewMode = e.target.value;
         savePreferences();
         toast('Default view updated', 'success');
     };
 
-    // Clear history
+    const directionEl = contentEl.querySelector('#settings-sort-direction');
+    const intervalRow = contentEl.querySelector('#settings-interval-row');
+
+    const onSortColumnChange = (e) => {
+        const col = e.target.value;
+        if (!preferences.defaultSort) preferences.defaultSort = {};
+        preferences.defaultSort.column = col || null;
+        directionEl.disabled = !col;
+        savePreferences();
+        toast('Default sort updated', 'success');
+    };
+
+    const onSortDirectionChange = (e) => {
+        if (!preferences.defaultSort) preferences.defaultSort = {};
+        preferences.defaultSort.direction = e.target.value;
+        savePreferences();
+        toast('Default sort updated', 'success');
+    };
+
+    const onAutoRefreshToggle = (e) => {
+        preferences.autoRefresh = e.target.checked;
+        intervalRow.classList.toggle('settings-row-disabled', !e.target.checked);
+        savePreferences();
+        toast(e.target.checked ? 'Auto-refresh enabled' : 'Auto-refresh disabled', 'success');
+    };
+
+    const onRefreshIntervalChange = (e) => {
+        preferences.autoRefreshInterval = parseInt(e.target.value, 10);
+        savePreferences();
+        toast('Refresh interval updated', 'success');
+    };
+
+    const onHistoryToggle = (e) => {
+        preferences.historyEnabled = e.target.checked;
+        savePreferences();
+        toast(e.target.checked ? 'History tracking enabled' : 'History tracking disabled', 'success');
+    };
+
     const onClearHistory = (e) => {
         confirmAction(e.currentTarget, () => {
             clearHistory();
@@ -152,7 +232,6 @@ export async function mount(params, contentEl) {
         });
     };
 
-    // Clear favorites
     const onClearFavorites = (e) => {
         confirmAction(e.currentTarget, () => {
             clearFavorites();
@@ -162,15 +241,26 @@ export async function mount(params, contentEl) {
         });
     };
 
+    // --- Bind listeners ---
+
     const themeEl = contentEl.querySelector('#settings-theme');
     const langEl = contentEl.querySelector('#settings-language');
     const viewEl = contentEl.querySelector('#settings-viewmode');
+    const sortColEl = contentEl.querySelector('#settings-sort-column');
+    const autoRefreshEl = contentEl.querySelector('#settings-auto-refresh');
+    const refreshIntervalEl = contentEl.querySelector('#settings-refresh-interval');
+    const historyEl = contentEl.querySelector('#settings-history-enabled');
     const clearHistBtn = contentEl.querySelector('#settings-clear-history');
     const clearFavBtn = contentEl.querySelector('#settings-clear-favorites');
 
     themeEl?.addEventListener('change', onThemeChange);
     langEl?.addEventListener('change', onLangChange);
     viewEl?.addEventListener('change', onViewChange);
+    sortColEl?.addEventListener('change', onSortColumnChange);
+    directionEl?.addEventListener('change', onSortDirectionChange);
+    autoRefreshEl?.addEventListener('change', onAutoRefreshToggle);
+    refreshIntervalEl?.addEventListener('change', onRefreshIntervalChange);
+    historyEl?.addEventListener('change', onHistoryToggle);
     clearHistBtn?.addEventListener('click', onClearHistory);
     clearFavBtn?.addEventListener('click', onClearFavorites);
 
@@ -178,6 +268,11 @@ export async function mount(params, contentEl) {
         themeEl?.removeEventListener('change', onThemeChange);
         langEl?.removeEventListener('change', onLangChange);
         viewEl?.removeEventListener('change', onViewChange);
+        sortColEl?.removeEventListener('change', onSortColumnChange);
+        directionEl?.removeEventListener('change', onSortDirectionChange);
+        autoRefreshEl?.removeEventListener('change', onAutoRefreshToggle);
+        refreshIntervalEl?.removeEventListener('change', onRefreshIntervalChange);
+        historyEl?.removeEventListener('change', onHistoryToggle);
         clearHistBtn?.removeEventListener('click', onClearHistory);
         clearFavBtn?.removeEventListener('click', onClearFavorites);
         confirmTimers.forEach(t => clearTimeout(t));

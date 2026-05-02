@@ -8,6 +8,16 @@ import { castStream } from './chromecast_logic.js';
 import { isFavorite, toggleFavorite } from './favorites.js';
 import { navigate } from './router.js';
 
+const VERIFIED_BADGE_SVG = `
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+        <path d="M12 2.5 19.2 5.7V12c0 4.7-2.8 8.6-7.2 10.3C7.6 20.6 4.8 16.7 4.8 12V5.7Z" fill="currentColor" stroke="rgba(6, 13, 8, 0.58)" stroke-width="1.2" stroke-linejoin="round"/>
+        <path d="M8.15 12.1 10.7 14.65 15.85 9.45" fill="none" stroke="#fff" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>`;
+
+function renderVerifiedBadge(modifier = '') {
+    return `<span class="verified-badge${modifier ? ` ${modifier}` : ''}" title="Verified" aria-label="Verified" role="img">${VERIFIED_BADGE_SVG}</span>`;
+}
+
 // ── Skeleton Loaders ──────────────────────────────────────────────────────
 
 export function renderCardSkeleton(count = 8) {
@@ -57,7 +67,7 @@ export function renderStreamCard(stream, { showActions = true } = {}) {
     const isFav = isFavorite(slug);
 
     const avatarHTML = profilePic
-        ? `<img src="${escapeHtml(profilePic)}" alt="${escapeHtml(username)}" class="card-avatar" loading="lazy">`
+        ? `<img src="${escapeHtml(profilePic)}" alt="${escapeHtml(username)}" class="card-avatar" loading="lazy" decoding="async">`
         : initialsAvatar(username);
 
     const actionsHTML = showActions ? `
@@ -73,8 +83,8 @@ export function renderStreamCard(stream, { showActions = true } = {}) {
     return `
         <div class="stream-card" data-slug="${escapeHtml(slug)}" data-start-time="${escapeHtml(stream.start_time || '')}" tabindex="0" role="article" aria-label="${escapeHtml(username)} — ${escapeHtml(title)}${viewers != null ? `, ${formatViewerCount(viewers)} viewers` : ''}">
             <div class="card-thumbnail">
-                ${thumbSrc ? `<img src="${escapeHtml(thumbSrc)}" alt="${escapeHtml(username)} stream thumbnail" decoding="async" class="thumb-fade" onload="this.classList.add('loaded')" onerror="this.style.display='none'">` : '<div style="width:100%;height:100%;background:rgba(255,255,255,0.03)"></div>'}
-                <div class="card-uptime-badge"><span class="card-live-dot"></span>${formatUptime(stream.start_time) || 'LIVE'}</div>
+                ${thumbSrc ? `<img src="${escapeHtml(thumbSrc)}" alt="${escapeHtml(username)} stream thumbnail" loading="lazy" decoding="async" class="thumb-fade" onload="this.classList.add('loaded')" onerror="this.style.display='none'">` : '<div style="width:100%;height:100%;background:rgba(255,255,255,0.03)"></div>'}
+                <div class="card-uptime-badge"><span class="card-live-dot"></span><span class="card-uptime-text">${escapeHtml(formatUptime(stream.start_time) || 'LIVE')}</span></div>
                 ${viewers != null ? `<div class="card-viewers" data-count="${viewers}"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg><span class="viewer-num">${formatViewerCount(viewers)}</span></div>` : ''}
                 ${actionsHTML}
             </div>
@@ -102,7 +112,7 @@ export function renderStreamListItem(stream) {
     return `
         <div class="stream-list-item" data-slug="${escapeHtml(slug)}" tabindex="0" role="article" aria-label="${escapeHtml(username)} — ${escapeHtml(title)}${viewers != null ? `, ${formatViewerCount(viewers)} viewers` : ''}">
             <div class="list-thumb">
-                ${thumbSrc ? `<img src="${escapeHtml(thumbSrc)}" alt="${escapeHtml(username)} stream thumbnail" loading="lazy" onerror="this.style.display='none'">` : ''}
+                ${thumbSrc ? `<img src="${escapeHtml(thumbSrc)}" alt="${escapeHtml(username)} stream thumbnail" loading="lazy" decoding="async" onerror="this.style.display='none'">` : ''}
                 ${viewers != null ? `<div class="card-viewers" style="position:absolute;top:4px;right:4px;font-size:11px;padding:1px 6px"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>${formatViewerCount(viewers)}</div>` : ''}
             </div>
             <div class="list-info">
@@ -139,41 +149,118 @@ export function renderVodCard(vod, channelSlug) {
     const safeSlug = encodeURIComponent(channelSlug);
     const safeVodId = encodeURIComponent(vod.vod_id);
     const url = `/streams/vods/${safeSlug}/${safeVodId}`;
+    const playbackUrl = vod.source_url || '';
+
+    const safeTitle = escapeHtml(vod.title || 'VOD');
 
     return `
-        <a href="${url}" target="_blank" rel="noopener noreferrer" class="vod-card" data-vod-id="${vod.vod_id}" data-title="${escapeHtml((vod.title || '').toLowerCase())}" aria-label="${escapeHtml(vod.title || 'VOD')} — ${formatDate(vod.created_at)}, ${vod.views?.toLocaleString('en-US') || '0'} views">
+        <div class="vod-card" data-play-vod="${safeVodId}" data-source-url="${url}" data-playback-url="${escapeHtml(playbackUrl)}" data-vod-title="${safeTitle}" data-vod-thumb="${escapeHtml(vod.thumbnail_url || '')}" data-vod-duration="${vod.duration_seconds || ''}" data-vod-date="${escapeHtml(vod.created_at || '')}" data-vod-views="${vod.views || 0}" data-channel-slug="${escapeHtml(channelSlug)}" data-title="${escapeHtml((vod.title || '').toLowerCase())}" tabindex="0" role="button" aria-label="${safeTitle} — ${formatDate(vod.created_at)}, ${vod.views?.toLocaleString('en-US') || '0'} views">
             <div class="vod-card-thumb">
-                ${vod.thumbnail_url ? `<img src="${escapeHtml(vod.thumbnail_url)}" alt="${escapeHtml(vod.title || 'VOD')} thumbnail" loading="lazy" decoding="async" onerror="this.style.display='none'">` : '<div style="width:100%;height:100%;background:rgba(255,255,255,0.03)"></div>'}
+                ${vod.thumbnail_url ? `<img src="${escapeHtml(vod.thumbnail_url)}" alt="${safeTitle} thumbnail" loading="lazy" decoding="async" onerror="this.style.display='none'">` : '<div style="width:100%;height:100%;background:rgba(255,255,255,0.03)"></div>'}
                 ${vod.duration_seconds ? `<span class="vod-card-duration">${formatDuration(vod.duration_seconds)}</span>` : ''}
+                <div class="card-actions-overlay">
+                    <button type="button" class="card-action-btn cast-button" data-stream-url="${escapeHtml(playbackUrl || url)}" data-stream-title="${safeTitle}" title="Cast VOD" aria-label="Cast ${safeTitle} to Chromecast">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 16.1A5 5 0 015.9 20M2 12.05A9 9 0 019.95 20M2 8V6a2 2 0 012-2h16a2 2 0 012 2v12a2 2 0 01-2 2h-6"/><line x1="2" y1="20" x2="2.01" y2="20"/></svg>
+                    </button>
+                    <a href="${url}" target="_blank" rel="noopener noreferrer" class="card-action-btn" title="Open in new tab" aria-label="Open ${safeTitle} in new tab" onclick="event.stopPropagation()">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                    </a>
+                </div>
             </div>
             <div class="vod-card-info">
-                <div class="vod-card-title">${escapeHtml(vod.title || 'VOD')}</div>
+                <div class="vod-card-title">${safeTitle}</div>
                 <div class="vod-card-meta">
                     <span>${formatDate(vod.created_at)}</span>
                     <span>${vod.views?.toLocaleString('en-US') || '0'} views</span>
                 </div>
             </div>
-        </a>`;
+        </div>`;
 }
 
 // ── Clip Card ─────────────────────────────────────────────────────────────
 
 export function renderClipCard(clip) {
+    const safeTitle = escapeHtml(clip.title || 'Clip');
+    const clipUrl = escapeHtml(clip.clip_url || '#');
+
     return `
-        <a href="${escapeHtml(clip.clip_url || '#')}" target="_blank" rel="noopener noreferrer" class="vod-card" data-title="${escapeHtml((clip.title || '').toLowerCase())}" aria-label="${escapeHtml(clip.title || 'Clip')} — ${formatDate(clip.created_at)}, ${clip.views?.toLocaleString('en-US') || '0'} views">
+        <div class="vod-card" data-play-clip="true" data-clip-url="${clipUrl}" data-clip-title="${safeTitle}" data-clip-thumb="${escapeHtml(clip.thumbnail_url || '')}" data-clip-duration="${clip.duration_seconds || ''}" data-clip-date="${escapeHtml(clip.created_at || '')}" data-clip-views="${clip.views || 0}" data-title="${escapeHtml((clip.title || '').toLowerCase())}" tabindex="0" role="button" aria-label="${safeTitle} — ${formatDate(clip.created_at)}, ${clip.views?.toLocaleString('en-US') || '0'} views">
             <div class="vod-card-thumb">
-                ${clip.thumbnail_url ? `<img src="${escapeHtml(clip.thumbnail_url)}" alt="${escapeHtml(clip.title || 'Clip')} thumbnail" loading="lazy" decoding="async" onerror="this.style.display='none'">` : '<div style="width:100%;height:100%;background:rgba(255,255,255,0.03)"></div>'}
+                ${clip.thumbnail_url ? `<img src="${escapeHtml(clip.thumbnail_url)}" alt="${safeTitle} thumbnail" loading="lazy" decoding="async" onerror="this.style.display='none'">` : '<div style="width:100%;height:100%;background:rgba(255,255,255,0.03)"></div>'}
                 ${clip.duration_seconds ? `<span class="vod-card-duration">${formatDuration(clip.duration_seconds)}</span>` : ''}
+                <div class="card-actions-overlay">
+                    <button type="button" class="card-action-btn cast-button" data-stream-url="${clipUrl}" data-stream-title="${safeTitle}" title="Cast Clip" aria-label="Cast ${safeTitle} to Chromecast">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 16.1A5 5 0 015.9 20M2 12.05A9 9 0 019.95 20M2 8V6a2 2 0 012-2h16a2 2 0 012 2v12a2 2 0 01-2 2h-6"/><line x1="2" y1="20" x2="2.01" y2="20"/></svg>
+                    </button>
+                    <a href="${clipUrl}" target="_blank" rel="noopener noreferrer" class="card-action-btn" title="Open in new tab" aria-label="Open ${safeTitle} in new tab" onclick="event.stopPropagation()">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                    </a>
+                </div>
             </div>
             <div class="vod-card-info">
-                <div class="vod-card-title">${escapeHtml(clip.title || 'Clip')}</div>
+                <div class="vod-card-title">${safeTitle}</div>
                 <div class="vod-card-meta">
                     <span>${formatDate(clip.created_at)}</span>
                     <span>${clip.views?.toLocaleString('en-US') || '0'} views</span>
                     ${clip.category_name ? `<span>${escapeHtml(clip.category_name)}</span>` : ''}
                 </div>
             </div>
-        </a>`;
+        </div>`;
+}
+
+// ── VOD / Clip Inline Player Content ─────────────────────────────────────
+
+export function renderVodPlayerContent(card) {
+    const title = card.dataset.vodTitle || 'VOD';
+    const sourceUrl = card.dataset.sourceUrl || '';
+    const playbackUrl = card.dataset.playbackUrl || sourceUrl;
+    const thumb = card.dataset.vodThumb || '';
+    const duration = card.dataset.vodDuration;
+    const date = card.dataset.vodDate;
+    const views = card.dataset.vodViews;
+
+    return `
+        <div class="video-container" id="video-slot" data-poster="${escapeHtml(thumb)}"></div>
+        <div class="stream-details">
+            <div><span class="stream-detail-label">Title: </span><span class="stream-detail-value">${escapeHtml(title)}</span></div>
+            ${duration ? `<div><span class="stream-detail-label">Duration: </span><span class="stream-detail-value">${formatDuration(Number(duration))}</span></div>` : ''}
+            ${date ? `<div><span class="stream-detail-label">Date: </span><span class="stream-detail-value">${formatDate(date)}</span></div>` : ''}
+            ${views ? `<div><span class="stream-detail-label">Views: </span><span class="stream-detail-value">${Number(views).toLocaleString('en-US')}</span></div>` : ''}
+        </div>
+        <div class="stream-actions">
+            <button type="button" class="cast-button" data-stream-url="${escapeHtml(playbackUrl)}" data-stream-title="${escapeHtml(title)}">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 16.1A5 5 0 015.9 20M2 12.05A9 9 0 019.95 20M2 8V6a2 2 0 012-2h16a2 2 0 012 2v12a2 2 0 01-2 2h-6"/><line x1="2" y1="20" x2="2.01" y2="20"/></svg>
+                Cast
+            </button>
+            <a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener noreferrer" class="btn-secondary">Open in new tab &rarr;</a>
+            <button type="button" class="btn-secondary vod-back-btn">Back to list</button>
+        </div>`;
+}
+
+export function renderClipPlayerContent(card) {
+    const title = card.dataset.clipTitle || 'Clip';
+    const clipUrl = card.dataset.clipUrl || '';
+    const thumb = card.dataset.clipThumb || '';
+    const duration = card.dataset.clipDuration;
+    const date = card.dataset.clipDate;
+    const views = card.dataset.clipViews;
+
+    return `
+        <div class="video-container" id="video-slot" data-poster="${escapeHtml(thumb)}"></div>
+        <div class="stream-details">
+            <div><span class="stream-detail-label">Title: </span><span class="stream-detail-value">${escapeHtml(title)}</span></div>
+            ${duration ? `<div><span class="stream-detail-label">Duration: </span><span class="stream-detail-value">${formatDuration(Number(duration))}</span></div>` : ''}
+            ${date ? `<div><span class="stream-detail-label">Date: </span><span class="stream-detail-value">${formatDate(date)}</span></div>` : ''}
+            ${views ? `<div><span class="stream-detail-label">Views: </span><span class="stream-detail-value">${Number(views).toLocaleString('en-US')}</span></div>` : ''}
+        </div>
+        <div class="stream-actions">
+            <button type="button" class="cast-button" data-stream-url="${escapeHtml(clipUrl)}" data-stream-title="${escapeHtml(title)}">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 16.1A5 5 0 015.9 20M2 12.05A9 9 0 019.95 20M2 8V6a2 2 0 012-2h16a2 2 0 012 2v12a2 2 0 01-2 2h-6"/><line x1="2" y1="20" x2="2.01" y2="20"/></svg>
+                Cast
+            </button>
+            <a href="${escapeHtml(clipUrl)}" target="_blank" rel="noopener noreferrer" class="btn-secondary">Open in new tab &rarr;</a>
+            <button type="button" class="btn-secondary vod-back-btn">Back to list</button>
+        </div>`;
 }
 
 // ── VOD / Clip Grids ──────────────────────────────────────────────────────
@@ -192,6 +279,20 @@ export function renderClipGrid(clips) {
     return `<div class="vod-grid">${clips.map(c => renderClipCard(c)).join('')}</div>`;
 }
 
+export function syncCardUptimeBadge(badge, startTime) {
+    if (!badge || !startTime) return;
+    const text = formatUptime(startTime) || 'LIVE';
+    const textEl = badge.querySelector('.card-uptime-text');
+    if (textEl) {
+        if (textEl.textContent !== text) textEl.textContent = text;
+        return;
+    }
+
+    const dot = badge.querySelector('.card-live-dot');
+    const dotHTML = dot ? dot.outerHTML : '<span class="card-live-dot"></span>';
+    badge.innerHTML = `${dotHTML}<span class="card-uptime-text">${escapeHtml(text)}</span>`;
+}
+
 // ── Channel Profile ───────────────────────────────────────────────────────
 
 export function renderChannelProfile(data, channelSlug, { activeTab = 'stream' } = {}) {
@@ -200,12 +301,12 @@ export function renderChannelProfile(data, channelSlug, { activeTab = 'stream' }
 
     // Banner
     const bannerHTML = d?.banner_image_url
-        ? `<div class="profile-banner"><img src="${escapeHtml(d.banner_image_url)}" alt="${escapeHtml(d?.username || channelSlug)} channel banner"><div class="profile-banner-overlay"></div></div>`
+        ? `<div class="profile-banner"><img src="${escapeHtml(d.banner_image_url)}" alt="${escapeHtml(d?.username || channelSlug)} channel banner" decoding="async"><div class="profile-banner-overlay"></div></div>`
         : `<div class="profile-banner"><div class="profile-banner-overlay"></div></div>`;
 
     // Avatar
     const avatarHTML = d?.profile_picture
-        ? `<img src="${escapeHtml(d.profile_picture)}" alt="${escapeHtml(d.username || channelSlug)}">`
+        ? `<img src="${escapeHtml(d.profile_picture)}" alt="${escapeHtml(d.username || channelSlug)}" decoding="async">`
         : initialsAvatar(d?.username || channelSlug, true);
 
     // Followers
@@ -239,13 +340,14 @@ export function renderChannelProfile(data, channelSlug, { activeTab = 'stream' }
     const tabLabels = { stream: 'Stream', vods: 'VODs', clips: 'Clips' };
 
     return `
+        <div id="mobile-video-anchor" class="mobile-video-anchor"></div>
         ${bannerHTML}
         <div class="profile-header">
             <div class="profile-avatar-wrap ${isLive ? 'live-ring' : ''}">${avatarHTML}</div>
             <div class="profile-identity">
                 <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
                     <h2 class="profile-username">${escapeHtml(d?.username || channelSlug)}</h2>
-                    ${d?.verified ? '<span class="verified-badge">&#10003;</span>' : ''}
+                    ${d?.verified ? renderVerifiedBadge() : ''}
                     <span class="status-badge ${isLive ? 'live' : 'offline'}">${isLive ? 'LIVE' : 'OFFLINE'}</span>
                     <button class="btn-icon favorite-profile-btn ${isFav ? 'favorited' : ''}" data-slug="${escapeHtml(channelSlug)}" data-username="${escapeHtml(d?.username || channelSlug)}" data-pic="${escapeHtml(d?.profile_picture || '')}" title="${isFav ? 'Remove from favorites' : 'Add to favorites'}" aria-label="${isFav ? 'Remove from favorites' : 'Add to favorites'}">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="${isFav ? 'var(--live-color)' : 'none'}" stroke="${isFav ? 'var(--live-color)' : 'currentColor'}" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 000-7.78z"/></svg>
@@ -293,10 +395,8 @@ export function renderStreamTabContent(data, channelSlug) {
     const initialViewerData = hasInitialViewerCount ? ` data-last-known-viewer-count="${initialViewerCount}"` : '';
 
     return `
-        <div class="video-container">
-            <video id="liveVideoPlayer" controls muted playsinline
-                poster="${escapeHtml(d.livestream_thumbnail_url || '')}">
-            </video>
+        <div class="video-container" id="video-slot"
+             data-poster="${escapeHtml(d.livestream_thumbnail_url || '')}">
         </div>
 
         <div class="stream-details">
@@ -369,7 +469,7 @@ export function renderSearchResults(results, onSelect) {
         item.style.animationDelay = `${idx * 30}ms`;
 
         const liveBadge = r.is_live ? '<span class="suggestion-live"><span class="suggestion-live-dot"></span>LIVE</span>' : '';
-        const verifiedBadge = r.verified ? '<svg class="suggestion-verified" width="14" height="14" viewBox="0 0 24 24" fill="var(--primary-color)" stroke="var(--primary-color)" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01" fill="none"/></svg>' : '';
+        const verifiedBadge = r.verified ? renderVerifiedBadge('verified-badge--suggestion') : '';
         const viewerInfo = r.is_live && r.viewer_count
             ? `<span class="suggestion-viewers"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>${Number(r.viewer_count).toLocaleString('en-US')}</span>` : '';
         const followerInfo = !r.is_live && r.followers_count
@@ -381,7 +481,7 @@ export function renderSearchResults(results, onSelect) {
         item.innerHTML = `
             <div class="suggestion-avatar-wrap${avatarRingClass}">
                 ${r.profile_picture
-                    ? `<img src="${escapeHtml(r.profile_picture)}" alt="${escapeHtml(r.username || r.slug)}" class="suggestion-avatar">`
+                    ? `<img src="${escapeHtml(r.profile_picture)}" alt="${escapeHtml(r.username || r.slug)}" class="suggestion-avatar" loading="lazy" decoding="async">`
                     : initialsAvatar(r.username || r.slug)}
             </div>
             <div class="suggestion-info">
@@ -488,13 +588,20 @@ export function initButtonDelegation() {
     // Keyboard activation for focusable cards (Enter / Space)
     document.addEventListener('keydown', (event) => {
         if (event.key !== 'Enter' && event.key !== ' ') return;
-        const card = event.target.closest('.stream-card, .stream-list-item, .history-item');
+        const card = event.target.closest('.stream-card, .stream-list-item, .history-item, .vod-card');
         if (!card) return;
         // Don't interfere with buttons/links inside the card
         if (event.target.closest('.card-action-btn, a, button, .history-remove-btn')) return;
         event.preventDefault();
         const slug = card.dataset.slug;
-        if (slug) navigate(`/channel/${slug}`);
+        if (slug) {
+            navigate(`/channel/${slug}`);
+            return;
+        }
+
+        if (card.dataset.playVod || card.dataset.playClip) {
+            card.click();
+        }
     });
 
     document.addEventListener('click', async (event) => {
@@ -632,13 +739,7 @@ function updateCardInPlace(cardEl, stream) {
     if (startTime) {
         cardEl.dataset.startTime = startTime;
         const uptimeBadge = cardEl.querySelector('.card-uptime-badge');
-        if (uptimeBadge) {
-            const dot = uptimeBadge.querySelector('.card-live-dot');
-            const newUptime = formatUptime(startTime) || 'LIVE';
-            const dotHTML = dot ? dot.outerHTML : '<span class="card-live-dot"></span>';
-            const desired = dotHTML + newUptime;
-            if (uptimeBadge.innerHTML !== desired) uptimeBadge.innerHTML = desired;
-        }
+        if (uptimeBadge) syncCardUptimeBadge(uptimeBadge, startTime);
     }
 
     // Viewer count — animate numerically
@@ -686,6 +787,15 @@ function animateViewerCount(viewerEl, from, to) {
         return;
     }
 
+    const shouldAnimate = !document.documentElement.classList.contains('safari')
+        && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!shouldAnimate) {
+        if (numEl._animFrame) cancelAnimationFrame(numEl._animFrame);
+        numEl._animFrame = null;
+        numEl.textContent = formatViewerCount(to);
+        return;
+    }
+
     // Cancel any running animation on this element
     if (numEl._animFrame) cancelAnimationFrame(numEl._animFrame);
 
@@ -711,6 +821,12 @@ function animateViewerCount(viewerEl, from, to) {
 }
 
 function crossfadeThumbnail(currentImg, newSrc) {
+    if (document.documentElement.classList.contains('safari')
+        || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        currentImg.src = newSrc;
+        return;
+    }
+
     const container = currentImg.parentElement;
     // Avoid stacking multiple crossfades
     const pending = container.querySelector('.crossfade-next');

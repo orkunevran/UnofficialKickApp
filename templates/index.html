@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
     <meta name="color-scheme" content="dark">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -15,7 +15,7 @@
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Syne:wght@600;700;800&display=swap">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css', ) }}">
 </head>
-<body>
+<body class="no-cast">
     <a href="#content-area" class="skip-link">Skip to content</a>
     <div id="app">
         <!-- Sidebar -->
@@ -118,15 +118,20 @@
                 </div>
             </main>
 
+            <!-- Hidden parking layer for the shared video element when the
+                 stream is active but not currently visible in mini/full mode. -->
+            <div id="video-layer">
+                <video id="sharedVideo" playsinline></video>
+            </div>
+
             <!-- Mini player -->
             <div id="mini-player" class="mini-player hidden">
-                <div id="mini-player-resize" class="mini-player-resize-handle" title="Drag to resize">
-                    <span class="resize-grip"></span>
-                </div>
                 <div id="mini-player-expanded-video" class="mini-player-expanded-video"></div>
                 <div class="mini-player-inner">
+                    <input type="range" id="mini-player-slider" class="mini-player-slider"
+                           min="0" max="100" value="0" step="1"
+                           aria-label="Mini-player video size">
                     <div id="mini-player-thumb" class="mini-player-thumb">
-                        <video id="miniPlayerVideo" class="mini-player-video hidden" playsinline></video>
                         <img id="mini-player-poster" class="mini-player-poster hidden" alt="">
                     </div>
                     <div class="mini-player-info">

@@ -3,7 +3,7 @@
  */
 
 import { fetchFeaturedStreams, fetchBatchViewerCounts } from '../api.js';
-import { renderStreamGrid, renderCardSkeleton, updateFavoritesBadge, patchStreamGrid } from '../ui.js';
+import { renderStreamGrid, renderCardSkeleton, updateFavoritesBadge, patchStreamGrid, syncCardUptimeBadge } from '../ui.js';
 import { appState, featuredSortState, preferences } from '../state.js';
 import { applyFeaturedStreamsSort } from '../sorting.js';
 import { toast } from '../toast.js';
@@ -29,10 +29,75 @@ let refreshTimer = null;
 let midCycleTimer = null;
 let uptimeTimer = null;
 let scrollObserver = null;
+let cardVisibilityObserver = null;
+let observedStreamCards = new WeakSet();
+let visibleStreamCards = new Set();
 // (hover/focus pause removed — was too aggressive, blocked all viewer count updates)
 
 function isPaused() {
     return document.visibilityState !== 'visible';
+}
+
+function shouldTrackVisibleStreamCards() {
+    return document.documentElement.classList.contains('safari');
+}
+
+function resetVisibleStreamCardTracking() {
+    visibleStreamCards.clear();
+    observedStreamCards = new WeakSet();
+    if (cardVisibilityObserver) {
+        cardVisibilityObserver.disconnect();
+        cardVisibilityObserver = null;
+    }
+}
+
+function observeVisibleStreamCards(gridEl) {
+    if (!shouldTrackVisibleStreamCards() || !gridEl) return;
+    if (!gridEl.querySelector('.stream-card[data-slug]')) return;
+
+    const scrollRoot = document.getElementById('content-area');
+    if (!scrollRoot) return;
+
+    if (!cardVisibilityObserver) {
+        cardVisibilityObserver = new IntersectionObserver((entries) => {
+            entries.forEach(entry => {
+                const card = entry.target;
+                if (entry.isIntersecting) {
+                    visibleStreamCards.add(card);
+                } else {
+                    visibleStreamCards.delete(card);
+                }
+            });
+        }, {
+            root: scrollRoot,
+            rootMargin: '280px 0px',
+            threshold: 0,
+        });
+    }
+
+    gridEl.querySelectorAll('.stream-card[data-slug]').forEach(card => {
+        if (observedStreamCards.has(card)) return;
+        observedStreamCards.add(card);
+        cardVisibilityObserver.observe(card);
+    });
+}
+
+function getRefreshCards(gridEl) {
+    if (!shouldTrackVisibleStreamCards() || !gridEl) {
+        return [...(gridEl?.querySelectorAll('.stream-card[data-slug]') || [])];
+    }
+
+    const tracked = [];
+    for (const card of visibleStreamCards) {
+        if (!card.isConnected || !gridEl.contains(card)) {
+            visibleStreamCards.delete(card);
+            continue;
+        }
+        tracked.push(card);
+    }
+
+    if (tracked.length > 0) return tracked;
+    return [...gridEl.querySelectorAll('.stream-card[data-slug]')];
 }
 
 function hasFreshCache() {
@@ -104,6 +169,11 @@ function rebuildAndRender(contentEl, { renderMode = 'full' } = {}) {
     // Update category selector options
     populateCategorySelector(appState.featuredStreams);
 
+    const shouldResetTracking = renderMode === 'full' || preferences.viewMode === 'list';
+    if (shouldResetTracking) {
+        resetVisibleStreamCardTracking();
+    }
+
     // Render grid
     const gridContainer = contentEl?.querySelector('#browse-grid');
     if (gridContainer) {
@@ -112,6 +182,7 @@ function rebuildAndRender(contentEl, { renderMode = 'full' } = {}) {
         } else {
             patchStreamGrid(gridContainer, appState.featuredStreams, preferences.viewMode);
         }
+        observeVisibleStreamCards(gridContainer);
     }
 
     // Update count
@@ -201,18 +272,20 @@ async function loadInitialPages(language, contentEl, browseView, forceClear = fa
         rebuildAndRender(contentEl, { renderMode: hadCachedData ? 'refresh' : 'full' });
     } catch (err) {
         console.error('Error loading featured streams:', err);
-        toast('Failed to load featured streams.', 'error', {
-            action: { label: 'Retry', onClick: () => loadInitialPages(language, contentEl, browseView) }
-        });
+        if (generation === refreshGeneration) {
+            toast('Failed to load featured streams.', 'error', {
+                action: { label: 'Retry', onClick: () => loadInitialPages(language, contentEl, browseView) }
+            });
+        }
     } finally {
-        if (generation === refreshGeneration) refreshInFlight = false;
+        // Always clear the flag — even for stale generations.  A newer generation
+        // will have set its own flag; if we are the latest, we must clear it.
+        if (generation === refreshGeneration) {
+            refreshInFlight = false;
+            if (hasNextPage) { initScrollObserver(contentEl); prefetchNextPage(); }
+        }
         if (inlineSpinner) inlineSpinner.classList.remove('is-active');
         browseView?.classList.remove('browse-bootstrapping');
-        // Init observer AFTER refreshInFlight is cleared so the callback isn't blocked
-        if (generation === refreshGeneration && hasNextPage) {
-            initScrollObserver(contentEl);
-            prefetchNextPage();
-        }
     }
 }
 
@@ -236,6 +309,9 @@ async function backgroundRefresh(language, contentEl) {
         if (generation === refreshGeneration) refreshInFlight = false;
         if (inlineSpinner) inlineSpinner.classList.remove('is-active');
     }
+    // Safety: if refreshInFlight is stuck for >15s (e.g. due to stale generation),
+    // forcibly clear it so the page doesn't freeze permanently.
+    setTimeout(() => { refreshInFlight = false; }, 15000);
 }
 
 async function midCycleViewerRefresh(contentEl) {
@@ -268,7 +344,7 @@ async function midCycleViewerRefresh(contentEl) {
         const gridEl = contentEl?.querySelector('.stream-grid');
         if (!gridEl) return;
         const slugMap = new Map(streams.map(s => [s.channel?.slug || s.slug, s]));
-        gridEl.querySelectorAll('.stream-card[data-slug]').forEach(card => {
+        getRefreshCards(gridEl).forEach(card => {
             const stream = slugMap.get(card.dataset.slug);
             if (!stream) return;
 
@@ -292,13 +368,7 @@ async function midCycleViewerRefresh(contentEl) {
             const startTime = card.dataset.startTime;
             if (startTime) {
                 const badge = card.querySelector('.card-uptime-badge');
-                if (badge) {
-                    const dot = badge.querySelector('.card-live-dot');
-                    const uptime = _formatUptime(startTime);
-                    const dotHTML = dot ? dot.outerHTML : '<span class="card-live-dot"></span>';
-                    const desired = dotHTML + (uptime || 'LIVE');
-                    if (badge.innerHTML !== desired) badge.innerHTML = desired;
-                }
+                if (badge) syncCardUptimeBadge(badge, startTime);
             }
         });
     } catch (err) {
@@ -306,30 +376,23 @@ async function midCycleViewerRefresh(contentEl) {
     }
 }
 
-function _formatUptime(startTime) {
-    if (!startTime) return '';
-    try {
-        const start = new Date(startTime.replace(' ', 'T') + 'Z');
-        const diffMs = Date.now() - start.getTime();
-        if (diffMs < 0) return '';
-        const mins = Math.floor(diffMs / 60000);
-        if (mins < 60) return `${mins}m`;
-        const h = Math.floor(mins / 60);
-        const m = mins % 60;
-        return `${h}h ${m}m`;
-    } catch { return ''; }
-}
-
 function _animateCount(numEl, from, to) {
     if (numEl._animFrame) cancelAnimationFrame(numEl._animFrame);
-    const duration = 600;
-    const start = performance.now();
-    const diff = to - from;
     function fmt(n) {
         if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
         if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
         return n.toLocaleString('en-US');
     }
+    const shouldAnimate = !document.documentElement.classList.contains('safari')
+        && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!shouldAnimate) {
+        numEl.textContent = fmt(to);
+        numEl._animFrame = null;
+        return;
+    }
+    const duration = 600;
+    const start = performance.now();
+    const diff = to - from;
     function tick(now) {
         const elapsed = now - start;
         const progress = Math.min(elapsed / duration, 1);
@@ -446,12 +509,21 @@ async function populateLanguageSelector() {
 // ── Mount / Unmount ───────────────────────────────────────────────────────
 
 export async function mount(params, contentEl) {
+    // Apply default sort from preferences BEFORE initial render
+    if (preferences.defaultSort?.column && !featuredSortState.column) {
+        featuredSortState.column = preferences.defaultSort.column;
+        featuredSortState.direction = preferences.defaultSort.direction || 'desc';
+    }
+
     contentEl.innerHTML = `
         <div id="browse-view">
             <div class="browse-sticky-header">
                 <div class="section-header">
                     <h1 class="section-title">Featured Streams <span id="stream-count" class="section-count">${pageCache.size > 0 ? `(${mergePagesIntoStreams().length})` : ''}</span></h1>
                     <span id="featured-spinner" class="inline-spinner" aria-hidden="true"></span>
+                    <button id="filter-toggle" class="filter-toggle" aria-label="Toggle filters" aria-expanded="true">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+                    </button>
                 </div>
 
                 <div class="filter-bar">
@@ -461,9 +533,13 @@ export async function mount(params, contentEl) {
                 </select>
 
                 <div class="sort-pills">
-                    <button class="sort-pill" data-sort="viewer_count" data-type="number">Viewers</button>
-                    <button class="sort-pill" data-sort="session_title" data-type="string">Title</button>
-                    <button class="sort-pill" data-sort="channel.user.username" data-type="string">Channel</button>
+                    ${['viewer_count', 'session_title', 'channel.user.username'].map(col => {
+                        const label = col === 'viewer_count' ? 'Viewers' : col === 'session_title' ? 'Title' : 'Channel';
+                        const type = col === 'viewer_count' ? 'number' : 'string';
+                        const isActive = featuredSortState.column === col;
+                        const cls = isActive ? `sort-pill active ${featuredSortState.direction}` : 'sort-pill';
+                        return `<button class="${cls}" data-sort="${col}" data-type="${type}">${label}</button>`;
+                    }).join('')}
                 </div>
 
                 <div class="view-toggle">
@@ -555,42 +631,60 @@ export async function mount(params, contentEl) {
     const sortPillsEl = browseView.querySelector('.sort-pills');
     sortPillsEl?.addEventListener('click', onSortPill);
 
-    // (hover/focus pause removed — viewer counts update regardless)
-
-    // Visibility change
-    const onVisibility = () => {
-        if (document.visibilityState === 'visible' && !refreshInFlight) {
-            void backgroundRefresh(currentLanguage, contentEl);
+    // Filter toggle (mobile: collapse/expand the filter bar)
+    const filterToggle = document.getElementById('filter-toggle');
+    const filterBarEl = browseView.querySelector('.filter-bar');
+    if (filterToggle && filterBarEl) {
+        if (preferences.filtersCollapsed) {
+            filterBarEl.classList.add('collapsed');
+            filterToggle.setAttribute('aria-expanded', 'false');
         }
+        filterToggle.addEventListener('click', () => {
+            const collapsed = filterBarEl.classList.toggle('collapsed');
+            filterToggle.setAttribute('aria-expanded', String(!collapsed));
+            preferences.filtersCollapsed = collapsed;
+            try { localStorage.setItem('kick-api-preferences', JSON.stringify(preferences)); } catch {}
+        });
+    }
+
+    // Visibility change — debounced to avoid iPhone notification/control-center spam
+    let lastVisibilityRefresh = 0;
+    const onVisibility = () => {
+        if (document.visibilityState !== 'visible' || refreshInFlight) return;
+        const now = Date.now();
+        if (now - lastVisibilityRefresh < 5000) return; // 5s debounce
+        lastVisibilityRefresh = now;
+        void backgroundRefresh(currentLanguage, contentEl);
     };
     document.addEventListener('visibilitychange', onVisibility);
 
-    // Load initial data
-    void loadInitialPages(currentLanguage, contentEl, browseView);
-
-    // Auto refresh — full data every 120s, lightweight viewer counts at 60s midpoint
-    refreshTimer = setInterval(() => {
-        void backgroundRefresh(currentLanguage, contentEl);
-    }, REFRESH_INTERVAL_MS);
-    midCycleTimer = setInterval(() => {
-        void midCycleViewerRefresh(contentEl);
-    }, REFRESH_INTERVAL_MS / 2);
-    // Client-side uptime recalculation — zero API calls, just recalculates from start_time
-    uptimeTimer = setInterval(() => {
-        requestAnimationFrame(() => {
-            contentEl.querySelectorAll('.stream-card[data-start-time]').forEach(card => {
-                const startTime = card.dataset.startTime;
-                if (!startTime) return;
-                const badge = card.querySelector('.card-uptime-badge');
-                if (!badge) return;
-                const dot = badge.querySelector('.card-live-dot');
-                const uptime = _formatUptime(startTime);
-                const dotHTML = dot ? dot.outerHTML : '<span class="card-live-dot"></span>';
-                const desired = dotHTML + (uptime || 'LIVE');
-                if (badge.innerHTML !== desired) badge.innerHTML = desired;
+    // Load initial data, THEN start auto-refresh timers
+    loadInitialPages(currentLanguage, contentEl, browseView).then(() => {
+        // Only start timers after initial data has settled (success or fail)
+        if (preferences.autoRefresh !== false) {
+            const intervalMs = (preferences.autoRefreshInterval || 120) * 1000;
+            refreshTimer = setInterval(() => {
+                void backgroundRefresh(currentLanguage, contentEl);
+            }, intervalMs);
+            midCycleTimer = setInterval(() => {
+                void midCycleViewerRefresh(contentEl);
+            }, intervalMs / 2);
+        }
+        uptimeTimer = setInterval(() => {
+            if (document.visibilityState !== 'visible') return;
+            requestAnimationFrame(() => {
+                const gridEl = contentEl?.querySelector('.stream-grid');
+                if (!gridEl) return;
+                getRefreshCards(gridEl).forEach(card => {
+                    const startTime = card.dataset.startTime;
+                    if (!startTime) return;
+                    const badge = card.querySelector('.card-uptime-badge');
+                    if (!badge) return;
+                    syncCardUptimeBadge(badge, startTime);
+                });
             });
-        });
-    }, 30_000);
+        }, 30_000);
+    });
 
     // Return cleanup function
     return () => {
@@ -601,6 +695,7 @@ export async function mount(params, contentEl) {
         clearInterval(uptimeTimer);
         uptimeTimer = null;
         if (scrollObserver) { scrollObserver.disconnect(); scrollObserver = null; }
+        resetVisibleStreamCardTracking();
         langSel.removeEventListener('change', onLanguageChange);
         catSel.removeEventListener('change', onCategoryChange);
         viewToggleEl?.removeEventListener('click', onViewToggle);

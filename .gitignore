@@ -44,3 +44,7 @@ Thumbs.db
 
 # Other
 node_modules/ # if you add npm packages later
+
+# Home Assistant artifacts
+.ha_snapshots/
+00_READ_FIRST.md

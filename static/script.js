@@ -1,5 +1,5 @@
 /**
- * Kick App v3.1.0 — Main entry point.
+ * Kick App v3.2.0 — Main entry point.
  * Thin orchestrator: initializes router, search, theme, shortcuts, chromecast.
  */
 
@@ -16,6 +16,11 @@ import { initialsAvatar } from './js/utils.js';
 // Safari perf: add class so CSS can swap expensive effects for lightweight alternatives
 const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
 if (isSafari) document.documentElement.classList.add('safari');
+
+// Prevent Safari pinch-to-zoom — belt-and-suspenders alongside CSS touch-action
+if (isSafari) {
+    document.addEventListener('gesturestart', e => e.preventDefault(), { passive: false });
+}
 
 // Expose modules for cross-module access without circular imports
 window.__favModule = { getFavoriteCount };
@@ -56,7 +61,8 @@ document.addEventListener('DOMContentLoaded', () => {
     function applyTheme(pref) {
         const resolved = resolveTheme(pref);
         // Add transition class, apply theme, then remove class after animation
-        document.documentElement.classList.add('theme-transitioning');
+        const shouldTransition = !isSafari;
+        if (shouldTransition) document.documentElement.classList.add('theme-transitioning');
         if (resolved === 'dark') {
             delete document.documentElement.dataset.theme;
         } else {
@@ -68,9 +74,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (metaTheme) metaTheme.content = resolved === 'light' ? '#f5f6f8' : '#0b0e14';
         const metaScheme = document.querySelector('meta[name="color-scheme"]');
         if (metaScheme) metaScheme.content = resolved === 'light' ? 'light' : 'dark';
-        requestAnimationFrame(() => {
-            setTimeout(() => document.documentElement.classList.remove('theme-transitioning'), 350);
-        });
+        if (shouldTransition) {
+            requestAnimationFrame(() => {
+                setTimeout(() => document.documentElement.classList.remove('theme-transitioning'), 350);
+            });
+        }
     }
 
     function updateThemeIcon(pref) {
@@ -133,6 +141,21 @@ document.addEventListener('DOMContentLoaded', () => {
     initShortcuts();
     initMiniPlayerControls();
 
+    // ── Dynamic mini-player gap (iPhone safe-area robustness) ────────────
+    function syncMiniPlayerGap() {
+        const nav = document.querySelector('.mobile-nav');
+        if (!nav || window.innerWidth >= 768) return;
+        const gap = window.innerHeight - nav.getBoundingClientRect().top + 10;
+        document.documentElement.style.setProperty('--mini-player-mobile-bottom-gap', `${gap}px`);
+    }
+    syncMiniPlayerGap();
+    let gapResizeTimer;
+    window.addEventListener('resize', () => {
+        clearTimeout(gapResizeTimer);
+        gapResizeTimer = setTimeout(syncMiniPlayerGap, 150);
+    });
+    window.addEventListener('orientationchange', () => setTimeout(syncMiniPlayerGap, 200));
+
     // Modal background inert management — prevents tabbing/interaction behind open modals
     const appEl = document.getElementById('app');
     const mobileNav = document.getElementById('mobile-nav');
@@ -185,8 +208,63 @@ function initSearch() {
     const input = document.getElementById('channelSlugInput');
     if (!input) return;
 
-    let searchDebounce = null;
+    const REMOTE_SEARCH_DEBOUNCE_MS = 260;
+    const REMOTE_SEARCH_MIN_CHARS = 4;
+    const SEARCH_CACHE_TTL_MS = 30_000;
+    const SEARCH_CACHE_MAX_ENTRIES = 40;
+
+    let remoteSearchDebounce = null;
     let searchSeqId = 0;
+    let activeSearchController = null;
+    const serverSearchCache = new Map();
+
+    const onSelect = (slug) => {
+        input.value = slug;
+        const sugg = document.getElementById('searchSuggestions');
+        if (sugg) sugg.style.display = 'none';
+        navigate(`/channel/${slug}`);
+    };
+
+    const getPool = () => (appState.searchPool.length > 0 ? appState.searchPool : appState.featuredStreams);
+
+    const readCachedSearch = (queryKey) => {
+        const hit = serverSearchCache.get(queryKey);
+        if (!hit) return null;
+        if ((Date.now() - hit.ts) > SEARCH_CACHE_TTL_MS) {
+            serverSearchCache.delete(queryKey);
+            return null;
+        }
+        return hit.data;
+    };
+
+    const writeCachedSearch = (queryKey, data) => {
+        serverSearchCache.set(queryKey, { ts: Date.now(), data });
+        if (serverSearchCache.size > SEARCH_CACHE_MAX_ENTRIES) {
+            const oldestKey = serverSearchCache.keys().next().value;
+            if (oldestKey) serverSearchCache.delete(oldestKey);
+        }
+    };
+
+    const enrichSearchResults = (serverData, pool) => {
+        const poolMap = new Map();
+        pool.forEach(s => {
+            const slug = s.channel?.slug || s.slug || '';
+            if (slug) poolMap.set(slug, s);
+        });
+
+        return serverData.map(r => {
+            const p = poolMap.get(r.slug);
+            if (!p) return r;
+            const user = p.channel?.user || {};
+            return {
+                ...r,
+                profile_picture: user.profilepic || null,
+                viewer_count: p.viewer_count || null,
+                stream_title: p.session_title || null,
+                category: p.categories?.[0]?.name || null,
+            };
+        });
+    };
 
     // Sync aria-expanded on the combobox with suggestions visibility
     const sugg = document.getElementById('searchSuggestions');
@@ -200,56 +278,60 @@ function initSearch() {
 
     input.addEventListener('input', () => {
         const q = input.value.trim();
-        clearTimeout(searchDebounce);
+        const queryKey = q.toLowerCase();
+        searchSeqId++;
+        const mySeq = searchSeqId;
+
+        clearTimeout(remoteSearchDebounce);
+        if (activeSearchController) {
+            activeSearchController.abort();
+            activeSearchController = null;
+        }
+
         if (q.length < 2) {
             const sugg = document.getElementById('searchSuggestions');
             if (sugg) sugg.style.display = 'none';
             return;
         }
-        searchDebounce = setTimeout(async () => {
-            const mySeq = ++searchSeqId;
-            const onSelect = (slug) => {
-                input.value = slug;
-                const sugg = document.getElementById('searchSuggestions');
-                if (sugg) sugg.style.display = 'none';
-                navigate(`/channel/${slug}`);
-            };
 
-            // Tier 1: local search
-            const pool = appState.searchPool.length > 0 ? appState.searchPool : appState.featuredStreams;
-            const localRes = fetchSearchResults(q, pool);
-            if (localRes.data.length > 0) {
-                renderSearchResults(localRes.data, onSelect);
-            } else {
-                renderSearchLoading();
+        // Tier 1: local search (instant, no debounce)
+        const pool = getPool();
+        const localRes = fetchSearchResults(q, pool);
+        if (localRes.data.length > 0) {
+            renderSearchResults(localRes.data, onSelect);
+        } else {
+            renderSearchLoading();
+        }
+
+        if (q.length < REMOTE_SEARCH_MIN_CHARS) return;
+
+        remoteSearchDebounce = setTimeout(async () => {
+            if (mySeq !== searchSeqId) return;
+
+            let serverData = readCachedSearch(queryKey);
+            if (!serverData) {
+                activeSearchController = new AbortController();
+                const serverRes = await fetchChannelSearch(q, activeSearchController.signal);
+                if (mySeq !== searchSeqId) return;
+                activeSearchController = null;
+                if (serverRes?.status === 'success' && Array.isArray(serverRes.data)) {
+                    serverData = serverRes.data;
+                    writeCachedSearch(queryKey, serverData);
+                }
             }
 
-            // Tier 2: server-side Typesense search
-            const serverRes = await fetchChannelSearch(q);
-            if (mySeq !== searchSeqId) return;
-            if (serverRes?.status === 'success' && serverRes.data?.length > 0) {
-                const poolMap = new Map();
-                pool.forEach(s => {
-                    const slug = s.channel?.slug || s.slug || '';
-                    if (slug) poolMap.set(slug, s);
-                });
-                const enriched = serverRes.data.map(r => {
-                    const p = poolMap.get(r.slug);
-                    if (!p) return r;
-                    const user = p.channel?.user || {};
-                    return {
-                        ...r,
-                        profile_picture: user.profilepic || null,
-                        viewer_count: p.viewer_count || null,
-                        stream_title: p.session_title || null,
-                        category: p.categories?.[0]?.name || null,
-                    };
-                });
-                renderSearchResults(enriched, onSelect);
+            if (!Array.isArray(serverData) || serverData.length === 0) {
+                if (localRes.data.length === 0) renderSearchEmpty();
+                return;
+            }
 
-                // Lazy-load avatars
-                const needsAvatar = enriched.filter(r => !r.profile_picture);
-                if (needsAvatar.length > 0) {
+            const enriched = enrichSearchResults(serverData, pool);
+            renderSearchResults(enriched, onSelect);
+
+            // Lazy-load missing avatars in background (non-blocking).
+            const needsAvatar = enriched.filter(r => !r.profile_picture);
+            if (needsAvatar.length > 0) {
+                (async () => {
                     const avatarResults = await Promise.allSettled(
                         needsAvatar.map(r => fetchChannelAvatar(r.slug).then(pic => ({ slug: r.slug, pic })))
                     );
@@ -259,23 +341,20 @@ function initSearch() {
                     avatarResults.forEach(res => {
                         if (res.status !== 'fulfilled') return;
                         const { slug, pic } = res.value;
+                        if (!pic) return;
                         const item = container.querySelector(`[data-slug="${CSS.escape(slug)}"]`);
                         if (!item) return;
                         const fallback = item.querySelector('.initials-avatar');
                         if (!fallback) return;
-                        if (pic) {
-                            const img = document.createElement('img');
-                            img.src = pic;
-                            img.alt = '';
-                            img.className = 'suggestion-avatar';
-                            fallback.replaceWith(img);
-                        }
+                        const img = document.createElement('img');
+                        img.src = pic;
+                        img.alt = '';
+                        img.className = 'suggestion-avatar';
+                        fallback.replaceWith(img);
                     });
-                }
-            } else if (localRes.data.length === 0) {
-                renderSearchEmpty();
+                })();
             }
-        }, 300);
+        }, REMOTE_SEARCH_DEBOUNCE_MS);
     });
 
     // Enter key → navigate to channel

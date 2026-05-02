@@ -19,7 +19,7 @@ fi
 
 # Allow positional arguments as a convenience:
 #   ./deploy.sh <pi_host> [pi_user] [pi_pass]
-PI_HOST="${PI_HOST:-${1:-192.168.68.53}}"
+PI_HOST="${PI_HOST:-${1:?PI_HOST required}}"
 PI_USER="${PI_USER:-${2:-pi}}"
 PI_PASS="${PI_PASS:-${3:-}}"
 

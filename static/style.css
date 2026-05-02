@@ -26,6 +26,9 @@
     --transition-normal: 0.25s ease;
     --font-display: 'Syne', 'Inter', system-ui, sans-serif;
     --grain-opacity: 0.025;
+    --mobile-nav-h: 56px;
+    --mobile-mini-h: 50px;
+    --safe-bot: env(safe-area-inset-bottom, 0px);
 }
 
 /* ── Light Theme ──────────────────────────────────────────────────────── */
@@ -2724,6 +2727,8 @@ a:focus-visible,
     .sidebar .sidebar-logo-text,
     .sidebar .sidebar-badge,
     .sidebar .now-playing-text { display: none; }
+    .sidebar .sidebar-logo { justify-content: center; gap: 0; }
+    .sidebar .sidebar-logo img { max-width: 32px; height: 24px; object-fit: contain; }
 }
 
 @media (max-width: 767px) {
@@ -2733,12 +2738,15 @@ a:focus-visible,
     }
     .content-area {
         padding: 16px;
-        padding-bottom: 80px; /* Space for mobile nav */
+        padding-bottom: calc(var(--mobile-nav-h) + var(--safe-bot) + 16px);
+    }
+    body.has-mini-player .content-area {
+        padding-bottom: calc(var(--mobile-nav-h) + var(--mobile-mini-h) + var(--safe-bot) + 16px);
     }
     /* Mini player floats above mobile nav on small screens */
     .mini-player {
         position: fixed;
-        bottom: calc(52px + env(safe-area-inset-bottom, 4px)); /* above mobile nav */
+        bottom: calc(var(--mobile-nav-h) + var(--safe-bot));
         left: 0; right: 0;
         z-index: 45;
         border-radius: 0;
@@ -2756,10 +2764,17 @@ a:focus-visible,
     .mini-player-title { font-size: 12px; }
     .mini-player-channel { font-size: 10px; }
     .mini-player-btn { padding: 6px; }
-    /* Hide cast button and resize handle on mobile */
+    /* Hide cast button on mobile (separate cast UI lives in the top bar) */
     #mini-player-cast { display: none; }
-    .mini-player-resize-handle { display: none; }
-    .mini-player-expanded-video { display: none; }
+    /* Resize handle stays visible on mobile, but with a bigger touch target */
+    .mini-player-resize-handle {
+        height: 22px;
+        touch-action: none;
+    }
+    .mini-player-resize-handle .resize-grip {
+        width: 48px;
+        height: 5px;
+    }
     .stream-grid {
         grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
         gap: 12px;
@@ -2811,6 +2826,16 @@ a:focus-visible,
     .view-toggle {
         margin-left: 0;
     }
+    /* Search dropdown: opaque + spans top-bar full width so page content
+       behind it doesn't bleed through on the right edge */
+    .search-suggestions {
+        position: fixed;
+        top: calc(46px + env(safe-area-inset-top, 0px) + 4px);
+        left: 8px; right: 8px;
+        margin-top: 0;
+        background: var(--bg-color);
+        max-height: min(60vh, 480px);
+    }
 }
 
 @media (max-width: 480px) {
@@ -2829,6 +2854,17 @@ a:focus-visible,
     .profile-username {
         word-break: break-word;
     }
+}
+
+/* ── Mobile landscape (and other short viewports) ─────────────────────── */
+/* The 1199/767/480 width breakpoints don't catch wide-but-short viewports
+   (phones rotated to landscape, foldables, narrow split-screen). Without
+   this rule the inline mini-player consumes the full visible height. */
+@media (max-height: 500px) and (orientation: landscape) {
+    .main-wrapper::before, .main-wrapper::after { display: none; }
+    .mini-player { display: none; }
+    .top-bar { height: 44px; }
+    .stream-grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
 }
 
 /* ── Connection Status Indicator ──────────────────────────────────────── */

@@ -26,9 +26,23 @@
     --transition-normal: 0.25s ease;
     --font-display: 'Syne', 'Inter', system-ui, sans-serif;
     --grain-opacity: 0.025;
-    --mobile-nav-h: 56px;
-    --mobile-mini-h: 50px;
-    --safe-bot: env(safe-area-inset-bottom, 0px);
+    --verified-badge-color: #53fc18;
+    --verified-badge-shadow: rgba(83, 252, 24, 0.18);
+    --mini-player-gap: clamp(10px, calc(0.75vw + 0.1vh), 16px);
+    --mini-player-padding-x: clamp(14px, calc(1vw + 0.2vh), 20px);
+    --mini-player-padding-y: clamp(9px, calc(0.55vw + 0.1vh), 14px);
+    --mini-player-thumb-width: clamp(240px, calc(23vw + 0.8vh), 460px);
+    --mini-player-thumb-height: calc(var(--mini-player-thumb-width) * 9 / 16);
+    --mini-player-panel-height: calc(var(--mini-player-thumb-height) + (var(--mini-player-padding-y) * 2));
+    --mini-player-title-size: clamp(14px, calc(1vw + 0.15vh), 16px);
+    --mini-player-channel-size: clamp(11px, calc(0.75vw + 0.1vh), 13px);
+    --mini-player-button-size: clamp(40px, calc(2.8vw + 0.4vh), 48px);
+    --mini-player-icon-size: clamp(17px, calc(1vw + 0.1vh), 19px);
+    --mini-player-thumb-radius: clamp(10px, calc(0.8vw + 0.15vh), 14px);
+    --mini-player-radius: clamp(14px, calc(1vw + 0.3vh), 18px);
+    --mini-player-mobile-bottom-gap: 74px;
+    --mini-player-mobile-content-pad: calc(var(--mini-player-mobile-bottom-gap) + var(--mini-player-panel-height) + 18px);
+    --mini-player-mobile-toast-bottom: calc(var(--mini-player-mobile-bottom-gap) + var(--mini-player-panel-height) + 34px);
 }
 
 /* ── Light Theme ──────────────────────────────────────────────────────── */
@@ -51,6 +65,8 @@
     --glass-shadow: 0 4px 16px 0 rgba(0, 0, 0, 0.08);
     --neon-glow: 0 0 10px rgba(22, 163, 74, 0.15);
     --grain-opacity: 0.015;
+    --verified-badge-color: #16a34a;
+    --verified-badge-shadow: rgba(22, 163, 74, 0.16);
 }
 [data-theme="light"] body { background: var(--bg-color); color: var(--text-color); }
 [data-theme="light"] .sidebar { background: rgba(255, 255, 255, 0.95); }
@@ -70,6 +86,10 @@
 [data-theme="light"] .card-uptime-badge,
 [data-theme="light"] .card-viewers {
     background: rgba(0, 0, 0, 0.65);
+}
+[data-theme="light"] .card-uptime-badge--muted {
+    background: rgba(0, 0, 0, 0.55);
+    color: var(--text-secondary);
 }
 [data-theme="light"] .card-category {
     background: rgba(22, 163, 74, 0.1);
@@ -104,10 +124,9 @@
     background: var(--bg-color);
 }
 
-/* Light theme — mobile nav */
+/* Light theme — mobile nav (solid background, no glass effect) */
 [data-theme="light"] .mobile-nav {
-    background: rgba(255, 255, 255, 0.95);
-    backdrop-filter: blur(10px);
+    background: var(--bg-color);
 }
 [data-theme="light"] .mini-player {
     background: var(--bg-color);
@@ -147,6 +166,11 @@
 [data-theme="light"] .search-suggestion-item.highlighted {
     border-left-color: var(--primary-color);
 }
+[data-theme="light"] .favorite-thumb-placeholder {
+    background:
+        radial-gradient(circle at 20% 20%, rgba(22, 163, 74, 0.08), transparent 35%),
+        linear-gradient(135deg, rgba(0, 0, 0, 0.03), rgba(0, 0, 0, 0.015));
+}
 
 /* Light theme — buttons */
 [data-theme="light"] .btn-primary:hover {
@@ -173,6 +197,9 @@
 }
 [data-theme="light"] .settings-row:hover {
     background: rgba(0, 0, 0, 0.02);
+}
+[data-theme="light"] .toggle-slider {
+    background: rgba(0, 0, 0, 0.15);
 }
 
 /* Light theme — filter controls */
@@ -209,12 +236,8 @@
 [data-theme="light"] .mini-player {
     background: rgba(255, 255, 255, 0.97);
 }
-[data-theme="light"] .mini-player-thumb {
-    border-color: rgba(0, 0, 0, 0.08);
-}
 [data-theme="light"] .mini-player-thumb.has-video {
-    border-color: rgba(22, 163, 74, 0.2);
-    box-shadow: 0 0 8px rgba(22, 163, 74, 0.06);
+    box-shadow: 0 0 22px rgba(22, 163, 74, 0.1);
 }
 [data-theme="light"] #mini-player-close:hover {
     background: rgba(220, 38, 38, 0.06);
@@ -309,17 +332,28 @@ html.theme-transitioning .vod-card {
 }
 
 /* ── Base layout (replaces Tailwind utilities) ────────────────────────── */
+/* ── iOS zoom prevention ─────────────────────────────────────────────── */
+/* manipulation = pan + pinch only; removes double-tap-to-zoom delay   */
+html {
+    -ms-touch-action: manipulation;
+    touch-action: manipulation;
+}
+
 body {
     background: var(--bg-color);
     color: var(--text-color);
     font-family: 'Inter', system-ui, sans-serif;
     min-height: 100vh;
+    min-height: 100svh;
+    min-height: 100dvh;
     overflow: hidden;
     margin: 0;
 }
 #app {
     display: flex;
     height: 100vh;
+    height: 100dvh;
+    min-height: 100svh;
     position: relative;
 }
 /* Atmospheric grain overlay — uses a lightweight static PNG data-URI instead of
@@ -566,6 +600,7 @@ body {
     width: 8px; height: 8px;
     background: var(--primary-color);
     border-radius: 50%;
+    box-shadow: 0 0 4px var(--primary-color);
     animation: pulse-glow 2s infinite;
     color: var(--primary-color);
     flex-shrink: 0;
@@ -676,6 +711,7 @@ body {
     cursor: pointer;
     transition: background 0.12s ease;
     border-bottom: 1px solid var(--border-color);
+    contain: layout style paint;
     animation: suggestion-enter 0.2s ease-out both;
 }
 @keyframes suggestion-enter {
@@ -730,10 +766,6 @@ body {
     overflow: hidden;
     text-overflow: ellipsis;
 }
-.suggestion-verified {
-    flex-shrink: 0;
-    opacity: 0.9;
-}
 .suggestion-live {
     display: inline-flex;
     align-items: center;
@@ -751,6 +783,7 @@ body {
     width: 5px; height: 5px;
     border-radius: 50%;
     background: #fff;
+    box-shadow: 0 0 3px rgba(255,255,255,0.6);
     animation: pulse-glow 2s infinite;
 }
 .suggestion-title {
@@ -818,15 +851,41 @@ body {
     opacity: 0.7;
 }
 .top-bar-actions { display: flex; align-items: center; gap: 8px; }
+/* Keep cast actions visible even when discovery is empty so users can still
+   trigger device selection from stream/VOD/clip contexts. Only the quick
+   disconnect control is hidden when there is no active cast target. */
+body.no-cast .chromecast-disconnect-quick {
+    display: none !important;
+}
 .chromecast-btn {
     background: none; border: none; cursor: pointer;
     padding: 8px; border-radius: var(--radius-sm);
     transition: background 0.15s, opacity 0.15s;
-    display: flex; align-items: center;
+    display: flex; align-items: center; justify-content: center;
     opacity: 0.7;
 }
 .chromecast-btn:hover { background: var(--surface-hover); opacity: 1; }
 .chromecast-btn.active { background: rgba(83, 252, 24, 0.15); opacity: 1; }
+.chromecast-btn img {
+    display: block;
+}
+
+/* Light mode needs a darker inactive Chromecast glyph; the asset is white. */
+[data-theme="light"] .chromecast-btn {
+    opacity: 1;
+    background: rgba(15, 18, 25, 0.03);
+    border: 1px solid rgba(15, 18, 25, 0.08);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+[data-theme="light"] .chromecast-btn:hover {
+    background: rgba(15, 18, 25, 0.06);
+}
+[data-theme="light"] .chromecast-btn:not(.active) #chromecast-icon {
+    filter: brightness(0) opacity(0.76);
+}
+[data-theme="light"] .chromecast-btn.active #chromecast-icon {
+    filter: none;
+}
 
 /* ── Theme toggle button ─────────────────────────────────────────────── */
 .theme-toggle-btn {
@@ -847,7 +906,7 @@ body {
     padding: 4px; border-radius: var(--radius-sm);
     color: var(--text-muted);
     transition: color 0.15s, background 0.15s;
-    display: flex; align-items: center;
+    display: flex; align-items: center; justify-content: center;
     margin-left: -4px;
 }
 .chromecast-disconnect-quick:hover {
@@ -866,6 +925,49 @@ body {
        Chrome handles it fine, but Safari interpolates every scrollTop assignment
        through its smooth-scroll animation queue, creating a delayed "slide" effect
        that feels like UI latency.  Native scrolling remains smooth without this. */
+}
+
+/* ── Persistent Video Layer ────────────────────────────────────────────── */
+/* Hidden parking layer for the shared <video> while it is not visible in
+   either the channel page slot or the mini-player. */
+#video-layer {
+    position: fixed;
+    inset: 0;
+    z-index: 38;
+    pointer-events: none;
+    display: none;
+}
+#video-layer video {
+    display: block;
+    width: 100%;
+    height: 100%;
+    background: #000;
+    pointer-events: none;
+}
+
+#mini-player-thumb > video,
+.mini-player-expanded-video > video,
+.video-container > video {
+    width: 100%;
+    height: 100%;
+    display: block;
+    background: #000;
+}
+#mini-player-thumb > video {
+    object-fit: cover;
+    object-position: center center;
+    pointer-events: none;
+}
+.mini-player-expanded-video > video,
+.video-container > video {
+    object-fit: contain;
+    object-position: center center;
+    pointer-events: none;
+}
+
+/* Suppress the mini-player slide-up animation during FLIP transitions */
+.mini-player.no-animate {
+    animation: none !important;
 }
 
 /* ── Mini Player ───────────────────────────────────────────────────────── */
@@ -894,26 +996,28 @@ body {
 .mini-player-inner {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 8px 16px;
-    height: 60px;
+    gap: var(--mini-player-gap);
+    padding: var(--mini-player-padding-y) var(--mini-player-padding-x);
+    min-height: var(--mini-player-panel-height);
+    box-sizing: border-box;
 }
 .mini-player-thumb {
     position: relative;
-    width: 96px; height: 54px;
-    border-radius: 6px;
+    width: var(--mini-player-thumb-width);
+    height: var(--mini-player-thumb-height);
+    border-radius: var(--mini-player-thumb-radius);
+    box-sizing: border-box;
     background: #000;
     overflow: hidden;
     flex-shrink: 0;
     cursor: pointer;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    transition: border-color 0.3s, box-shadow 0.3s;
+    border: 0;
+    transition: box-shadow 0.3s;
 }
 /* Glow border when video is active — use a class toggled by JS instead of
    :has() which Safari re-evaluates continuously during video playback */
 .mini-player-thumb.has-video {
-    border-color: rgba(83, 252, 24, 0.2);
-    box-shadow: 0 0 12px rgba(83, 252, 24, 0.08);
+    box-shadow: 0 0 22px rgba(83, 252, 24, 0.12);
 }
 .mini-player-poster {
     position: absolute;
@@ -922,12 +1026,6 @@ body {
     object-fit: cover;
 }
 .mini-player-poster.hidden { display: none; }
-.mini-player-video {
-    width: 100%; height: 100%;
-    object-fit: cover;
-    display: block;
-}
-.mini-player-video.hidden { display: none; }
 .mini-player-thumb::after {
     content: '';
     position: absolute;
@@ -943,7 +1041,7 @@ body {
 }
 .mini-player-title {
     display: block;
-    font-size: 13px;
+    font-size: var(--mini-player-title-size);
     font-weight: 600;
     white-space: nowrap;
     overflow: hidden;
@@ -951,21 +1049,26 @@ body {
 }
 .mini-player-channel {
     display: block;
-    font-size: 11px;
+    font-size: var(--mini-player-channel-size);
     color: var(--text-muted);
     margin-top: 2px;
 }
 .mini-player-controls {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: clamp(4px, 0.4vw, 8px);
     flex-shrink: 0;
 }
 .mini-player-btn {
     background: none; border: none; color: var(--text-secondary);
-    cursor: pointer; padding: 8px; border-radius: 6px;
+    cursor: pointer;
+    width: var(--mini-player-button-size);
+    height: var(--mini-player-button-size);
+    padding: 0;
+    border-radius: 8px;
     display: flex; align-items: center; justify-content: center;
     transition: background 0.15s, color 0.15s, transform 0.1s;
+    box-sizing: border-box;
 }
 .mini-player-btn:hover {
     background: var(--surface-hover);
@@ -973,6 +1076,10 @@ body {
 }
 .mini-player-btn:active {
     transform: scale(0.92);
+}
+.mini-player-btn svg {
+    width: var(--mini-player-icon-size);
+    height: var(--mini-player-icon-size);
 }
 #mini-player-play {
     color: #fff;
@@ -985,26 +1092,57 @@ body {
     background: rgba(255, 51, 102, 0.08);
 }
 
-/* ── Mini Player Resize Handle & Expanded Video ───────────────────────── */
-.mini-player-resize-handle {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    height: 14px;
+/* ── Mini Player Slider & Expanded Video ──────────────────────────────── */
+/* Vertical "upslider" — drag up to expand the video panel above */
+.mini-player-slider {
+    writing-mode: vertical-lr;
+    direction: rtl;          /* bottom = 0 (collapsed), top = 100 (full) */
+    -webkit-appearance: none;
+    appearance: none;
+    width: 28px;             /* touch/click target width */
+    height: clamp(48px, 6vh, 72px);
+    background: transparent;
+    outline: none;
     cursor: ns-resize;
-    user-select: none;
-    -webkit-user-select: none;
+    flex-shrink: 0;
+    padding: 0;
 }
-.mini-player-resize-handle:hover .resize-grip,
-.mini-player.expanded .resize-grip {
-    background: var(--text-secondary);
-}
-.resize-grip {
-    width: 36px;
-    height: 4px;
-    border-radius: 2px;
+.mini-player-slider::-webkit-slider-runnable-track {
     background: var(--border-color);
-    transition: background 0.15s;
+    border-radius: 999px;
+    width: 4px;
+}
+.mini-player-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--text-secondary);
+    cursor: ns-resize;
+    border: none;
+    margin-left: -5px;
+}
+.mini-player-slider::-moz-range-track {
+    background: var(--border-color);
+    border-radius: 999px;
+    width: 4px;
+}
+.mini-player-slider::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--text-secondary);
+    cursor: ns-resize;
+    border: none;
+}
+.mini-player-slider:hover::-webkit-slider-thumb,
+.mini-player-slider:active::-webkit-slider-thumb {
+    background: var(--primary-color);
+}
+.mini-player-slider:hover::-moz-range-thumb,
+.mini-player-slider:active::-moz-range-thumb {
+    background: var(--primary-color);
 }
 .mini-player-expanded-video {
     width: 100%;
@@ -1019,6 +1157,7 @@ body {
     width: 100%;
     height: 100%;
     object-fit: contain;
+    object-position: center center;
     display: block;
 }
 /* When expanded, hide the inline thumb video (it moved to the expanded panel) */
@@ -1082,6 +1221,7 @@ body {
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
     overflow: hidden;
+    contain: layout style paint;
     transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
     cursor: pointer;
     animation: card-enter 0.35s ease-out both;
@@ -1118,7 +1258,8 @@ body {
     box-shadow: 0 0 0 2px var(--bg-color), 0 0 0 4px var(--primary-color);
 }
 /* Show card action overlay on focus-within (keyboard accessible) */
-.stream-card:focus-within .card-actions-overlay {
+.stream-card:focus-within .card-actions-overlay,
+.vod-card:focus-within .card-actions-overlay {
     opacity: 1;
 }
 .card-thumbnail {
@@ -1163,10 +1304,15 @@ body {
     align-items: center;
     gap: 5px;
 }
+.card-uptime-badge--muted {
+    color: var(--text-muted);
+    background: rgba(0, 0, 0, 0.55);
+}
 .card-live-dot {
     width: 6px; height: 6px;
     background: var(--live-color);
     border-radius: 50%;
+    box-shadow: 0 0 4px var(--live-color);
     animation: pulse-glow 2s infinite;
     color: var(--live-color);
 }
@@ -1195,14 +1341,23 @@ body {
     transition: opacity 0.2s ease;
 }
 @media (hover: hover) {
-    .stream-card:hover .card-actions-overlay {
+    .stream-card:hover .card-actions-overlay,
+    .vod-card:hover .card-actions-overlay {
         opacity: 1;
     }
 }
 @media (hover: none) {
     .card-actions-overlay {
         opacity: 1;
-        background: linear-gradient(to top, rgba(0,0,0,0.6) 0%, transparent 100%);
+        align-items: flex-end;
+        justify-content: flex-end;
+        padding: 10px;
+        gap: 6px;
+        background: linear-gradient(to top, rgba(0,0,0,0.66) 0%, rgba(0,0,0,0.2) 45%, transparent 100%);
+    }
+    .card-action-btn {
+        width: 38px;
+        height: 38px;
     }
 }
 .card-action-btn {
@@ -1284,6 +1439,25 @@ body {
     background: rgba(83, 252, 24, 0.18);
     box-shadow: 0 0 6px rgba(83, 252, 24, 0.1);
 }
+.favorite-thumb-placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 12px;
+    background:
+        radial-gradient(circle at 20% 20%, rgba(83, 252, 24, 0.12), transparent 35%),
+        linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+.favorite-thumb-placeholder.pending {
+    color: var(--text-secondary);
+}
 
 /* ── Stream List View ──────────────────────────────────────────────────── */
 .stream-list {
@@ -1300,6 +1474,7 @@ body {
     border-radius: var(--radius-sm);
     padding: 8px 12px;
     cursor: pointer;
+    contain: layout style;
     transition: background 0.15s, border-color 0.15s, box-shadow 0.15s, transform 0.15s;
     animation: card-enter 0.3s ease-out both;
 }
@@ -1387,8 +1562,8 @@ body {
     animation: ring-pulse 3s ease-in-out infinite;
 }
 @keyframes ring-pulse {
-    0%, 100% { box-shadow: 0 0 0 2px var(--primary-color), 0 0 16px rgba(83, 252, 24, 0.25); }
-    50% { box-shadow: 0 0 0 3px var(--primary-color), 0 0 24px rgba(83, 252, 24, 0.4); }
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
 }
 .profile-header {
     display: flex;
@@ -1424,14 +1599,25 @@ body {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 20px; height: 20px;
-    background: var(--primary-color);
-    color: #000;
-    font-size: 12px;
-    font-weight: 700;
-    border-radius: 50%;
-    margin-left: 6px;
+    width: 18px;
+    height: 18px;
+    margin-left: 0;
     vertical-align: middle;
+    flex-shrink: 0;
+    color: var(--verified-badge-color);
+    filter: drop-shadow(0 0 8px var(--verified-badge-shadow));
+    line-height: 0;
+}
+.verified-badge svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+.verified-badge--suggestion {
+    width: 16px;
+    height: 16px;
+    margin-left: 0;
+    margin-top: 1px;
 }
 .status-badge {
     display: inline-block;
@@ -1557,6 +1743,10 @@ body {
     opacity: 0.6;
 }
 
+/* ── Mobile Video Anchor (hidden on desktop) ─────────────────────────── */
+.mobile-video-anchor { display: none; }
+@media (max-width: 767px) { .mobile-video-anchor { display: block; } }
+
 /* ── Video Player ──────────────────────────────────────────────────────── */
 .video-container {
     width: 100%;
@@ -1567,6 +1757,7 @@ body {
     margin: 16px 0;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.04);
     position: relative;
+    touch-action: manipulation;
 }
 /* Cinematic glow when video is playing — use class toggled by JS instead of
    :has() which Safari re-evaluates continuously during playback */
@@ -1612,6 +1803,7 @@ body {
     width: 8px; height: 8px;
     border-radius: 50%;
     background: var(--live-color);
+    box-shadow: 0 0 4px var(--live-color);
     animation: pulse-glow 2s infinite;
     color: var(--live-color);
 }
@@ -1768,6 +1960,8 @@ body {
     gap: 10px;
     padding: 12px 0;
 }
+/* Hidden on desktop — only visible in mobile breakpoint */
+.filter-toggle { display: none; }
 .filter-select {
     appearance: none;
     -webkit-appearance: none;
@@ -1903,20 +2097,21 @@ body {
     border-radius: var(--radius-md);
     overflow: hidden;
 }
+/* Skeleton shimmer uses a transform-based ::after overlay instead of
+   background-position animation.  transform: translateX() is GPU-composited
+   on both Chrome and Safari; background-position forces a repaint each frame. */
 .skeleton-thumb {
     aspect-ratio: 16/9;
-    background: linear-gradient(90deg, rgba(255,255,255,0.03) 25%, rgba(255,255,255,0.06) 50%, rgba(255,255,255,0.03) 75%);
-    background-size: 200% 100%;
-    animation: shimmer 1.5s infinite;
-    will-change: background-position;
+    background: rgba(255,255,255,0.03);
+    position: relative;
+    overflow: hidden;
 }
 .skeleton-bar {
     height: 12px;
     border-radius: 6px;
-    background: linear-gradient(90deg, rgba(255,255,255,0.03) 25%, rgba(255,255,255,0.06) 50%, rgba(255,255,255,0.03) 75%);
-    background-size: 200% 100%;
-    animation: shimmer 1.5s infinite;
-    will-change: background-position;
+    background: rgba(255,255,255,0.03);
+    position: relative;
+    overflow: hidden;
 }
 .skeleton-bar--wide { width: 80%; }
 .skeleton-bar--medium { width: 50%; }
@@ -1924,10 +2119,19 @@ body {
 .skeleton-circle {
     width: 36px; height: 36px;
     border-radius: 50%;
-    background: linear-gradient(90deg, rgba(255,255,255,0.03) 25%, rgba(255,255,255,0.06) 50%, rgba(255,255,255,0.03) 75%);
-    background-size: 200% 100%;
-    will-change: background-position;
+    background: rgba(255,255,255,0.03);
+    position: relative;
+    overflow: hidden;
+}
+.skeleton-thumb::after,
+.skeleton-bar::after,
+.skeleton-circle::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.08) 50%, transparent 100%);
     animation: shimmer 1.5s infinite;
+    will-change: transform;
 }
 
 /* ── Modal ─────────────────────────────────────────────────────────────── */
@@ -1940,6 +2144,7 @@ body {
     backdrop-filter: blur(4px);
     z-index: 100;
     opacity: 0;
+    contain: layout paint;
     transition: opacity 0.2s;
 }
 .modal.visible { opacity: 1; }
@@ -2085,6 +2290,7 @@ body {
     font-size: 14px;
     background: rgba(255,255,255,0.03);
     border: 1px solid transparent;
+    contain: layout style paint;
 }
 .device-item:hover {
     background: var(--surface-hover);
@@ -2226,6 +2432,7 @@ body {
     z-index: 200;
     pointer-events: none;
     max-width: 380px;
+    contain: layout paint;
 }
 .toast {
     display: flex;
@@ -2369,6 +2576,7 @@ body {
     padding: 20px;
     margin-bottom: 16px;
     transition: border-color 0.2s;
+    contain: layout style paint;
 }
 .settings-group:hover {
     border-color: rgba(255, 255, 255, 0.12);
@@ -2411,6 +2619,50 @@ body {
     color: var(--text-muted);
 }
 
+/* ── Toggle Switch ────────────────────────────────────────────────────── */
+.toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 40px;
+    height: 22px;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+.toggle-slider {
+    position: absolute;
+    inset: 0;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 11px;
+    transition: background 0.2s;
+}
+.toggle-slider::before {
+    content: '';
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    left: 3px;
+    bottom: 3px;
+    background: var(--text-muted);
+    border-radius: 50%;
+    transition: transform 0.2s, background 0.2s;
+}
+.toggle-switch input:checked + .toggle-slider {
+    background: var(--primary-color);
+}
+.toggle-switch input:checked + .toggle-slider::before {
+    transform: translateX(18px);
+    background: #fff;
+}
+.settings-row-disabled {
+    opacity: 0.4;
+    pointer-events: none;
+}
+
 /* ── VOD/Clip Card Grid ────────────────────────────────────────────────── */
 .vod-grid {
     display: grid;
@@ -2422,6 +2674,7 @@ body {
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
     overflow: hidden;
+    contain: layout style paint;
     transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
     cursor: pointer;
     text-decoration: none;
@@ -2499,6 +2752,7 @@ body {
     border: 1px solid var(--border-color);
     margin-bottom: 6px;
     position: relative;
+    contain: layout style paint;
     animation: card-enter 0.3s ease-out both;
 }
 /* Stagger first 12 history items */
@@ -2666,15 +2920,15 @@ body {
 
 /* ── Animations ────────────────────────────────────────────────────────── */
 @keyframes shimmer {
-    0% { background-position: 200% 0; }
-    100% { background-position: -200% 0; }
+    from { transform: translateX(-100%); }
+    to   { transform: translateX(100%); }
 }
 @keyframes spin {
     to { transform: rotate(360deg); }
 }
 @keyframes pulse-glow {
-    0%, 100% { opacity: 1; box-shadow: 0 0 4px currentColor; }
-    50% { opacity: 0.35; box-shadow: 0 0 1px currentColor; }
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
 }
 @keyframes card-enter {
     from { opacity: 0; transform: translateY(12px) scale(0.98); }
@@ -2727,114 +2981,259 @@ a:focus-visible,
     .sidebar .sidebar-logo-text,
     .sidebar .sidebar-badge,
     .sidebar .now-playing-text { display: none; }
-    .sidebar .sidebar-logo { justify-content: center; gap: 0; }
-    .sidebar .sidebar-logo img { max-width: 32px; height: 24px; object-fit: contain; }
 }
 
 @media (max-width: 767px) {
     .sidebar { display: none; }
+    .main-wrapper {
+        overflow: visible;
+    }
+    .top-bar {
+        min-height: 64px;
+        height: auto;
+        margin: 10px 10px 0;
+        padding: calc(10px + env(safe-area-inset-top, 0px)) 10px 10px;
+        gap: 8px;
+        background: var(--bg-color);
+        border: 1px solid var(--border-color);
+        border-radius: 22px;
+        box-shadow: 0 18px 36px rgba(0, 0, 0, 0.26);
+    }
+    .sidebar-toggle {
+        display: none;
+    }
+    .search-container {
+        max-width: none;
+        min-width: 0;
+    }
+    .search-input {
+        height: 40px;
+        font-size: 16px; /* >= 16px prevents iOS Safari auto-zoom on focus */
+        border-radius: 999px;
+        padding: 0 12px 0 38px;
+    }
+    .search-icon {
+        left: 12px;
+    }
+    .search-kbd {
+        display: none;
+    }
+    /* Prevent iOS Safari auto-zoom on focus for inputs with font-size < 16px */
+    input, select, textarea {
+        font-size: 16px !important;
+    }
+    .top-bar-actions {
+        gap: 6px;
+    }
+    :root {
+        --mini-player-gap: 8px;
+        --mini-player-padding-x: 12px;
+        --mini-player-padding-y: 10px;
+        --mini-player-thumb-width: clamp(120px, 30vw, 144px);
+        --mini-player-title-size: clamp(13px, 3.2vw, 14px);
+        --mini-player-channel-size: clamp(11px, 2.6vw, 12px);
+        --mini-player-button-size: clamp(36px, 8.5vw, 42px);
+        --mini-player-icon-size: 16px;
+        --mini-player-thumb-radius: 10px;
+        --mini-player-radius: 18px;
+    }
+    .chromecast-btn,
+    .theme-toggle-btn {
+        width: 40px;
+        height: 40px;
+        padding: 0;
+        border: 1px solid var(--border-color);
+        border-radius: 50%;
+        background: var(--surface-color);
+        opacity: 1;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+    }
     .mobile-nav {
         display: flex;
+        left: 10px;
+        right: 10px;
+        bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+        background: var(--bg-color);
+        -webkit-backdrop-filter: none;
+        backdrop-filter: none;
+        border: 1px solid var(--border-color);
+        border-radius: 22px;
+        box-shadow: 0 18px 36px rgba(0, 0, 0, 0.3);
+        padding: 6px 6px calc(6px + env(safe-area-inset-bottom, 4px));
+    }
+    .mobile-nav-item {
+        padding: 8px 0 7px;
+        gap: 4px;
+        border-radius: 16px;
+        transition: color 0.2s ease, background 0.2s ease, transform 0.2s ease;
+    }
+    .mobile-nav-item svg {
+        transition: transform 0.2s ease, stroke 0.2s ease;
+    }
+    .mobile-nav-item.active {
+        color: var(--primary-color);
+        background: rgba(83, 252, 24, 0.08);
+        box-shadow: inset 0 0 0 1px rgba(83, 252, 24, 0.16);
+    }
+    .mobile-nav-item.active svg {
+        transform: translateY(-1px);
     }
     .content-area {
-        padding: 16px;
-        padding-bottom: calc(var(--mobile-nav-h) + var(--safe-bot) + 16px);
+        padding: 10px 10px calc(92px + env(safe-area-inset-bottom, 0px));
     }
-    body.has-mini-player .content-area {
-        padding-bottom: calc(var(--mobile-nav-h) + var(--mobile-mini-h) + var(--safe-bot) + 16px);
+    /* When mini-player is visible, add extra bottom padding dynamically */
+    body.mini-active .content-area {
+        padding-bottom: calc(var(--mini-player-mobile-content-pad) + env(safe-area-inset-bottom, 0px));
     }
+    /* Video layer must sit above mini-player (45) so mini-mode video is visible */
+    #video-layer { z-index: 46; }
     /* Mini player floats above mobile nav on small screens */
     .mini-player {
         position: fixed;
-        bottom: calc(var(--mobile-nav-h) + var(--safe-bot));
-        left: 0; right: 0;
+        bottom: calc(var(--mini-player-mobile-bottom-gap) + env(safe-area-inset-bottom, 0px));
+        left: 10px;
+        right: 10px;
         z-index: 45;
-        border-radius: 0;
+        border-radius: var(--mini-player-radius);
+        border: 1px solid var(--border-color);
+        box-shadow: 0 18px 36px rgba(0, 0, 0, 0.32);
+        overflow: hidden;
     }
     .mini-player.hidden { position: static; }
     .mini-player-inner {
-        gap: 8px;
-        padding: 6px 10px;
-        height: 50px;
+        gap: var(--mini-player-gap);
+        padding: var(--mini-player-padding-y) var(--mini-player-padding-x);
+        min-height: var(--mini-player-panel-height);
     }
     .mini-player-thumb {
-        width: 72px; height: 40px;
-        border-radius: 4px;
+        width: var(--mini-player-thumb-width);
+        height: var(--mini-player-thumb-height);
+        border-radius: var(--mini-player-thumb-radius);
     }
-    .mini-player-title { font-size: 12px; }
-    .mini-player-channel { font-size: 10px; }
-    .mini-player-btn { padding: 6px; }
-    /* Hide cast button on mobile (separate cast UI lives in the top bar) */
+    /* Hide cast button and resize handle on mobile */
     #mini-player-cast { display: none; }
-    /* Resize handle stays visible on mobile, but with a bigger touch target */
-    .mini-player-resize-handle {
-        height: 22px;
-        touch-action: none;
-    }
-    .mini-player-resize-handle .resize-grip {
-        width: 48px;
-        height: 5px;
-    }
+    .mini-player-slider { display: none; }
+    .mini-player-expanded-video { display: none; }
     .stream-grid {
-        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-        gap: 12px;
+        grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+        gap: 10px;
     }
     .toast-container {
-        bottom: 70px; /* Above mobile nav */
+        bottom: calc(var(--mini-player-mobile-toast-bottom) + env(safe-area-inset-bottom, 0px));
         right: 10px;
         left: 10px;
         max-width: none;
     }
-    .search-container { max-width: none; }
-    .top-bar {
-        height: 46px;
-        padding: 0 10px;
-        padding-top: env(safe-area-inset-top, 0px);
-        gap: 8px;
+    /* ── Mobile video-first layout for live channels ────────────────── */
+    .mobile-video-anchor {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        background: var(--bg-color);
+        margin: -10px -10px 10px;
     }
-    .search-input {
-        height: 34px;
-        font-size: 13px;
+    .mobile-video-anchor:empty { display: none; }
+    .mobile-video-anchor .video-container {
+        margin: 0;
+        border-radius: 0 0 var(--radius-md) var(--radius-md);
     }
+    /* Compact profile when video is anchored at top */
+    .mobile-video-anchor:not(:empty) ~ .profile-banner { height: 80px; }
+    .mobile-video-anchor:not(:empty) ~ .profile-header { margin-top: -30px; }
+    .mobile-video-anchor:not(:empty) ~ .profile-header .profile-avatar-wrap { width: 56px; height: 56px; }
     .profile-banner { height: 140px; }
     .profile-header { margin-top: -36px; }
     .profile-avatar-wrap { width: 72px; height: 72px; }
     .profile-username { font-size: 20px; }
-
+    /* Tighter sticky header — less dead space above Featured Streams */
     .browse-sticky-header {
-        top: -16px;
-        margin: -16px -16px 8px;
-        padding: 16px 16px 0;
+        top: -10px;
+        margin: -10px -10px 10px;
+        padding: 10px 10px 12px;
+        border-bottom: none;
+        background: linear-gradient(180deg, rgba(11, 14, 20, 0.96) 0%, rgba(11, 14, 20, 0.88) 100%);
+        border-radius: 0 0 18px 18px;
+    }
+    [data-theme="light"] .browse-sticky-header {
+        background: linear-gradient(180deg, rgba(245, 246, 248, 0.98) 0%, rgba(245, 246, 248, 0.92) 100%);
+    }
+    .section-title { font-size: 18px; }
+    .section-header {
+        margin-bottom: 10px;
+        align-items: flex-start;
+        justify-content: space-between;
+    }
+    .section-count {
+        font-size: 13px;
+    }
+    .inline-spinner {
+        margin-top: 2px;
+    }
+    .filter-toggle {
+        display: inline-flex;
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        align-items: center;
+        justify-content: center;
+        background: var(--surface-color);
+        border: 1px solid var(--border-color);
+        color: var(--text-muted);
+        cursor: pointer;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
     }
     /* Filter bar mobile stacking */
     .filter-bar {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 8px;
+        padding: 10px;
+        background: var(--surface-color);
+        border: 1px solid var(--border-color);
+        border-radius: 18px;
     }
     .filter-select {
-        flex: 1;
         min-width: 0;
+        width: 100%;
     }
     .sort-pills {
-        width: 100%;
-        order: 10;
+        grid-column: 1 / -1;
+        gap: 6px;
+        overflow-x: auto;
+        padding-bottom: 2px;
+        scrollbar-width: none;
+    }
+    .sort-pills::-webkit-scrollbar {
+        display: none;
     }
     .sort-pill {
-        padding: 8px 14px;
-        flex: 1;
-        text-align: center;
+        flex: 0 0 auto;
+        padding: 8px 12px;
     }
     .view-toggle {
+        grid-column: 1 / -1;
+        width: 100%;
         margin-left: 0;
     }
-    /* Search dropdown: opaque + spans top-bar full width so page content
-       behind it doesn't bleed through on the right edge */
-    .search-suggestions {
-        position: fixed;
-        top: calc(46px + env(safe-area-inset-top, 0px) + 4px);
-        left: 8px; right: 8px;
-        margin-top: 0;
-        background: var(--bg-color);
-        max-height: min(60vh, 480px);
+    .view-toggle-btn {
+        flex: 1;
+        justify-content: center;
+        padding: 8px 10px;
+    }
+    /* ── Collapsible filter bar (mobile only) ─────────────────────────── */
+    .filter-toggle:hover { color: var(--text-color); }
+    /* Rotate chevron when collapsed */
+    .filter-toggle[aria-expanded="false"] { transform: rotate(180deg); }
+    .filter-bar {
+        max-height: 200px;
+        overflow: hidden;
+        transition: max-height 0.25s ease, opacity 0.2s ease, padding 0.25s ease;
+    }
+    .filter-bar.collapsed {
+        max-height: 0;
+        opacity: 0;
+        padding: 0;
+        pointer-events: none;
     }
 }
 
@@ -2845,6 +3244,19 @@ a:focus-visible,
     .vod-grid {
         grid-template-columns: 1fr;
     }
+    .filter-bar {
+        grid-template-columns: 1fr;
+    }
+    .sort-pills {
+        flex-wrap: wrap;
+    }
+    .sort-pill {
+        flex: 1 1 calc(50% - 3px);
+        text-align: center;
+    }
+    .view-toggle-btn {
+        padding: 9px 10px;
+    }
     /* Profile mobile layout */
     .profile-tabs {
         overflow-x: auto;
@@ -2854,17 +3266,6 @@ a:focus-visible,
     .profile-username {
         word-break: break-word;
     }
-}
-
-/* ── Mobile landscape (and other short viewports) ─────────────────────── */
-/* The 1199/767/480 width breakpoints don't catch wide-but-short viewports
-   (phones rotated to landscape, foldables, narrow split-screen). Without
-   this rule the inline mini-player consumes the full visible height. */
-@media (max-height: 500px) and (orientation: landscape) {
-    .main-wrapper::before, .main-wrapper::after { display: none; }
-    .mini-player { display: none; }
-    .top-bar { height: 44px; }
-    .stream-grid { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
 }
 
 /* ── Connection Status Indicator ──────────────────────────────────────── */
@@ -2913,10 +3314,9 @@ a:focus-visible,
 }
 
 /* ── Safari Performance ────────────────────────────────────────────────── */
-/* Safari's compositor handles backdrop-filter, animated box-shadow, and
-   filter: drop-shadow much worse than Chrome.  The html.safari class is
-   set by script.js at load time via UA detection.  Background colors are
-   already 0.95–0.98 opacity so removing blur is visually negligible. */
+/* Safari's compositor still struggles with blended overlays, repeated card
+   entrance animations, and lots of tiny live indicators.  The html.safari
+   class is set by script.js at load time via UA detection. */
 
 /* (a) Kill all backdrop-filter — biggest single win */
 html.safari .sidebar,
@@ -2926,7 +3326,6 @@ html.safari .mini-player,
 html.safari .modal,
 html.safari .modal-content,
 html.safari .toast,
-html.safari .tooltip,
 html.safari .top-bar {
     -webkit-backdrop-filter: none !important;
     backdrop-filter: none !important;
@@ -2945,27 +3344,115 @@ html.safari #app::before {
     opacity: calc(var(--grain-opacity) * 0.5) !important;
 }
 
-/* (d) Replace infinite box-shadow / pulse animations with static state */
-html.safari .pulse-dot,
+/* (d) Silence decorative animations that repeatedly repaint on Safari */
+html.safari .stream-card,
+html.safari .vod-card,
+html.safari .stream-list-item,
+html.safari .history-item,
+html.safari .search-suggestion-item,
+html.safari .stream-grid,
+html.safari .vod-grid,
+html.safari .stream-list,
+html.safari .mini-player,
+html.safari .empty-state,
+html.safari #profile-tab-content.tab-fade-in,
+html.safari .sidebar-badge.pulse {
+    animation: none !important;
+}
+html.safari .thumb-fade,
+html.safari .search-suggestions[style*="display: block"],
+html.safari .search-suggestions[style*="display:block"],
+html.safari .copy-button.copied,
+html.safari .viewer-updated,
+html.safari .skeleton-thumb::after,
+html.safari .skeleton-bar::after,
+html.safari .skeleton-circle::after,
+html.safari .now-playing-pulse,
 html.safari .card-live-dot,
 html.safari .suggestion-live-dot,
-html.safari .indicator-dot {
+html.safari .viewer-live-dot,
+html.safari .profile-avatar-wrap.live-ring,
+html.safari .suggestion-avatar-wrap.suggestion-avatar-live::after,
+html.safari .empty-state-icon::before,
+html.safari .section-title::before {
     animation: none !important;
-    opacity: 1 !important;
-}
-html.safari .favorite-btn.ring-pulse,
-html.safari .section-title::before,
-html.safari .modal-input:focus {
-    animation: none !important;
+    transition: none !important;
 }
 
-/* (e) Remove filter: drop-shadow on hover/active states */
+/* (e) Remove expensive hover transforms / shadow churn on repeated elements */
+html.safari .stream-card:hover,
+html.safari .vod-card:hover,
+html.safari .stream-list-item:hover,
+html.safari .history-item:hover,
+html.safari .device-item:hover,
+html.safari .social-pill:hover,
+html.safari .category-tag:hover,
+html.safari .btn-primary:hover,
+html.safari .btn-secondary:hover,
+html.safari .btn-icon:hover,
+html.safari .cast-button:hover,
+html.safari .copy-button:hover,
+html.safari .card-action-btn:hover {
+    transform: none !important;
+    box-shadow: none !important;
+}
+html.safari .stream-card:hover .card-thumbnail img,
+html.safari .vod-card:hover .vod-card-thumb img,
+html.safari .stream-list-item:hover .list-thumb img {
+    transform: none !important;
+}
+
+/* (f) Remove filter: drop-shadow on icon states */
 html.safari .sidebar-logo:hover img,
 html.safari .sidebar-link.active svg,
-html.safari .favorite-btn:hover svg,
-html.safari .favorite-btn.favorited svg,
-html.safari .vod-card.live svg {
+html.safari .verified-badge,
+html.safari .view-toggle-btn.active svg,
+html.safari .favorite-profile-btn:hover svg,
+html.safari .favorite-profile-btn.favorited svg {
     filter: none !important;
+}
+
+/* (g) Avoid painting offscreen list rows / cards on Safari */
+html.safari .stream-card,
+html.safari .vod-card {
+    content-visibility: auto;
+    contain-intrinsic-size: 0 220px;
+}
+html.safari .stream-list-item {
+    content-visibility: auto;
+    contain-intrinsic-size: 0 92px;
+}
+html.safari .history-item {
+    content-visibility: auto;
+    contain-intrinsic-size: 0 76px;
+}
+html.safari .search-suggestion-item {
+    content-visibility: auto;
+    contain-intrinsic-size: 0 56px;
+}
+html.safari .settings-group {
+    content-visibility: auto;
+    contain-intrinsic-size: 0 220px;
+}
+html.safari .device-item {
+    content-visibility: auto;
+    contain-intrinsic-size: 0 48px;
+}
+html.safari .device-item.connecting {
+    will-change: auto !important;
+}
+html.safari .stream-card,
+html.safari .vod-card,
+html.safari .stream-list-item,
+html.safari .history-item,
+html.safari .search-suggestion-item,
+html.safari .settings-group,
+html.safari .device-item {
+    transition: none !important;
+}
+html.safari .video-container,
+html.safari .video-container.video-active {
+    box-shadow: none !important;
 }
 
 /* ── Reduced Motion ────────────────────────────────────────────────────── */

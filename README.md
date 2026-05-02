@@ -228,7 +228,7 @@ The browse view uses three render modes for optimal performance:
 - **Page-1-only auto-refresh** — the 90-second timer re-fetches only page 1 instead of all loaded pages, keeping API usage minimal
 - **Mid-cycle viewer refresh** — at the 60-second mark, batch viewer counts are fetched and animated in-place with eased counting transitions
 - **Server-side stale-while-revalidate** — each featured page is cached with a short fresh TTL and a longer stale TTL; stale responses are served instantly while a single background refresh runs
-- **Mini-player HLS handoff** — when navigating away from a live channel, the HLS.js instance is transferred (detach + attach) into a persistent mini-player bar instead of being destroyed and recreated
+- **Shared-video mini-player handoff** — when navigating away from a live channel, the same persistent `<video>` element is moved into the mini-player instead of recreating playback
 - **Observer self-re-triggering** — if the scroll sentinel is still visible after a page loads, the next page loads immediately without waiting for the IntersectionObserver frame delay
 
 ### Theme System

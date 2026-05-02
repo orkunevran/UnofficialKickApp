@@ -4,16 +4,26 @@
  */
 
 const STORAGE_KEY = 'kick-api-favorites';
+let cachedFavorites = null;
+let cachedFavoriteSet = null;
+
+function syncCache(favorites) {
+    cachedFavorites = Array.isArray(favorites) ? favorites : [];
+    cachedFavoriteSet = new Set(cachedFavorites.map(f => f?.slug).filter(Boolean));
+    return cachedFavorites;
+}
 
 function load() {
+    if (cachedFavorites) return cachedFavorites;
     try {
-        return JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
+        return syncCache(JSON.parse(localStorage.getItem(STORAGE_KEY)) || []);
     } catch {
-        return [];
+        return syncCache([]);
     }
 }
 
 function save(favorites) {
+    syncCache(favorites);
     try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(favorites));
     } catch {
@@ -23,7 +33,7 @@ function save(favorites) {
 }
 
 export function getFavorites() {
-    return load();
+    return [...load()];
 }
 
 export function getFavoriteCount() {
@@ -31,7 +41,7 @@ export function getFavoriteCount() {
 }
 
 export function isFavorite(slug) {
-    return load().some(f => f.slug === slug);
+    return cachedFavoriteSet ? cachedFavoriteSet.has(slug) : load().some(f => f.slug === slug);
 }
 
 export function addFavorite(slug, username, profilePicture = null) {
@@ -59,3 +69,12 @@ export function toggleFavorite(slug, username, profilePicture = null) {
 export function clearFavorites() {
     save([]);
 }
+
+window.addEventListener('storage', (event) => {
+    if (event.key !== STORAGE_KEY) return;
+    try {
+        syncCache(event.newValue ? JSON.parse(event.newValue) : []);
+    } catch {
+        syncCache([]);
+    }
+});

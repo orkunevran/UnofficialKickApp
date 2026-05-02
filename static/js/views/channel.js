@@ -1,81 +1,61 @@
 /**
  * Channel view — profile + tabs (Stream / VODs / Clips).
+ *
+ * Uses the unified shared-player API: the same <video> element is moved
+ * between the channel slot, the mini-player, and a hidden parking layer
+ * so playback survives route changes without a reload.
  */
 
 import { fetchChannelData, fetchLiveStatus, fetchViewerCount } from '../api.js';
-import { renderChannelProfile, renderStreamTabContent, renderProfileSkeleton, renderVodGrid, renderClipGrid } from '../ui.js';
-import { appState } from '../state.js';
+import { renderChannelProfile, renderStreamTabContent, renderProfileSkeleton, renderVodGrid, renderClipGrid, renderVodPlayerContent, renderClipPlayerContent } from '../ui.js';
+import { appState, preferences } from '../state.js';
 import { addToHistory } from '../history.js';
 import { toast } from '../toast.js';
 import { escapeHtml, debounce } from '../utils.js';
 import { navigate } from '../router.js';
-import { startMiniPlayer, getCurrentStream, stopMiniPlayer, reclaimHls, hideMiniPlayer } from '../player.js';
+import {
+    getCurrentStream, getCachedChannelData, getHlsInstance,
+    loadStream, setMode, cacheChannelData, stopStream,
+} from '../player.js';
 
 let viewerRefreshTimer = null;
-let hlsInstance = null;
 
-function initVideoPlayer(playbackUrl, channelSlug) {
-    const video = document.getElementById('liveVideoPlayer');
-    if (!video || !playbackUrl) return;
+function initVideoPlayer(playbackUrl, channelSlug, liveData) {
+    const slot = document.getElementById('video-slot');
+    if (!slot || !playbackUrl) return;
 
-    if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
-
-    // If the mini player is active, handle the handoff
     const miniStream = getCurrentStream();
-    if (miniStream) {
-        if (miniStream.slug === channelSlug) {
-            // Same channel — reclaim the HLS instance for seamless playback
-            const reclaimed = reclaimHls();
-            if (reclaimed) {
-                hlsInstance = reclaimed;
-                hlsInstance.attachMedia(video);
-                video.muted = false;
-                // Hide mini player once the main video renders its first frame
-                const onReady = () => {
-                    hideMiniPlayer();
-                    video.removeEventListener('playing', onReady);
-                };
-                video.addEventListener('playing', onReady);
-                video.play().catch(() => { hideMiniPlayer(); });
-                renderQualityPicker(hlsInstance);
-                _initPipButton(video);
-                return;
-            }
-        }
-        // Different channel or reclaim failed — stop mini player
-        stopMiniPlayer();
+
+    if (miniStream?.slug === channelSlug) {
+        // Same channel — just project the already-playing video to full size.
+        // HLS stays attached.  Zero interruption.
+        setMode('full', slot, { animate: true });
+        _renderQualityPicker(getHlsInstance());
+        _initPipButton();
+        return;
     }
 
-    // Fresh HLS load (no mini player was active, or reclaim failed)
-    if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        video.src = playbackUrl;
-        video.play().catch(() => {});
-        video.closest('.video-container')?.classList.add('video-active');
-    } else if (window.Hls && window.Hls.isSupported()) {
-        hlsInstance = new window.Hls({
-            lowLatencyMode: true,
-            liveSyncDurationCount: 3,
-            liveMaxLatencyDurationCount: 6,
-            maxBufferLength: 10,
-            maxMaxBufferLength: 20,
-            liveDurationInfinity: true,
-            backBufferLength: 15,
-        });
-        hlsInstance.loadSource(playbackUrl);
-        hlsInstance.attachMedia(video);
-        hlsInstance.on(window.Hls.Events.MANIFEST_PARSED, () => {
-            video.play().catch(() => {});
-            video.closest('.video-container')?.classList.add('video-active');
-            renderQualityPicker(hlsInstance);
-        });
-    }
+    // Different channel or no active stream — stop any existing stream
+    if (miniStream) stopStream();
 
-    _initPipButton(video);
+    // Fresh load: start HLS on the shared video and project to full
+    const streamInfo = {
+        slug: channelSlug,
+        title: liveData?.data?.livestream_title || channelSlug,
+        channel: liveData?.data?.username || channelSlug,
+        playbackUrl,
+        thumbnailUrl: liveData?.data?.livestream_thumbnail_url || '',
+    };
+    loadStream(playbackUrl, streamInfo, liveData);
+    setMode('full', slot);
+    _renderQualityPicker(getHlsInstance());
+    _initPipButton();
 }
 
-function _initPipButton(video) {
+function _initPipButton() {
+    const video = document.getElementById('sharedVideo');
     const pipBtn = document.getElementById('pip-button');
-    if (pipBtn && document.pictureInPictureEnabled) {
+    if (pipBtn && video && document.pictureInPictureEnabled) {
         pipBtn.classList.remove('hidden');
         pipBtn.onclick = async () => {
             try {
@@ -89,16 +69,7 @@ function _initPipButton(video) {
     }
 }
 
-function destroyVideoPlayer() {
-    if (hlsInstance) { hlsInstance.destroy(); hlsInstance = null; }
-    const video = document.getElementById('liveVideoPlayer');
-    if (video) {
-        video.closest('.video-container')?.classList.remove('video-active');
-        video.pause(); video.src = ''; video.load();
-    }
-}
-
-function renderQualityPicker(hls) {
+function _renderQualityPicker(hls) {
     const container = document.getElementById('quality-picker');
     if (!container || !hls?.levels?.length) return;
 
@@ -107,8 +78,6 @@ function renderQualityPicker(hls) {
         label: l.height ? `${l.height}p` : `${Math.round(l.bitrate / 1000)}k`,
         height: l.height || 0,
     }));
-
-    // Sort highest first
     levels.sort((a, b) => b.height - a.height);
 
     container.innerHTML = `
@@ -131,6 +100,7 @@ function startViewerRefresh(livestreamId) {
     const MAX_FAILURES = 3;
 
     const refresh = async () => {
+        if (document.visibilityState !== 'visible') return;
         const result = await fetchViewerCount(livestreamId);
         const el = document.getElementById('liveViewerCount');
         if (!el || String(el.dataset.livestreamId || '') !== String(livestreamId)) return;
@@ -151,14 +121,15 @@ function startViewerRefresh(livestreamId) {
             const prev = el.textContent;
             el.textContent = num.toLocaleString('en-US');
             el.dataset.lastKnownViewerCount = String(num);
-            if (el.textContent !== prev) {
+            const shouldAnimate = !document.documentElement.classList.contains('safari')
+                && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            if (shouldAnimate && el.textContent !== prev) {
                 el.classList.remove('viewer-updated');
                 requestAnimationFrame(() => {
                     requestAnimationFrame(() => el.classList.add('viewer-updated'));
                 });
             }
         } else if (num === 0) {
-            // Don't overwrite a known-good count with 0 — may be stale data
             const lastKnown = Number(el.dataset.lastKnownViewerCount);
             if (!Number.isFinite(lastKnown) || lastKnown === 0) {
                 el.textContent = '0';
@@ -181,14 +152,23 @@ function renderTabContent(tab, liveData, vodsData, clipsData, channelSlug) {
     const tabContent = document.getElementById('profile-tab-content');
     if (!tabContent) return;
 
-    // Re-trigger fade-in animation without forced reflow
-    tabContent.classList.remove('tab-fade-in');
-    requestAnimationFrame(() => tabContent.classList.add('tab-fade-in'));
+    const shouldAnimate = !document.documentElement.classList.contains('safari')
+        && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (shouldAnimate) {
+        tabContent.classList.remove('tab-fade-in');
+        requestAnimationFrame(() => tabContent.classList.add('tab-fade-in'));
+    }
 
     if (tab === 'stream') {
         tabContent.innerHTML = renderStreamTabContent(liveData?.data, channelSlug);
         if (liveData?.data?.status === 'live') {
-            initVideoPlayer(liveData.data.playback_url, channelSlug);
+            // On mobile, move video to top-of-page anchor for video-first UX
+            if (window.innerWidth < 768) {
+                const anchor = document.getElementById('mobile-video-anchor');
+                const videoEl = document.getElementById('video-slot');
+                if (anchor && videoEl) anchor.appendChild(videoEl);
+            }
+            initVideoPlayer(liveData.data.playback_url, channelSlug, liveData);
         }
     } else if (tab === 'vods') {
         if (!vodsData) {
@@ -198,23 +178,70 @@ function renderTabContent(tab, liveData, vodsData, clipsData, channelSlug) {
         const vods = vodsData?.data?.vods || [];
         appState.vods = vods;
 
-        const searchHTML = `
-            <div style="max-width:400px;margin:0 auto 20px">
-                <input type="text" id="vodSearchInput" placeholder="Search VOD titles..." class="search-input" style="padding-left:12px" maxlength="200">
-            </div>`;
-
-        tabContent.innerHTML = searchHTML + renderVodGrid(vods, channelSlug);
-
-        const vodSearch = document.getElementById('vodSearchInput');
-        if (vodSearch) {
-            vodSearch.addEventListener('input', debounce((e) => {
-                const term = e.target.value.toLowerCase();
-                tabContent.querySelectorAll('.vod-card').forEach(card => {
-                    const title = card.dataset.title || '';
-                    card.style.display = (!term || title.includes(term)) ? '' : 'none';
-                });
-            }, 200));
+        if (tabContent._vodClickHandler) {
+            tabContent.removeEventListener('click', tabContent._vodClickHandler);
         }
+
+        const _renderVodList = () => {
+            const searchHTML = `
+                <div style="max-width:400px;margin:0 auto 20px">
+                    <input type="text" id="vodSearchInput" placeholder="Search VOD titles..." class="search-input" style="padding-left:12px" maxlength="200">
+                </div>`;
+            tabContent.innerHTML = searchHTML + renderVodGrid(vods, channelSlug);
+
+            const vodSearch = document.getElementById('vodSearchInput');
+            if (vodSearch) {
+                vodSearch.addEventListener('input', debounce((e) => {
+                    const term = e.target.value.toLowerCase();
+                    tabContent.querySelectorAll('.vod-card').forEach(card => {
+                        const title = card.dataset.title || '';
+                        card.style.display = (!term || title.includes(term)) ? '' : 'none';
+                    });
+                }, 200));
+            }
+
+            // Click delegation for inline VOD playback
+            tabContent._vodClickHandler = async (e) => {
+                // Ignore clicks on cast/external-link buttons
+                if (e.target.closest('.cast-button') || e.target.closest('a[target="_blank"]')) return;
+                const card = e.target.closest('[data-play-vod]');
+                if (!card) return;
+                e.preventDefault();
+
+                // Stop any existing stream
+                if (getCurrentStream()) stopStream();
+
+                // Show player UI
+                tabContent.innerHTML = renderVodPlayerContent(card);
+
+                // Cast and playback should use the absolute manifest URL.
+                // The proxy redirect route is still kept for "open in new tab".
+                const playbackUrl = card.dataset.playbackUrl || card.dataset.sourceUrl || '';
+
+                const slot = document.getElementById('video-slot');
+                if (!slot) return;
+
+                const streamInfo = {
+                    slug: channelSlug,
+                    title: card.dataset.vodTitle || 'VOD',
+                    channel: channelSlug,
+                    playbackUrl,
+                    thumbnailUrl: card.dataset.vodThumb || '',
+                    type: 'vod',
+                };
+                loadStream(playbackUrl, streamInfo, null);
+                setMode('full', slot);
+
+                // "Back to list" button
+                tabContent.querySelector('.vod-back-btn')?.addEventListener('click', () => {
+                    stopStream();
+                    _renderVodList();
+                });
+            };
+            tabContent.addEventListener('click', tabContent._vodClickHandler);
+        };
+        _renderVodList();
+
     } else if (tab === 'clips') {
         if (!clipsData) {
             tabContent.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;padding:40px;color:var(--text-muted)"><span class="inline-spinner is-active" style="margin-right:8px"></span>Loading clips…</div>';
@@ -223,23 +250,62 @@ function renderTabContent(tab, liveData, vodsData, clipsData, channelSlug) {
         const clips = clipsData?.data?.clips || [];
         appState.clips = clips;
 
-        const searchHTML = `
-            <div style="max-width:400px;margin:0 auto 20px">
-                <input type="text" id="clipSearchInput" placeholder="Search clip titles..." class="search-input" style="padding-left:12px" maxlength="200">
-            </div>`;
-
-        tabContent.innerHTML = searchHTML + renderClipGrid(clips);
-
-        const clipSearch = document.getElementById('clipSearchInput');
-        if (clipSearch) {
-            clipSearch.addEventListener('input', debounce((e) => {
-                const term = e.target.value.toLowerCase();
-                tabContent.querySelectorAll('.vod-card').forEach(card => {
-                    const title = card.dataset.title || '';
-                    card.style.display = (!term || title.includes(term)) ? '' : 'none';
-                });
-            }, 200));
+        if (tabContent._clipClickHandler) {
+            tabContent.removeEventListener('click', tabContent._clipClickHandler);
         }
+
+        const _renderClipList = () => {
+            const searchHTML = `
+                <div style="max-width:400px;margin:0 auto 20px">
+                    <input type="text" id="clipSearchInput" placeholder="Search clip titles..." class="search-input" style="padding-left:12px" maxlength="200">
+                </div>`;
+            tabContent.innerHTML = searchHTML + renderClipGrid(clips);
+
+            const clipSearch = document.getElementById('clipSearchInput');
+            if (clipSearch) {
+                clipSearch.addEventListener('input', debounce((e) => {
+                    const term = e.target.value.toLowerCase();
+                    tabContent.querySelectorAll('.vod-card').forEach(card => {
+                        const title = card.dataset.title || '';
+                        card.style.display = (!term || title.includes(term)) ? '' : 'none';
+                    });
+                }, 200));
+            }
+
+            // Click delegation for inline clip playback
+            tabContent._clipClickHandler = async (e) => {
+                if (e.target.closest('.cast-button') || e.target.closest('a[target="_blank"]')) return;
+                const card = e.target.closest('[data-play-clip]');
+                if (!card) return;
+                e.preventDefault();
+
+                if (getCurrentStream()) stopStream();
+
+                tabContent.innerHTML = renderClipPlayerContent(card);
+
+                const clipUrl = card.dataset.clipUrl;
+                const slot = document.getElementById('video-slot');
+                if (!slot) return;
+
+                const streamInfo = {
+                    slug: channelSlug,
+                    title: card.dataset.clipTitle || 'Clip',
+                    channel: channelSlug,
+                    playbackUrl: clipUrl,
+                    thumbnailUrl: card.dataset.clipThumb || '',
+                    type: 'clip',
+                };
+                loadStream(clipUrl, streamInfo, null);
+                setMode('full', slot);
+
+                tabContent.querySelector('.vod-back-btn')?.addEventListener('click', () => {
+                    stopStream();
+                    _renderClipList();
+                });
+            };
+            tabContent.addEventListener('click', tabContent._clipClickHandler);
+        };
+        _renderClipList();
     }
 }
 
@@ -250,65 +316,100 @@ export async function mount(params, contentEl) {
         return;
     }
 
-    // Set search input to channel name
     const searchInput = document.getElementById('channelSlugInput');
     if (searchInput) searchInput.value = channelSlug;
-
-    // Show skeleton
-    contentEl.innerHTML = renderProfileSkeleton();
 
     let liveData, vodsData = null, clipsData = null;
     let activeTab = 'stream';
 
-    // Phase 1: Fetch live status FIRST — render profile + start video immediately
-    try {
-        liveData = await fetchLiveStatus(channelSlug);
-        if (!liveData || liveData.status !== 'success') {
-            throw new Error(liveData?.message || 'Channel not found');
+    // ── Instant render path: if mini-player has this channel, use cached data ──
+    const miniStream = getCurrentStream();
+    const cachedData = (miniStream?.slug === channelSlug) ? getCachedChannelData() : null;
+
+    if (cachedData) {
+        liveData = cachedData;
+        const d = liveData?.data;
+
+        if (preferences.historyEnabled !== false) {
+            addToHistory({
+                slug: channelSlug,
+                username: d?.username || channelSlug,
+                title: d?.livestream_title || '',
+                type: 'stream',
+                thumbnailUrl: d?.livestream_thumbnail_url || d?.banner_image_url || '',
+                profilePicture: d?.profile_picture || '',
+            });
         }
-    } catch (err) {
-        console.error('Error fetching channel data:', err);
-        contentEl.innerHTML = `
-            <div class="empty-state">
-                <div class="empty-state-icon"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg></div>
-                <div class="empty-state-title">Channel not found</div>
-                <div class="empty-state-text">${escapeHtml(err.message)}</div>
-            </div>`;
-        toast(`Error loading ${channelSlug}`, 'error', {
-            action: { label: 'Retry', onClick: () => navigate(`/channel/${channelSlug}`) }
-        });
-        return;
+
+        contentEl.innerHTML = renderChannelProfile(
+            liveData?.status === 'success' ? liveData.data : null,
+            channelSlug,
+            { activeTab }
+        );
+        renderTabContent(activeTab, liveData, vodsData, clipsData, channelSlug);
+
+        if (d?.status === 'live') {
+            startViewerRefresh(d.livestream_id);
+        }
+
+        // Background refresh for freshness
+        fetchLiveStatus(channelSlug).then(fresh => {
+            if (fresh?.status === 'success') liveData = fresh;
+        }).catch(() => {});
+    } else {
+        // ── Normal path: skeleton → fetch → render ──
+        contentEl.innerHTML = renderProfileSkeleton();
+
+        try {
+            liveData = await fetchLiveStatus(channelSlug);
+            if (!liveData || liveData.status !== 'success') {
+                throw new Error(liveData?.message || 'Channel not found');
+            }
+        } catch (err) {
+            console.error('Error fetching channel data:', err);
+            contentEl.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-state-icon"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg></div>
+                    <div class="empty-state-title">Channel not found</div>
+                    <div class="empty-state-text">${escapeHtml(err.message)}</div>
+                </div>`;
+            toast(`Error loading ${channelSlug}`, 'error', {
+                action: { label: 'Retry', onClick: () => navigate(`/channel/${channelSlug}`) }
+            });
+            return;
+        }
+
+        const d = liveData?.data;
+
+        if (preferences.historyEnabled !== false) {
+            addToHistory({
+                slug: channelSlug,
+                username: d?.username || channelSlug,
+                title: d?.livestream_title || '',
+                type: 'stream',
+                thumbnailUrl: d?.livestream_thumbnail_url || d?.banner_image_url || '',
+                profilePicture: d?.profile_picture || '',
+            });
+        }
+
+        contentEl.innerHTML = renderChannelProfile(
+            liveData?.status === 'success' ? liveData.data : null,
+            channelSlug,
+            { activeTab }
+        );
+        renderTabContent(activeTab, liveData, vodsData, clipsData, channelSlug);
+
+        if (liveData?.data?.status === 'live') {
+            startViewerRefresh(liveData.data.livestream_id);
+        }
     }
 
-    // Add to history
     const d = liveData?.data;
-    addToHistory({
-        slug: channelSlug,
-        username: d?.username || channelSlug,
-        title: d?.livestream_title || '',
-        type: 'stream',
-        thumbnailUrl: d?.livestream_thumbnail_url || d?.banner_image_url || '',
-        profilePicture: d?.profile_picture || '',
-    });
 
-    // Render profile + stream tab immediately — video starts loading NOW
-    contentEl.innerHTML = renderChannelProfile(
-        liveData?.status === 'success' ? liveData.data : null,
-        channelSlug,
-        { activeTab }
-    );
-    renderTabContent(activeTab, liveData, vodsData, clipsData, channelSlug);
-
-    // Start viewer refresh if live
-    if (liveData?.data?.status === 'live') {
-        startViewerRefresh(liveData.data.livestream_id);
-    }
-
-    // Phase 2: Fetch vods + clips in background (non-blocking)
+    // Phase 2: Fetch vods + clips in background
     fetchChannelData(channelSlug).then(result => {
         vodsData = result.vodsData;
         clipsData = result.clipsData;
-        // If user already switched to vods/clips tab while waiting, re-render that tab
         if (activeTab === 'vods' || activeTab === 'clips') {
             renderTabContent(activeTab, liveData, vodsData, clipsData, channelSlug);
         }
@@ -321,8 +422,13 @@ export async function mount(params, contentEl) {
         const tabName = tab.dataset.tab;
         if (tabName === activeTab) return;
 
-        // Destroy video if leaving stream tab
-        if (activeTab === 'stream') destroyVideoPlayer();
+        // When leaving stream tab, switch video to hidden (but keep stream alive
+        // in case user switches back) — or to mini if navigating away entirely
+        if (activeTab === 'stream' && d?.status === 'live') {
+            // Just hide the video layer while staying on the channel page
+            // (don't stop the stream — user might switch back to stream tab)
+            setMode('hidden');
+        }
 
         activeTab = tabName;
         contentEl.querySelectorAll('.profile-tab').forEach(t => {
@@ -330,46 +436,25 @@ export async function mount(params, contentEl) {
             t.classList.toggle('active', isActive);
             t.setAttribute('aria-selected', String(isActive));
         });
-        // Update tabpanel's labelledby
         const tabPanel = document.getElementById('profile-tab-content');
         if (tabPanel) tabPanel.setAttribute('aria-labelledby', `tab-${tabName}`);
 
         renderTabContent(tabName, liveData, vodsData, clipsData, channelSlug);
-
-        // Restart video if coming back to stream tab
-        if (tabName === 'stream' && liveData?.data?.status === 'live') {
-            initVideoPlayer(liveData.data.playback_url, channelSlug);
-        }
     };
     const tabsEl = contentEl.querySelector('.profile-tabs');
     tabsEl?.addEventListener('click', onTabClick);
 
-    // Cleanup — transfer HLS to mini player if stream was live.
-    // Capture HLS ref in a getter so we read it at cleanup time, not mount time,
-    // but before View Transitions can clear the DOM.
+    // Cleanup — switch to mini mode (stream keeps playing)
     return () => {
-        // Grab HLS instance FIRST before anything can destroy it
-        const hls = hlsInstance;
-        const video = document.getElementById('liveVideoPlayer');
-        hlsInstance = null; // detach ownership from channel module
-
         stopViewerRefresh();
         tabsEl?.removeEventListener('click', onTabClick);
 
-        if (liveData?.data?.status === 'live') {
-            startMiniPlayer(
-                {
-                    slug: channelSlug,
-                    title: d?.livestream_title || d?.username || channelSlug,
-                    channel: d?.username || channelSlug,
-                    playbackUrl: d?.playback_url || '',
-                    thumbnailUrl: d?.livestream_thumbnail_url || '',
-                },
-                hls,
-                video,
-            );
-        } else {
-            if (hls) { hls.destroy(); }
+        if (d?.status === 'live' && getCurrentStream()) {
+            // Cache the channel data for instant re-render on return
+            cacheChannelData(liveData);
+            // Hand off to the collapsed mini-player — zero interruption.
+            setMode('mini', null, { animate: true, collapsePanel: true });
         }
+        // If not live or no stream, nothing to do — stream stays stopped
     };
 }

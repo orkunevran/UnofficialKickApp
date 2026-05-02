@@ -90,6 +90,7 @@ export function initializeChromecast() {
                 selectedDevice = parsed;
                 updateIcon('active');
                 document.body.classList.add('chromecast-active');
+                document.body.classList.remove('no-cast');
                 showQuickDisconnect(true);
                 const dcBtn = document.getElementById('disconnect-device-btn');
                 if (dcBtn) dcBtn.style.display = 'block';
@@ -115,10 +116,16 @@ async function silentFetchDevices() {
         const data = await fetchChromecastDevices(false);
         if (data.status === 'success' && Array.isArray(data.data?.devices)) {
             discoveredDevices = data.data.devices;
+            _updateCastVisibility();
         }
     } catch {
         // Silent — don't toast on background fetch failures
     }
+}
+
+/** Track "no devices selected/discovered" state for auxiliary Chromecast UI. */
+function _updateCastVisibility() {
+    document.body.classList.toggle('no-cast', discoveredDevices.length === 0 && !selectedDevice);
 }
 
 // ── Modal lifecycle ──────────────────────────────────────────────────────
@@ -271,6 +278,7 @@ function renderDeviceList(devices) {
     const list = document.getElementById('chromecast-device-list');
     if (!list) return;
     discoveredDevices = Array.isArray(devices) ? devices : [];
+    _updateCastVisibility();
     const showReconnect = shouldShowReconnect();
 
     let html = '';
@@ -363,6 +371,7 @@ async function selectDevice(device) {
 
             updateIcon('active');
             document.body.classList.add('chromecast-active');
+            document.body.classList.remove('no-cast');
             showQuickDisconnect(true);
             const dcBtn = document.getElementById('disconnect-device-btn');
             if (dcBtn) dcBtn.style.display = 'block';
@@ -422,6 +431,7 @@ async function disconnectDevice() {
     localStorage.removeItem('selectedChromecast');
     updateIcon('inactive');
     document.body.classList.remove('chromecast-active');
+    _updateCastVisibility();
     showQuickDisconnect(false);
     const dcBtn = document.getElementById('disconnect-device-btn');
     if (dcBtn) dcBtn.style.display = 'none';

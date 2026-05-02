@@ -5,16 +5,24 @@
 
 const STORAGE_KEY = 'kick-api-history';
 const MAX_ENTRIES = 50;
+let cachedHistory = null;
+
+function syncCache(history) {
+    cachedHistory = Array.isArray(history) ? history : [];
+    return cachedHistory;
+}
 
 function load() {
+    if (cachedHistory) return cachedHistory;
     try {
-        return JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
+        return syncCache(JSON.parse(localStorage.getItem(STORAGE_KEY)) || []);
     } catch {
-        return [];
+        return syncCache([]);
     }
 }
 
 function save(history) {
+    syncCache(history);
     try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(history));
     } catch {
@@ -58,3 +66,12 @@ export function clearHistory() {
 export function getHistoryCount() {
     return load().length;
 }
+
+window.addEventListener('storage', (event) => {
+    if (event.key !== STORAGE_KEY) return;
+    try {
+        syncCache(event.newValue ? JSON.parse(event.newValue) : []);
+    } catch {
+        syncCache([]);
+    }
+});

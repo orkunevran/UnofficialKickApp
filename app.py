@@ -155,6 +155,17 @@ async def lifespan(fastapi_app: FastAPI):
     logger.info("Starting Chromecast device scan during app startup.")
     chromecast_service.scan_for_devices_async(force=True)
 
+    # Warm Typesense key in background so first /streams/search request does not
+    # block while scraping Kick JS bundles for key refresh.
+    async def _warm_typesense_key():
+        started = asyncio.get_running_loop().time()
+        try:
+            await asyncio.to_thread(kick_api_client._get_typesense_key)  # noqa: SLF001 - intentional startup warm-up
+            elapsed = asyncio.get_running_loop().time() - started
+            logger.info("Typesense key warm-up completed in %.2fs.", elapsed)
+        except Exception:
+            logger.warning("Typesense key warm-up failed.", exc_info=True)
+
     # Periodic background scan keeps the device list fresh without user action
     async def _periodic_chromecast_scan():
         interval = Config.CHROMECAST_PERIODIC_SCAN_INTERVAL
@@ -183,13 +194,15 @@ async def lifespan(fastapi_app: FastAPI):
 
     scan_task = asyncio.create_task(_periodic_chromecast_scan())
     sweep_task = asyncio.create_task(_periodic_inflight_sweep())
+    typesense_warm_task = asyncio.create_task(_warm_typesense_key())
 
     yield
 
     scan_task.cancel()
     sweep_task.cancel()
+    typesense_warm_task.cancel()
     # Wait for tasks to acknowledge cancellation before proceeding
-    for task in (scan_task, sweep_task):
+    for task in (scan_task, sweep_task, typesense_warm_task):
         try:
             await task
         except asyncio.CancelledError:

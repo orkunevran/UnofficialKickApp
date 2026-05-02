@@ -3114,10 +3114,23 @@ a:focus-visible,
         height: var(--mini-player-thumb-height);
         border-radius: var(--mini-player-thumb-radius);
     }
-    /* Hide cast button and resize handle on mobile */
+    /* Hide the in-bar cast button on mobile (cast UI lives in the top bar). */
     #mini-player-cast { display: none; }
-    .mini-player-slider { display: none; }
-    .mini-player-expanded-video { display: none; }
+    /* Slider + expanded panel are enabled on mobile so users can resize the
+       mini-player video by dragging upward — the panel grows above the bar. */
+    .mini-player-slider {
+        height: clamp(40px, 5.5vh, 56px);
+        width: 24px;
+    }
+    .mini-player-slider::-webkit-slider-thumb {
+        width: 18px;
+        height: 18px;
+        margin-left: -7px;
+    }
+    .mini-player-slider::-moz-range-thumb {
+        width: 18px;
+        height: 18px;
+    }
     .stream-grid {
         grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
         gap: 10px;

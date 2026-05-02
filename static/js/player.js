@@ -41,7 +41,10 @@ function _isSafari() {
 }
 
 function _supportsExpandedMini() {
-    return window.innerWidth >= 768;
+    // Slider-driven resize is supported on every viewport. The mini-player
+    // expanded panel grows above the bar regardless of width — mobile users
+    // can drag the slider to resize the video without leaving the mini state.
+    return true;
 }
 
 function _moveVideoTo(container) {

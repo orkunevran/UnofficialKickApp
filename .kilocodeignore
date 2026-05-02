@@ -1,0 +1,14 @@
+# Keep AI context focused on source and tests
+.kilo/node_modules/
+.kilo/package.json
+.kilo/package-lock.json
+
+.kilocode/node_modules/
+.kilocode/package.json
+.kilocode/package-lock.json
+
+# Local runtime/cache noise
+__pycache__/
+.pytest_cache/
+venv/
+.venv/

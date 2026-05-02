@@ -44,6 +44,12 @@ Thumbs.db
 
 # Other
 node_modules/ # if you add npm packages later
+.kilo/node_modules/
+.kilocode/node_modules/
+.kilo/package.json
+.kilo/package-lock.json
+.kilocode/package.json
+.kilocode/package-lock.json
 
 # Home Assistant artifacts
 .ha_snapshots/

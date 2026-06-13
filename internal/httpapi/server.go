@@ -14,6 +14,7 @@ import (
 	"kickapi/internal/breaker"
 	"kickapi/internal/cache"
 	"kickapi/internal/config"
+	"kickapi/internal/kick"
 )
 
 // App holds the server dependencies and rendered assets.
@@ -23,6 +24,7 @@ type App struct {
 	cache         *cache.Cache
 	cbCritical    *breaker.Breaker
 	cbNonCritical *breaker.Breaker
+	kick          kickClient
 
 	staticFS  fs.FS
 	indexHTML string
@@ -45,12 +47,22 @@ func New(cfg *config.Config, log *slog.Logger, assets fs.FS) (*App, error) {
 		return nil, err
 	}
 
+	kickClient, err := kick.New(kick.Config{
+		BaseURL:           cfg.KickAPIBaseURL,
+		FeaturedURL:       cfg.KickFeaturedLivestreamsURL,
+		AllLivestreamsURL: cfg.KickAllLivestreamsURL,
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	return &App{
 		cfg:           cfg,
 		log:           log,
 		cache:         cache.New(cfg.CacheMaxSize, time.Duration(cfg.CacheDefaultTimeout)*time.Second),
 		cbCritical:    breaker.New(cfg.CircuitBreakerCriticalFailureThreshold, time.Duration(cfg.CircuitBreakerRecoverySeconds)*time.Second),
 		cbNonCritical: breaker.New(cfg.CircuitBreakerFailureThreshold, time.Duration(cfg.CircuitBreakerRecoverySeconds)*time.Second),
+		kick:          kickClient,
 		staticFS:      staticFS,
 		indexHTML:     renderIndex(string(tmpl), hashes),
 		startTime:     time.Now(),
@@ -71,6 +83,20 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /health", a.handleHealth)
 	mux.HandleFunc("GET /health/live", a.handleLiveness)
 	mux.HandleFunc("GET /metrics", a.handleMetrics)
+
+	// Stream / discovery endpoints (read-only; SWR + inflight dedup land in Phase 2).
+	mux.HandleFunc("GET /streams/play/{slug}", a.handlePlayStream)
+	mux.HandleFunc("GET /streams/go/{slug}", a.handleGoToLive)
+	mux.HandleFunc("GET /streams/m3u8/{file}", a.handlePlayM3U8)
+	mux.HandleFunc("GET /streams/avatar/{slug}", a.handleAvatar)
+	mux.HandleFunc("GET /streams/clips/{slug}", a.handleClips)
+	mux.HandleFunc("GET /streams/vods/{slug}", a.handleVODs)
+	mux.HandleFunc("GET /streams/vods/{slug}/{vodID}", a.handlePlayVOD)
+	mux.HandleFunc("GET /streams/featured-livestreams", a.handleFeatured)
+	mux.HandleFunc("GET /streams/search", a.handleSearch)
+	mux.HandleFunc("GET /streams/viewers", a.handleViewers)
+	mux.HandleFunc("GET /streams/viewers/batch", a.handleViewersBatch)
+
 	mux.Handle("GET /static/", a.cacheControl(http.StripPrefix("/static/", http.FileServerFS(a.staticFS))))
 
 	var handler http.Handler = mux

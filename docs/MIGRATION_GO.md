@@ -172,12 +172,20 @@ external risks (TLS, Chromecast) are isolated so a blocker can't strand the whol
   renderer). **Exit met:** `go vet` + `go build` clean; unit + handler tests green; live
   server verified (JSON shapes match the Python `/health` and `/metrics` contracts).
 
-- **Phase 1 — Kick client + the TLS blocker** (de-risk early)
-  `tls-client` integration, Typesense key scrape. Wire read-only endpoints:
-  `/streams/play`, `/streams/avatar`, `/streams/clips`, `/streams/vods*`,
-  `/streams/featured-livestreams`, `/streams/search`, `/streams/viewers*`.
-  **Exit:** live calls to Kick succeed from the Pi (not just locally — Cloudflare behavior
-  can differ by IP).
+- **Phase 1 — Kick client + the TLS blocker** ✅ **DONE (verified live)**
+  `internal/kick` on `bogdanfinn/tls-client` (Chrome_131 profile, coherent UA) + Typesense
+  key scrape with 24h cache/fallback. `internal/apierr` ports the upstream-status mapping;
+  `kickCall` (in `httpapi`) ports `_common.py` (breaker gating + upstream/lane counters +
+  error mapping). Wired read-only endpoints: `/streams/play`, `/go`, `/m3u8`, `/avatar`,
+  `/clips`, `/vods`, `/vods/{id}`, `/featured-livestreams`, `/search`, `/viewers`,
+  `/viewers/batch`. Offline route tests use a fake client via the `kickClient` interface seam.
+  **Exit met (from this Mac):** Cloudflare bypass confirmed — `featured` returned 14 live
+  items; `play`/`avatar`/`search`/`viewers`/`clips`/`vods`/`m3u8` all returned real data;
+  404→"channel not found" and invalid-slug→400 mapping correct; `/metrics` upstream
+  counter incremented. ⚠️ **Still must be re-confirmed from the Pi (192.168.1.3)** —
+  Cloudflare behavior can differ by source IP.
+  **Deferred to Phase 2:** SWR (stale+fresh keys), in-flight dedup, negative caching, and
+  the background-refresh limiter — Phase 1 uses simple single-key TTL caching per endpoint.
 
 - **Phase 2 — Caching semantics: SWR + inflight dedup + circuit-breaker lanes**
   `singleflight`, stale-while-revalidate, per-lane breakers, the m3u8/go redirect proxies.

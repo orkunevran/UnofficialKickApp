@@ -227,9 +227,27 @@ external risks (TLS, Chromecast) are isolated so a blocker can't strand the whol
   - Log throttle (`logging.ThrottledLogger` + `StateChangeLog` — ports
     `ThrottledErrorLog` / `StateChangeLog` from `services/log_throttle.py`)
 
-- **Phase 5 — Parity gate, load test, cutover**
-  Full parity run, Pi load/soak test, Docker multi-stage `linux/arm64` build, cutover with
-  rollback (versioned dirs already exist per `project_deployment`).
+- **Phase 5 — Parity gate, Docker build, cutover** ✅ **DONE (local; Pi soak pending)**
+  **Parity gate:** Go parity test suite (`internal/httpapi/parity_test.go`) mirrors
+  `tests/test_fastapi_parity.py` — same 20 route/contract assertions + 7 validation
+  error cases, all green under `-race`. Tests use in-process fakeKick + fakeChromecast
+  (no live network needed). Covers: play/live, play/offline, vods, vods/{id} redirect,
+  featured-livestreams (with pagination), go-to-live redirect, m3u8 proxy, clips, search,
+  avatar, viewers, viewers/batch, all chromecast routes (devices, status, last-device,
+  select, cast, stop), plus slug/query validation errors.
+  **Docker:** `Dockerfile.goserver` — `golang:1.24-bookworm` builder → distroless static
+  final; `CGO_ENABLED=0 GOOS=linux GOARCH=arm64`; self-contained binary with
+  `//go:embed static templates`. `docker-compose.yaml` updated: `kick-proxy` now builds
+  from `Dockerfile.goserver`; legacy Python service kept under `profiles: ["python"]`
+  on port 8082 for side-by-side comparison. Memory limit dropped 512 MB → 128 MB.
+  `cmd/server/main.go` gained a `-healthcheck` flag (GET /health/live, exit 0/1)
+  since distroless has no curl/wget.
+  ⚠️ **Still required before production cutover:**
+  1. `docker buildx build --platform linux/arm64 -f Dockerfile.goserver -t kick-api:go .`
+     on the Pi (or cross-compiled on Mac + `docker push`)
+  2. Pi soak test: `docker compose up -d kick-proxy` → hit live endpoints for ≥30 min,
+     watch /metrics upstream counters and circuit-breaker state
+  3. Cloudflare bypass re-confirm from the Pi's IP (Phase 1 was verified from Mac)
 
 ## 8. Testing & parity strategy
 

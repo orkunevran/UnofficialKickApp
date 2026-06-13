@@ -1,6 +1,9 @@
 services:
+  # ── Go service (current default) ─────────────────────────────────────────
   kick-proxy:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.goserver
     # network_mode: "host" is Linux-only; use port mapping for macOS compatibility
     # Uncomment network_mode and remove ports when deploying to Raspberry Pi
     # network_mode: "host"
@@ -36,11 +39,9 @@ services:
       CHROMECAST_SCAN_TIMEOUT: "5"
       CHROMECAST_SELECT_MAX_RETRIES: "2"
       CHROMECAST_SELECT_RETRY_DELAY: "2"
-      CHROMECAST_MAX_CONNECTION_FAILURES: "3"
       CHROMECAST_DEVICE_CACHE_SECONDS: "30"
-      CHROMECAST_STOP_WAIT_SECONDS: "2.0"
     healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8081/health/live')"]
+      test: ["CMD", "/kick-api", "-healthcheck"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -49,7 +50,25 @@ services:
       resources:
         limits:
           cpus: '1.0'
-          memory: 512M
-    # Optional: Mount the current directory for hot-reloading during development
-    # volumes:
-    #   - .:/home/appuser/app
+          memory: 128M
+
+  # ── Python service (legacy — keep until Go cutover is confirmed) ──────────
+  kick-proxy-python:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    profiles: ["python"]
+    ports:
+      - "8082:8081"
+    restart: always
+    environment:
+      DEBUG: "False"
+      PORT: "8081"
+      LOG_LEVEL: "INFO"
+      DEFAULT_LANGUAGE_CODE: "tr"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8081/health/live')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s

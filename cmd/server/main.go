@@ -20,6 +20,20 @@ import (
 )
 
 func main() {
+	// In the distroless Docker image there's no curl/wget, so the healthcheck
+	// calls the binary itself with -healthcheck. It makes a quick GET to the
+	// liveness endpoint and exits 0/1.
+	if len(os.Args) > 1 && os.Args[1] == "-healthcheck" {
+		port := os.Getenv("PORT")
+		if port == "" {
+			port = "8081"
+		}
+		resp, err := http.Get("http://localhost:" + port + "/health/live")
+		if err != nil || resp.StatusCode != http.StatusOK {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "fatal:", err)
 		os.Exit(1)

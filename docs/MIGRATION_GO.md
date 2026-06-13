@@ -1,0 +1,249 @@
+# Backend Migration Plan: Python (FastAPI) → Go
+
+> Status: **Proposal / not started.** This document is the agreed plan for porting the
+> backend from FastAPI to Go. The frontend (`static/`, `templates/`) is unaffected —
+> the Go service serves the same static assets and exposes the same HTTP contract.
+
+## 1. Why migrate
+
+This service is a stateless streaming proxy that runs on a Raspberry Pi (see
+`project_deployment`: `192.168.1.3:8081`). Go is a strong fit for that target:
+
+- **Single static binary**, cross-compiled to `linux/arm64` — no venv, no `pip`, no
+  Python runtime on the Pi.
+- **Lower idle memory** and faster cold start than uvicorn + the current 3 thread pools.
+- **Goroutines** map cleanly onto the existing async + thread-pool concurrency model.
+- The work is bounded: **~2,500 lines** of backend code, **no database**, in-memory cache only.
+
+**Non-goals:** no behavior changes, no new endpoints, no frontend rewrite. The HTTP
+contract (paths, query params, JSON envelope) is frozen and verified against the
+existing pytest parity suite (see §8).
+
+## 2. Current architecture (source of truth)
+
+| Layer | Python files | Notes |
+|-------|--------------|-------|
+| Entry / lifespan | `app.py`, `config.py` | FastAPI + uvicorn; pydantic-settings; 4 background tasks; gzip + CORS + custom middleware |
+| Routes | `api/routes/{channel,vods,featured,discovery,chromecast}.py`, `api/{health,metrics}.py` | ~20 endpoints, JSON envelope `{status, message, data}` |
+| Services | `services/{kick_api_service,chromecast_service,cache_service,circuit_breaker,log_throttle,transformers}.py` | external I/O + pure transforms |
+| Cross-cutting | `api/{cache,deps,errors,middleware,schemas}.py` | inflight dedup, DI, error mapping, correlation IDs |
+| Tests | `tests/` (14 files, 145 tests) | unit + FastAPI `TestClient` parity |
+
+### Endpoint inventory (the frozen contract)
+
+```
+GET  /                                         index.html
+GET  /config/languages                         languages + default
+GET  /health, /health/live                     health / liveness
+GET  /metrics                                  cache + circuit-breaker + inflight + uptime
+GET  /streams/play/{slug}                      live stream + playback URL   (SWR + inflight dedup)
+GET  /streams/go/{slug}                         redirect to .m3u8 proxy
+GET  /streams/m3u8/{slug}.m3u8                  HLS master playlist proxy (CORS)
+GET  /streams/avatar/{slug}                     channel avatar
+GET  /streams/clips/{slug}                      channel clips
+GET  /streams/vods/{slug}                       VOD list
+GET  /streams/vods/{slug}/{vod_id}              redirect to fresh VOD source
+GET  /streams/featured-livestreams              paginated featured  (SWR)
+GET  /streams/search                            Typesense channel search
+GET  /streams/viewers, /streams/viewers/batch   viewer counts (batch ≤ 50)
+GET  /api/chromecast/devices                    list discovered devices
+POST /api/chromecast/{select,cast,stop}         device control
+GET  /api/chromecast/last-device                last-used device
+```
+
+## 3. Target Go architecture
+
+Recommended stack — bias toward **stdlib + a handful of focused libraries** to keep the
+Pi binary small and the dependency surface auditable.
+
+| Concern | Python today | Go target | Rationale |
+|---------|--------------|-----------|-----------|
+| HTTP server / router | FastAPI + uvicorn | **stdlib `net/http`** with Go 1.22+ `ServeMux` (`GET /streams/play/{slug}`) | Routing now supports method + path wildcards; no framework needed. `chi` is the fallback if richer middleware ergonomics are wanted. |
+| Config | pydantic-settings | **`caarlos0/env/v11`** + `joho/godotenv` | Struct-tag env binding mirrors `BaseSettings`. |
+| Kick HTTP client | `curl_cffi` (TLS spoof) | **`bogdanfinn/tls-client`** | See §4 — the critical blocker. |
+| Typesense search | `requests` | stdlib `net/http` | Typesense cluster is not behind Cloudflare; no spoofing needed. |
+| Chromecast | `pychromecast` + `zeroconf` | **`vishen/go-chromecast`** (`cast`, `application`, `dns`) | See §5 — the second blocker. |
+| Templating | Jinja2 | stdlib **`html/template`** | One endpoint (`/`). |
+| Cache | `cache_service.InMemoryCache` | `map` + `sync.RWMutex` + `time.Time` | Direct port, zero deps. |
+| Circuit breaker | `circuit_breaker.CircuitBreaker` | port the state machine; or `sony/gobreaker` | Pure logic; in-house port keeps per-lane metrics identical. |
+| Inflight dedup / SWR | `asyncio.Event` + semaphores | `golang.org/x/sync/singleflight` + buffered-channel semaphore | `singleflight` *is* the thundering-herd primitive. |
+| Gzip | `GZipMiddleware` | `klauspost/compress/gzhttp` (or stdlib) | gzhttp also negotiates brotli. |
+| Logging | stdlib logging + JSON formatter | stdlib **`log/slog`** (`slog.JSONHandler`) | Native structured + JSON; correlation ID via `context`. |
+| Metrics | hand-rolled `/metrics` | same hand-rolled JSON | No Prometheus dependency, matches today. |
+
+### Proposed layout
+
+```
+cmd/server/main.go          # wire config, deps, router, lifespan, graceful shutdown
+internal/config/            # env binding (caarlos0/env)
+internal/httpapi/           # handlers (one file per current route module) + middleware + router
+internal/kick/              # KickClient (tls-client), Typesense key mgmt
+internal/chromecast/        # discovery + control wrapper over vishen/go-chromecast
+internal/cache/             # InMemoryCache + singleflight inflight + SWR helpers
+internal/breaker/           # circuit breaker (critical / non-critical lanes)
+internal/transform/         # pure transformers (channel profile, vod, clip, featured)
+internal/logging/           # slog setup + repeat-suppressing throttle
+web/                        # embed static/ + templates/ via //go:embed
+go.mod
+```
+
+## 4. Blocker #1 — TLS fingerprinting (curl_cffi)
+
+**Problem.** Kick.com sits behind Cloudflare, which fingerprints the TLS ClientHello.
+`curl_cffi` impersonates Chrome so requests aren't blocked. A naïve Go `net/http` client
+has a Go-specific fingerprint and **will be challenged/blocked**.
+
+**Solution.** [`bogdanfinn/tls-client`](https://pkg.go.dev/github.com/bogdanfinn/tls-client) —
+built on `utls` + `fhttp`, ships browser impersonation profiles (Chrome/Firefox/Safari).
+Wrap it behind a small interface so the rest of the code is agnostic:
+
+```go
+type Doer interface { Do(*http.Request) (*http.Response, error) }
+// kickClient holds a tls_client.HttpClient configured with
+// profiles.Chrome_120 (match the Chrome version curl_cffi impersonates today).
+```
+
+**2026 risk to budget for.** Cloudflare now inspects **JA4+ and HTTP/2 frame coherence**,
+not just JA3 — shallow spoofing is weaker than it was. `tls-client` mitigates this because
+it bundles `fhttp` (correct HTTP/2 SETTINGS + frame ordering), but the impersonation
+profile must stay current with the Chrome version. **De-risk this in Phase 1, before
+committing to the rest of the port** — if a profile gets blocked, fallbacks are:
+1. Bump/rotate the impersonation profile (cheap).
+2. `juzeon/spoofed-round-tripper` as a drop-in `http.RoundTripper`.
+3. Last resort: shell out to `curl-impersonate` binary (keeps the Pi dependency-light-ish).
+
+**Typesense key scraping** (`kick_api_service` scrapes Kick's JS bundles for the search
+API key) ports directly: same regex against the bundle text, 24h cache, 401/403 → re-scrape,
+shared across the process behind a `sync.Mutex` + `sync.Once`-style refresh.
+
+## 5. Blocker #2 — Chromecast (pychromecast, 910 lines)
+
+**Problem.** `chromecast_service.py` is the largest, most stateful component: dual-path
+discovery (long-lived mDNS browser + a fallback ~1,500-probe TCP subnet scan), connection
+lifecycle with retries, persisted known-hosts, and per-operation thread pools.
+
+**Solution.** [`vishen/go-chromecast`](https://github.com/vishen/go-chromecast) is
+importable as a library (not just a CLI): `dns` (mDNS discovery), `cast`/`application`
+(connect, `LoadMedia`, play/pause/stop/seek/volume). It covers the **primary mDNS path
+and all device control**.
+
+**What `go-chromecast` does *not* give us → port by hand:**
+- The **fallback TCP subnet scan** (probe :8009 across configured subnets with a worker
+  pool). Straightforward in Go: `errgroup` + a semaphore over the subnet host list,
+  `net.DialTimeout` per host, fetch device info over TLS for responders.
+- **Known-host persistence** (`.kilo/chromecast_hosts.json`): same JSON file, `os` + `encoding/json`.
+- **Discovery/connection state machine** + reconnect backoff: reimplement with a
+  `sync.RWMutex`-guarded device registry (goroutines replace the per-op thread pools).
+
+**Risk:** medium-high — this is the largest behavioral surface and the hardest to unit-test
+without real devices. Mitigation: port it **last** (Phase 3), keep the existing
+`test_chromecast_service.py` scenarios as the spec, and gate cutover on a manual cast test
+against the real LAN devices.
+
+## 6. Concurrency translation
+
+| Python (asyncio) | Go |
+|------------------|-----|
+| `async def` handler | `http.HandlerFunc` (each request already its own goroutine) |
+| `await asyncio.to_thread(blocking)` | call directly — blocking I/O in a goroutine is fine |
+| `asyncio.Semaphore(4)` (non-critical / background limiters) | buffered channel `make(chan struct{}, 4)` or `x/sync/semaphore` |
+| `asyncio.Event` inflight dedup | `singleflight.Group.Do` (single fetch, others share result) |
+| SWR background refresh task | `go func(){ ... }()` guarded by the bg-refresh semaphore + claim flag |
+| `asyncio.create_task` background loops (scan/sweep/warm) | goroutines + `time.Ticker`, cancelled via a root `context.Context` |
+| per-request timeout | `context.WithTimeout` threaded into `http.Request` + client |
+| `contextvars` correlation ID | value on `context.Context`, read by the slog handler |
+| graceful shutdown (lifespan) | `signal.NotifyContext` → `http.Server.Shutdown(ctx)` → cancel bg ctx |
+
+The InflightTracker’s `sweep_stale()` (60s) becomes unnecessary — `singleflight` cleans up
+its own keys when the in-flight call returns.
+
+## 7. Phased sequence
+
+Each phase is independently shippable and testable. **Order is deliberate: hardest
+external risks (TLS, Chromecast) are isolated so a blocker can't strand the whole effort.**
+
+- **Phase 0 — Scaffold + pure logic** (lowest risk, no external deps)
+  `go.mod`, config binding, router skeleton, `//go:embed` static/templates, `/`, `/health`,
+  `/health/live`, `/config/languages`, `/metrics`. Port `cache`, `breaker`, `transform`,
+  `logging` + their unit tests. **Exit:** ported unit tests green.
+
+- **Phase 1 — Kick client + the TLS blocker** (de-risk early)
+  `tls-client` integration, Typesense key scrape. Wire read-only endpoints:
+  `/streams/play`, `/streams/avatar`, `/streams/clips`, `/streams/vods*`,
+  `/streams/featured-livestreams`, `/streams/search`, `/streams/viewers*`.
+  **Exit:** live calls to Kick succeed from the Pi (not just locally — Cloudflare behavior
+  can differ by IP).
+
+- **Phase 2 — Caching semantics: SWR + inflight dedup + circuit-breaker lanes**
+  `singleflight`, stale-while-revalidate, per-lane breakers, the m3u8/go redirect proxies.
+  **Exit:** parity suite (§8) green for all `/streams/*` non-chromecast endpoints.
+
+- **Phase 3 — Chromecast** (the second blocker, isolated)
+  `vishen/go-chromecast` + hand-ported fallback scan + host persistence + state machine.
+  **Exit:** manual cast/stop against real LAN devices; `chromecast` endpoint parity.
+
+- **Phase 4 — Middleware + ops polish**
+  correlation IDs, security headers, gzip/brotli, request logging, log throttling, JSON
+  log mode, immutable static cache-control with hash query param.
+
+- **Phase 5 — Parity gate, load test, cutover**
+  Full parity run, Pi load/soak test, Docker multi-stage `linux/arm64` build, cutover with
+  rollback (versioned dirs already exist per `project_deployment`).
+
+## 8. Testing & parity strategy
+
+The biggest de-risking lever: **reuse the existing Python parity suite as a black-box
+conformance harness against the Go server.**
+
+- `tests/test_fastapi_parity.py` drives the contract via HTTP. Add a mode that points its
+  client at the running Go server (env-selected base URL) so the *same* assertions validate
+  both implementations. Any divergence in JSON envelope, status codes, or pagination fails CI.
+- Optional during transition: a tiny **response-diffing reverse proxy** that fans each
+  request to both Python and Go and logs payload diffs — turns real traffic into a parity test.
+- Port the pure-unit tests (`cache`, `breaker`, `transform`, inflight) to Go `testing` +
+  `httptest`; these are 1:1 and cheap.
+- Chromecast: keep `test_chromecast_service.py` scenarios as the behavioral spec; cover the
+  fallback-scan and state-machine logic with Go unit tests using a fake dialer/discovery.
+
+## 9. Deployment
+
+- **Build:** multi-stage Dockerfile — `golang:1.2x` builder → `FROM scratch` or
+  `gcr.io/distroless/static` final. `CGO_ENABLED=0 GOOS=linux GOARCH=arm64`. Resulting
+  image is a few MB vs. the current Python image.
+- **Static assets:** `//go:embed static templates` so the binary is self-contained (no
+  volume mounts for assets).
+- **Compose:** the Pi `docker-compose.pi.yaml` overlay stays; just swap the service image.
+- **Rollback:** versioned directories on the Pi already provide this (per `project_deployment`).
+- **Config:** same env vars; `.env.example` carries over almost verbatim.
+
+## 10. Risk matrix
+
+| Component | Difficulty | Risk | Mitigation |
+|-----------|-----------|------|------------|
+| TLS fingerprinting | High | Cloudflare JA4+/HTTP2 coherence checks | `tls-client` + fhttp; profile rotation; `curl-impersonate` fallback. **Prove in Phase 1.** |
+| Chromecast discovery + control | High | No 1:1 lib for fallback scan / state machine | `go-chromecast` for mDNS+control; hand-port scan; manual device test gate |
+| SWR + inflight dedup | Medium | Subtle races vs. asyncio version | `singleflight` is the proven primitive; parity tests |
+| Background-task lifecycle | Medium | Goroutine leaks on shutdown | single root `context`, `errgroup`, `Server.Shutdown` |
+| Routes / schemas / envelope | Low | — | mechanical; frozen contract + parity suite |
+| Cache / breaker / transformers | Low | — | pure logic, direct port |
+| Templating / static / gzip | Low | — | stdlib |
+
+## 11. Open decisions (need your call before Phase 0)
+
+1. **Router:** stdlib `net/http` 1.22+ (recommended, fewest deps) vs. `chi`?
+2. **Cutover style:** strangler-fig (proxy splits traffic Python↔Go per endpoint) vs.
+   parallel rewrite then atomic swap once parity is green? (Parallel + parity gate is
+   simpler for a single-service home deployment.)
+3. **Repo strategy:** Go service in this repo (e.g. `/go/` or repo root with Python moved
+   to `/legacy/`) vs. a fresh repo? Affects CI and the parity harness wiring.
+4. **Scope of "later":** is the **fallback TCP subnet scan** still needed, or is mDNS-only
+   acceptable on the current LAN? Dropping it removes the hardest-to-test chunk of Phase 3.
+
+---
+
+### Source references
+- TLS in Go: <https://pkg.go.dev/github.com/bogdanfinn/tls-client>,
+  <https://github.com/juzeon/spoofed-round-tripper>
+- Chromecast in Go: <https://github.com/vishen/go-chromecast>,
+  <https://pkg.go.dev/github.com/vishen/go-chromecast/cast>
+- Thundering-herd dedup: <https://pkg.go.dev/golang.org/x/sync/singleflight>

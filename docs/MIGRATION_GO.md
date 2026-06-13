@@ -242,12 +242,21 @@ external risks (TLS, Chromecast) are isolated so a blocker can't strand the whol
   on port 8082 for side-by-side comparison. Memory limit dropped 512 MB → 128 MB.
   `cmd/server/main.go` gained a `-healthcheck` flag (GET /health/live, exit 0/1)
   since distroless has no curl/wget.
-  ⚠️ **Still required before production cutover:**
-  1. `docker buildx build --platform linux/arm64 -f Dockerfile.goserver -t kick-api:go .`
-     on the Pi (or cross-compiled on Mac + `docker push`)
-  2. Pi soak test: `docker compose up -d kick-proxy` → hit live endpoints for ≥30 min,
-     watch /metrics upstream counters and circuit-breaker state
-  3. Cloudflare bypass re-confirm from the Pi's IP (Phase 1 was verified from Mac)
+  **Local live validation (from Mac, 2026-06-13):**
+  - Cloudflare bypass confirmed: featured-livestreams returned real data (Old School
+    RuneScape, Odablock, …); viewer counts live (34 720, 49 215); M3U8 playlist proxied
+    successfully for a live stream (solomission); search returned 8 results; redirects,
+    health, and metrics all correct.
+  - arm64 binary cross-compiled: `CGO_ENABLED=0 GOOS=linux GOARCH=arm64` → 13 MB static
+    ELF (no libc dep), BuildID verified.
+  - Deploy script: `scripts/deploy-pi.sh` — builds arm64 binary, rsyncs to versioned
+    dir on Pi, smoke-tests on port 8082 (no clash with running Python container),
+    then cuts over via nohup with PID file. Rollback = kill PID + restart Python container.
+
+  ⚠️ **Still required (Pi was unreachable on 2026-06-13):**
+  1. Run `./scripts/deploy-pi.sh` when Pi (192.168.1.3) is back online
+  2. Pi soak: hit live endpoints for ≥30 min, watch /metrics counters and breaker state
+  3. Cloudflare bypass re-confirm from the Pi's IP (verified from Mac, may differ by IP)
 
 ## 8. Testing & parity strategy
 

@@ -1,13 +1,48 @@
 /**
  * Toast notification system. Stacks bottom-right, auto-dismisses.
+ *
+ * Resilience:
+ *  - MAX_VISIBLE caps the stack so a burst of errors can't push earlier
+ *    toasts off-screen out of view.
+ *  - Within DEDUPE_WINDOW_MS, an identical (type + message) toast bumps the
+ *    existing one's counter instead of stacking a duplicate.
  */
 
+const MAX_VISIBLE = 4;
+const DEDUPE_WINDOW_MS = 3000;
+
 let toastId = 0;
+const recentToasts = new Map(); // key -> { el, count, expiresAt }
+
+function dedupeKey(type, message) {
+    return `${type}::${message}`;
+}
 
 export function toast(message, type = 'info', options = {}) {
     const { duration = type === 'error' ? 8000 : 4000, action = null } = options;
     const container = document.getElementById('toast-container');
     if (!container) return;
+
+    // Dedupe: identical toast within the window → bump counter, don't restack.
+    const key = dedupeKey(type, message);
+    const now = Date.now();
+    const recent = recentToasts.get(key);
+    if (recent && now < recent.expiresAt && document.body.contains(recent.el)) {
+        recent.count++;
+        const counter = recent.el.querySelector('.toast-counter');
+        if (counter) {
+            counter.textContent = `×${recent.count}`;
+            counter.classList.remove('hidden');
+        }
+        recent.expiresAt = now + DEDUPE_WINDOW_MS;
+        return recent.el.dataset.toastId;
+    }
+
+    // Stack cap: dismiss oldest if at limit.
+    const live = container.querySelectorAll('.toast:not(.toast-exit)');
+    if (live.length >= MAX_VISIBLE) {
+        dismissToast(live[0]);
+    }
 
     const id = ++toastId;
     const el = document.createElement('div');
@@ -29,8 +64,12 @@ export function toast(message, type = 'info', options = {}) {
             <span class="toast-message">${escapeToast(message)}</span>
             ${action ? `<button class="toast-action">${escapeToast(action.label)}</button>` : ''}
         </div>
+        <span class="toast-counter hidden" aria-label="repeat count"></span>
         <button class="toast-close" aria-label="Dismiss">&times;</button>
     `;
+
+    // Register in dedupe map so an identical follow-up bumps this toast's count.
+    recentToasts.set(key, { el, count: 1, expiresAt: now + DEDUPE_WINDOW_MS });
 
     // Event handlers
     el.querySelector('.toast-close').addEventListener('click', () => dismissToast(el));
@@ -66,6 +105,10 @@ function dismissToast(el) {
     el.addEventListener('animationend', () => el.remove(), { once: true });
     // Fallback removal
     setTimeout(() => { if (el.parentNode) el.remove(); }, 400);
+    // Drop dedupe entries that point to this element.
+    for (const [key, entry] of recentToasts) {
+        if (entry.el === el) recentToasts.delete(key);
+    }
 }
 
 function escapeToast(str) {

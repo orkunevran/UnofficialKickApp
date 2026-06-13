@@ -42,5 +42,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8081/health/live')" || exit 1
 
 # Run a single ASGI worker so the Chromecast singleton stays in-process.
+# --no-access-log: RequestContextMiddleware already logs every request with
+# correlation ID and timing; uvicorn's parallel access log is duplicate noise.
 ENTRYPOINT ["dumb-init", "--"]
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8081", "--workers", "1"]
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8081", "--workers", "1", "--no-access-log"]

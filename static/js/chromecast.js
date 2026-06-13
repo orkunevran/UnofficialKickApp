@@ -6,7 +6,7 @@ import { toast } from './toast.js';
 import { castStream } from './chromecast_logic.js';
 import { escapeHtml } from './utils.js';
 import { preferences, updatePreference } from './state.js';
-import { fetchChromecastDevices, postChromecastSelect, postChromecastStop, fetchChromecastStatus } from './api.js';
+import { fetchChromecastDevices, postChromecastSelect, postChromecastStop, fetchChromecastStatus, postChromecastPlay, postChromecastPause, postChromecastVolume, postChromecastSeek } from './api.js';
 
 // ── SVG Icons ────────────────────────────────────────────────────────────
 
@@ -26,6 +26,8 @@ let pendingCastRequest = null;
 let chromecastListenersBound = false;
 let focusTrapHandler = null;
 let silentRefreshTimer = null;
+let isDevicePlaying = false;
+let isUserSeeking = false;
 
 // ── Init ─────────────────────────────────────────────────────────────────
 
@@ -51,6 +53,78 @@ export function initializeChromecast() {
 
     // Quick disconnect from header
     document.getElementById('chromecast-disconnect-quick')?.addEventListener('click', disconnectDevice);
+
+    // Remote control event handlers
+    const playPauseBtn = document.getElementById('cc-play-pause-btn');
+    const volumeSlider = document.getElementById('cc-volume-slider');
+
+    playPauseBtn?.addEventListener('click', handlePlayPauseToggle);
+
+    let volumeTimeout = null;
+    volumeSlider?.addEventListener('input', (e) => {
+        const value = parseInt(e.target.value, 10);
+        const percentEl = document.getElementById('cc-volume-percent');
+        if (percentEl) percentEl.textContent = `${value}%`;
+        
+        if (volumeTimeout) clearTimeout(volumeTimeout);
+        volumeTimeout = setTimeout(async () => {
+            try {
+                await postChromecastVolume(value / 100.0);
+            } catch {
+                toast('Failed to update volume', 'error');
+            }
+        }, 100);
+    });
+
+    const progressSlider = document.getElementById('cc-progress-slider');
+    const rewindBtn = document.getElementById('cc-rewind-btn');
+    const forwardBtn = document.getElementById('cc-forward-btn');
+
+    progressSlider?.addEventListener('input', (e) => {
+        isUserSeeking = true;
+        const value = parseFloat(e.target.value);
+        const currentEl = document.getElementById('cc-current-time');
+        if (currentEl) currentEl.textContent = formatTime(value);
+    });
+
+    progressSlider?.addEventListener('change', async (e) => {
+        const value = parseFloat(e.target.value);
+        try {
+            await postChromecastSeek(value);
+        } catch {
+            toast('Failed to seek', 'error');
+        }
+        isUserSeeking = false;
+    });
+
+    rewindBtn?.addEventListener('click', async () => {
+        const slider = document.getElementById('cc-progress-slider');
+        if (!slider) return;
+        const newPos = Math.max(0, parseFloat(slider.value) - 10);
+        slider.value = newPos;
+        const currentEl = document.getElementById('cc-current-time');
+        if (currentEl) currentEl.textContent = formatTime(newPos);
+        try {
+            await postChromecastSeek(newPos);
+        } catch {
+            toast('Failed to rewind', 'error');
+        }
+    });
+
+    forwardBtn?.addEventListener('click', async () => {
+        const slider = document.getElementById('cc-progress-slider');
+        if (!slider) return;
+        const maxTime = parseFloat(slider.max) || 0;
+        const newPos = Math.min(maxTime, parseFloat(slider.value) + 30);
+        slider.value = newPos;
+        const currentEl = document.getElementById('cc-current-time');
+        if (currentEl) currentEl.textContent = formatTime(newPos);
+        try {
+            await postChromecastSeek(newPos);
+        } catch {
+            toast('Failed to fast forward', 'error');
+        }
+    });
 
     // Device list click delegation
     document.getElementById('chromecast-device-list')?.addEventListener('click', handleDeviceListClick);
@@ -94,6 +168,7 @@ export function initializeChromecast() {
                 showQuickDisconnect(true);
                 const dcBtn = document.getElementById('disconnect-device-btn');
                 if (dcBtn) dcBtn.style.display = 'block';
+                updateRemoteControlVisibility();
                 startStatusPolling();
             } else {
                 localStorage.removeItem('selectedChromecast');
@@ -173,6 +248,8 @@ function closeModal() {
     modal.classList.remove('visible');
     setTimeout(() => { modal.style.display = 'none'; }, 200);
     if (scanPollTimer) { clearTimeout(scanPollTimer); scanPollTimer = null; }
+    isDiscovering = false;
+    setRescanState(false);
     pendingCastRequest = null;
     const hostInput = document.getElementById('chromecast-host-input');
     if (hostInput) hostInput.value = '';
@@ -375,6 +452,7 @@ async function selectDevice(device) {
             showQuickDisconnect(true);
             const dcBtn = document.getElementById('disconnect-device-btn');
             if (dcBtn) dcBtn.style.display = 'block';
+            updateRemoteControlVisibility();
 
             // Show inline success briefly, then close
             updateDeviceStatus(deviceEl, 'Connected', 'success');
@@ -435,6 +513,7 @@ async function disconnectDevice() {
     showQuickDisconnect(false);
     const dcBtn = document.getElementById('disconnect-device-btn');
     if (dcBtn) dcBtn.style.display = 'none';
+    updateRemoteControlVisibility();
     renderDeviceList(discoveredDevices);
     toast('Disconnected.', 'info');
     stopStatusPolling();
@@ -489,9 +568,56 @@ function handleStatusUpdate(data) {
         showQuickDisconnect(false);
         const dcBtn = document.getElementById('disconnect-device-btn');
         if (dcBtn) dcBtn.style.display = 'none';
+        updateRemoteControlVisibility();
         renderDeviceList(discoveredDevices);
         toast('Chromecast was disconnected.', 'info');
         stopStatusPolling();
+    } else if (castStatus === 'connected') {
+        const isPlaying = !!data.data?.is_playing;
+        isDevicePlaying = isPlaying;
+        updatePlayPauseUI(isPlaying);
+
+        const volumeSlider = document.getElementById('cc-volume-slider');
+        if (volumeSlider && document.activeElement !== volumeSlider) {
+            const volLevel = data.data?.volume_level;
+            if (typeof volLevel === 'number') {
+                const volPct = Math.round(volLevel * 100);
+                volumeSlider.value = volPct;
+                const pctEl = document.getElementById('cc-volume-percent');
+                if (pctEl) pctEl.textContent = `${volPct}%`;
+            }
+        }
+
+        // VOD Progress Update
+        const duration = data.data?.duration;
+        const currentTime = data.data?.current_time;
+        const progressRow = document.getElementById('cc-progress-row');
+        const rewindBtn = document.getElementById('cc-rewind-btn');
+        const forwardBtn = document.getElementById('cc-forward-btn');
+
+        if (typeof duration === 'number' && duration > 0) {
+            if (progressRow) progressRow.style.display = 'flex';
+            if (rewindBtn) rewindBtn.style.display = 'inline-flex';
+            if (forwardBtn) forwardBtn.style.display = 'inline-flex';
+
+            const progressSlider = document.getElementById('cc-progress-slider');
+            if (progressSlider && !isUserSeeking) {
+                progressSlider.max = duration;
+                progressSlider.value = currentTime || 0;
+                
+                const currentEl = document.getElementById('cc-current-time');
+                if (currentEl) currentEl.textContent = formatTime(currentTime || 0);
+                
+                const totalEl = document.getElementById('cc-total-time');
+                if (totalEl) totalEl.textContent = formatTime(duration);
+            }
+        } else {
+            if (progressRow) progressRow.style.display = 'none';
+            if (rewindBtn) rewindBtn.style.display = 'none';
+            if (forwardBtn) forwardBtn.style.display = 'none';
+        }
+
+        updateRemoteControlVisibility();
     }
 }
 
@@ -532,4 +658,65 @@ function updateIcon(status) {
         icon.src = '/static/icons/chromecast.svg';
         button.classList.remove('active');
     }
+}
+
+// ── Remote Controls Helpers ──────────────────────────────────────────────
+
+async function handlePlayPauseToggle() {
+    try {
+        if (isDevicePlaying) {
+            const res = await postChromecastPause();
+            if (res.status === 'success') {
+                isDevicePlaying = false;
+                updatePlayPauseUI(false);
+            } else {
+                toast(res.message || 'Failed to pause playback', 'error');
+            }
+        } else {
+            const res = await postChromecastPlay();
+            if (res.status === 'success') {
+                isDevicePlaying = true;
+                updatePlayPauseUI(true);
+            } else {
+                toast(res.message || 'Failed to resume playback', 'error');
+            }
+        }
+    } catch {
+        toast('Error toggling playback', 'error');
+    }
+}
+
+function updatePlayPauseUI(playing) {
+    const btn = document.getElementById('cc-play-pause-btn');
+    if (!btn) return;
+    const playIcon = btn.querySelector('.play-icon');
+    const pauseIcon = btn.querySelector('.pause-icon');
+    if (playing) {
+        if (playIcon) playIcon.style.display = 'none';
+        if (pauseIcon) pauseIcon.style.display = 'block';
+    } else {
+        if (playIcon) playIcon.style.display = 'block';
+        if (pauseIcon) pauseIcon.style.display = 'none';
+    }
+}
+
+function updateRemoteControlVisibility() {
+    const rc = document.getElementById('chromecast-remote-controls');
+    if (!rc) return;
+    if (selectedDevice) {
+        rc.style.display = 'flex';
+        const nameEl = document.getElementById('cc-status-device');
+        if (nameEl) nameEl.textContent = selectedDevice.name;
+    } else {
+        rc.style.display = 'none';
+    }
+}
+
+function formatTime(seconds) {
+    if (isNaN(seconds) || seconds === null) return '00:00:00';
+    const s = Math.floor(seconds % 60);
+    const m = Math.floor((seconds / 60) % 60);
+    const h = Math.floor(seconds / 3600);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${pad(h)}:${pad(m)}:${pad(s)}`;
 }

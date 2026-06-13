@@ -92,6 +92,7 @@ def test_private_network_scan_discovers_host_based_cast(monkeypatch):
         cast_type="cast",
     )
 
+    monkeypatch.setattr(service, "_detect_local_subnet", lambda: service._fallback_scan_networks)
     monkeypatch.setattr(service, "_probe_host_for_chromecast", lambda host: host == "192.168.1.2")
     monkeypatch.setattr(chromecast_module, "get_device_info", lambda host, timeout=3.0, context=None: device_status if host == "192.168.1.2" else None)
 
@@ -195,3 +196,69 @@ def test_shutdown_drains_background_scan():
 
     assert finished_event.is_set()
     assert elapsed < 2.0
+
+
+def test_chromecast_playback_controls():
+    service = ChromecastService()
+    fake_cast = FakeCast()
+    fake_cast.status = SimpleNamespace(volume_level=0.5)
+    
+    def fake_set_volume(level):
+        fake_cast.status.volume_level = level
+    fake_cast.set_volume = fake_set_volume
+
+    play_called = False
+    pause_called = False
+
+    def fake_play():
+        nonlocal play_called
+        play_called = True
+
+    def fake_pause():
+        nonlocal pause_called
+        pause_called = True
+
+    fake_cast.media_controller.play = fake_play
+    fake_cast.media_controller.pause = fake_pause
+
+    service.selected_cast = fake_cast
+    service.media_controller = fake_cast.media_controller
+
+    assert service.play_media() is True
+    assert play_called is True
+
+    assert service.pause_media() is True
+    assert pause_called is True
+
+    # Test volume
+    assert service.set_volume(0.8) is True
+    assert fake_cast.status.volume_level == 0.8
+
+    # Test clamping
+    assert service.set_volume(1.5) is True
+    assert fake_cast.status.volume_level == 1.0
+
+    assert service.set_volume(-0.5) is True
+    assert fake_cast.status.volume_level == 0.0
+
+    # Test seek
+    seek_pos = -1
+    def fake_seek(pos):
+        nonlocal seek_pos
+        seek_pos = pos
+    fake_cast.media_controller.seek = fake_seek
+
+    assert service.seek_media(45.5) is True
+    assert seek_pos == 45.5
+
+    # Test status payload duration/current_time updates
+    fake_cast.media_controller.status = SimpleNamespace(
+        player_is_playing=True,
+        duration=120.0,
+        adjusted_current_time=34.2
+    )
+    status = service.get_status()
+    assert status['duration'] == 120.0
+    assert status['current_time'] == 34.2
+
+    service.shutdown()

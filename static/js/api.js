@@ -240,3 +240,37 @@ export async function fetchChromecastStatus() {
     if (!response.ok) return null;
     return await response.json();
 }
+
+export async function postChromecastPlay() {
+    const response = await fetchWithTimeout('/api/chromecast/play', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+    });
+    return await response.json();
+}
+
+export async function postChromecastPause() {
+    const response = await fetchWithTimeout('/api/chromecast/pause', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+    });
+    return await response.json();
+}
+
+export async function postChromecastVolume(level) {
+    const response = await fetchWithTimeout('/api/chromecast/volume', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ level }),
+    });
+    return await response.json();
+}
+
+export async function postChromecastSeek(position) {
+    const response = await fetchWithTimeout('/api/chromecast/seek', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ position }),
+    });
+    return await response.json();
+}

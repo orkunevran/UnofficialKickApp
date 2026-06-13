@@ -8,11 +8,15 @@ __pycache__
 .env.*
 .DS_Store
 .claude
+.kilo
+.kilocode
 .devcontainer
 .vscode
+.pytest_cache
 *.md
 !requirements.txt
 tests
 static/art
+docs
 chromecast_test.py
 kick-api.code-workspace

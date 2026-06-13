@@ -1,0 +1,23 @@
+[Unit]
+Description=Start Nextcloud container after WireGuard address is ready
+After=network-online.target wg-quick@wg0.service docker.service
+Wants=network-online.target wg-quick@wg0.service
+Requires=docker.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+Environment=CONTAINER=nextcloud
+Environment=IFACE=wg0
+Environment=ADDR=10.0.0.2
+Environment=TIMEOUT=180
+Environment=DEPENDENCIES=nextcloud_db nextcloud_redis
+Environment=HEALTH_GRACE=90
+Environment=NETWORK=nextcloud_nextcloud_default
+ExecStart=/usr/local/sbin/pi-nextcloud-after-wg.sh
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

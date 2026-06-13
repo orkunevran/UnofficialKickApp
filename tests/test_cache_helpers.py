@@ -12,8 +12,6 @@ from api.cache import (
     cache_json_response,
     cached_value_to_response,
     extract_channel_data_from_live_cache,
-    extract_redirect_location,
-    extract_vods_from_cached_response,
     request_cache_key,
 )
 
@@ -94,73 +92,6 @@ class TestCachedValueToResponse:
         resp = cached_value_to_response(({"status": "error"}, 404))
         assert resp.status_code == 404
 
-
-class TestExtractVodsFromCachedResponse:
-    def test_none_returns_empty(self):
-        assert extract_vods_from_cached_response(None) == []
-
-    def test_normal_cached_response(self):
-        cached = ({"data": {"vods": [{"id": 1}, {"id": 2}]}}, 200)
-        assert extract_vods_from_cached_response(cached) == [{"id": 1}, {"id": 2}]
-
-    def test_non_tuple_cached_value(self):
-        cached = {"data": {"vods": [{"id": 1}]}}
-        assert extract_vods_from_cached_response(cached) == [{"id": 1}]
-
-    def test_missing_data_key(self):
-        cached = ({"other": "stuff"}, 200)
-        assert extract_vods_from_cached_response(cached) == []
-
-    def test_data_is_not_dict(self):
-        cached = ({"data": "not-a-dict"}, 200)
-        assert extract_vods_from_cached_response(cached) == []
-
-    def test_vods_is_not_list(self):
-        cached = ({"data": {"vods": "not-a-list"}}, 200)
-        assert extract_vods_from_cached_response(cached) == []
-
-    def test_payload_is_not_dict(self):
-        cached = ("raw-string", 200)
-        assert extract_vods_from_cached_response(cached) == []
-
-
-class TestExtractRedirectLocation:
-    def test_none_returns_none(self):
-        assert extract_redirect_location(None) is None
-
-    def test_string_returns_directly(self):
-        assert extract_redirect_location("https://cdn.example/stream.m3u8") == "https://cdn.example/stream.m3u8"
-
-    def test_tuple_with_string_payload(self):
-        assert extract_redirect_location(("https://cdn.example/vod.m3u8", 200)) is None
-        # String inside tuple doesn't have headers or dict keys
-
-    def test_tuple_with_dict_payload(self):
-        cached = ({"location": "https://cdn.example/redirect"}, 307)
-        assert extract_redirect_location(cached) == "https://cdn.example/redirect"
-
-    def test_dict_source_url(self):
-        assert extract_redirect_location({"source_url": "https://cdn.example/source"}) == "https://cdn.example/source"
-
-    def test_dict_playback_url(self):
-        assert extract_redirect_location({"playback_url": "https://cdn.example/play"}) == "https://cdn.example/play"
-
-    def test_dict_url(self):
-        assert extract_redirect_location({"url": "https://cdn.example/url"}) == "https://cdn.example/url"
-
-    def test_dict_priority_order(self):
-        """location > source_url > playback_url > url"""
-        cached = {"source_url": "src", "url": "url"}
-        assert extract_redirect_location(cached) == "src"
-
-    def test_response_like_object_with_headers(self):
-        resp = MagicMock()
-        resp.headers = {"location": "https://cdn.example/redirect"}
-        cached = (resp, 307)
-        assert extract_redirect_location(cached) == "https://cdn.example/redirect"
-
-    def test_no_match_returns_none(self):
-        assert extract_redirect_location({"unrelated": "data"}) is None
 
 
 class TestExtractChannelDataFromLiveCache:

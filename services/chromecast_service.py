@@ -5,7 +5,7 @@ import socket
 import ssl
 import threading
 import time
-import traceback
+from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pychromecast
@@ -14,6 +14,8 @@ from pychromecast.dial import get_device_info
 from pychromecast.discovery import CastBrowser, SimpleCastListener
 from pychromecast.models import CastInfo
 from pychromecast.socket_client import ConnectionStatus
+
+from services.log_throttle import ThrottledErrorLog
 
 # pychromecast API changed across versions:
 #   Python 3.11+ / newer pychromecast: HostServiceInfo(host, port) dataclass in models
@@ -27,7 +29,13 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+_scan_error_log = ThrottledErrorLog(summary_every=60)
+_cast_error_log = ThrottledErrorLog(summary_every=20)
+
 DEFAULT_FALLBACK_SCAN_SUBNETS = "192.168.0.0/24,192.168.1.0/24,192.168.2.0/24"
+# Cap the known-hosts cache so it cannot grow indefinitely on a network with
+# churning IPs (DHCP lease cycling, containers/VMs joining and leaving).
+_KNOWN_HOSTS_LIMIT = 128
 DEFAULT_FALLBACK_SCAN_WORKERS = 32
 DEFAULT_FALLBACK_SCAN_PROBE_TIMEOUT = 0.5
 DEFAULT_FALLBACK_DEVICE_INFO_TIMEOUT = 3.0
@@ -41,10 +49,13 @@ class ChromecastService:
         self._lock = threading.Lock()
         self._connection_failure_counts = {}
         self._registered_uuids = set()
-        self._known_chromecast_hosts = set()
+        # LRU-bounded ordered dict (insertion order); we periodically trim to
+        # _KNOWN_HOSTS_LIMIT entries — value is unused, only the key matters.
+        self._known_chromecast_hosts: "OrderedDict[str, None]" = OrderedDict()
         self._browser = None
         self._zc = None  # Long-lived: created once, reused across scans
         self._cast_listener = None
+        self._cast_objects = {}  # UUID string -> pychromecast.Chromecast
         self._last_scan_time = 0
         self._disconnect_in_progress = set()  # Guard against duplicate disconnect threads
 
@@ -72,6 +83,7 @@ class ChromecastService:
         self._fallback_device_info_timeout = DEFAULT_FALLBACK_DEVICE_INFO_TIMEOUT
         self._last_device_uuid = None   # Remembered across stop/disconnect for reconnect UX
         self._last_device_name = None
+        self._load_state()
 
     def configure(self, config):
         """Apply configuration from a mapping of application settings."""
@@ -95,6 +107,24 @@ class ChromecastService:
             DEFAULT_FALLBACK_DEVICE_INFO_TIMEOUT,
         )
         logger.info("ChromecastService configured with app settings.")
+
+    def _remember_chromecast_host(self, host: str) -> None:
+        """Add ``host`` to the known-hosts LRU, evicting oldest if over limit.
+
+        OrderedDict preserves insertion order; move_to_end refreshes recency
+        when a host is rediscovered. Eviction is O(1) amortised.
+        """
+        save_needed = False
+        with self._lock:
+            if host in self._known_chromecast_hosts:
+                self._known_chromecast_hosts.move_to_end(host)
+            else:
+                self._known_chromecast_hosts[host] = None
+                save_needed = True
+                while len(self._known_chromecast_hosts) > _KNOWN_HOSTS_LIMIT:
+                    self._known_chromecast_hosts.popitem(last=False)
+        if save_needed:
+            self._save_state()
 
     @staticmethod
     def _parse_fallback_scan_networks(raw_value):
@@ -146,11 +176,15 @@ class ChromecastService:
         return pychromecast.get_chromecast_from_cast_info(cast_info, self._zc)
 
     def _scan_private_networks_for_chromecasts(self):
-        if not self._fallback_scan_enabled or not self._fallback_scan_networks or self._zc is None:
+        if not self._fallback_scan_enabled or self._zc is None:
+            return []
+
+        networks = self._detect_local_subnet()
+        if not networks:
             return []
 
         candidate_hosts = []
-        for network in self._fallback_scan_networks:
+        for network in networks:
             candidate_hosts.extend(str(host) for host in network.hosts())
 
         if not candidate_hosts:
@@ -164,6 +198,8 @@ class ChromecastService:
 
         discovered_chromecasts = []
         seen_hosts = set()
+        probe_failures = 0
+        device_info_failures = 0
         with ThreadPoolExecutor(max_workers=self._fallback_scan_workers, thread_name_prefix="cc-netscan") as executor:
             futures = {executor.submit(self._probe_host_for_chromecast, host): host for host in candidate_hosts}
             for future in as_completed(futures):
@@ -175,8 +211,8 @@ class ChromecastService:
                 try:
                     if not future.result():
                         continue
-                except Exception as e:
-                    logger.debug("Chromecast probe failed for %s: %s", host, e)
+                except Exception:
+                    probe_failures += 1
                     continue
 
                 if host in seen_hosts:
@@ -190,19 +226,26 @@ class ChromecastService:
                     device_status = get_device_info(
                         host, timeout=self._fallback_device_info_timeout, context=ssl_ctx,
                     )
-                except Exception as e:
-                    logger.debug("Unable to fetch Chromecast status from %s: %s", host, e)
+                except Exception:
+                    device_info_failures += 1
                     continue
 
                 if not device_status or not getattr(device_status, "uuid", None):
                     continue
 
                 try:
-                    self._known_chromecast_hosts.add(host)
+                    self._remember_chromecast_host(host)
                     discovered_chromecasts.append(self._build_host_chromecast(host, device_status))
                 except Exception as e:
                     logger.warning("Failed to create Chromecast object for %s: %s", host, e)
 
+        if probe_failures or device_info_failures:
+            logger.debug(
+                "Fallback scan: %d probe failures, %d device-info failures across %d hosts.",
+                probe_failures,
+                device_info_failures,
+                len(candidate_hosts),
+            )
         return discovered_chromecasts
 
     def shutdown(self):
@@ -232,143 +275,201 @@ class ChromecastService:
             self._zc = None
 
         with self._lock:
-            if self.selected_cast:
+            for uuid, cast in list(self._cast_objects.items()):
                 try:
-                    self.selected_cast.disconnect()
+                    cast.disconnect()
                 except Exception:
                     pass
-                self.selected_cast = None
-                self.media_controller = None
+            self._cast_objects.clear()
+            self.chromecasts = []
+            self.selected_cast = None
+            self.media_controller = None
         logger.info("ChromecastService shutdown complete.")
 
 
 
-    def _do_scan(self, known_hosts=None):
-        """Internal blocking scan implementation.
-
-        Note: self._scanning is set to True by the CALLER (scan_for_devices_async
-        or scan_for_devices) before this method runs, to avoid a race where a
-        select request slips through before the executor thread starts.
-        """
-        # Clear the shutdown event so that _shutdown_event.wait() inside this run
-        # acts as a fresh interruptible sleep.  (If a previous shutdown cycle already
-        # set it and the service was restarted without recreating the instance, the
-        # event would remain set and the scan sleep would skip instantly.)
-        # Guard against a shutdown signal that arrived between executor.submit()
-        # and this thread actually starting — clear only if shutdown hasn't been requested.
-        if self._shutdown_event.is_set():
-            logger.info("Scan aborted: shutdown was requested before scan started.")
-            with self._lock:
-                self._scanning = False
-            return
-        self._shutdown_event.clear()
-        logger.info("Scanning for Chromecast devices...")
-        try:
-            # Stop previous browser and zeroconf completely.
-            # CastBrowser.stop_discovery() closes its zeroconf internally,
-            # so we can't share a zeroconf across scan cycles.
-            if self._browser:
-                try:
-                    self._browser.stop_discovery()
-                except Exception:
-                    pass
-                self._browser = None
-            if self._zc:
-                try:
-                    self._zc.close()
-                except Exception:
-                    pass
-                self._zc = None
-
-            # Fresh zeroconf + browser for each scan
+    def _init_discovery(self):
+        """Lazily initialize long-lived Zeroconf and CastBrowser for Chromecast discovery."""
+        with self._lock:
+            if self._zc is not None:
+                return
+            logger.info("Initializing long-lived Zeroconf and CastBrowser for Chromecast discovery...")
             self._zc = zeroconf.Zeroconf(interfaces=zeroconf.InterfaceChoice.Default)
-
-            discovered_casts = {}
-            class _Listener(SimpleCastListener):
-                def add_cast(self, uuid, service):
-                    discovered_casts[uuid] = service
-                def remove_cast(self, uuid, service, cast_info):
-                    pass
-                def update_cast(self, uuid, service):
-                    pass
-
-            self._cast_listener = _Listener()
             
-            merged_known_hosts = list(self._known_chromecast_hosts)
-            if known_hosts:
-                merged_known_hosts.extend(known_hosts)
-                
+            class ChromecastListener(SimpleCastListener):
+                def __init__(self, service_instance):
+                    self.service_instance = service_instance
+
+                def add_cast(self, uuid, service):
+                    logger.info("mDNS discovered Chromecast device: UUID %s", uuid)
+                    self.service_instance._rebuild_chromecasts_list()
+
+                def remove_cast(self, uuid, service, cast_info):
+                    logger.info("mDNS removed Chromecast device: UUID %s", uuid)
+                    self.service_instance._rebuild_chromecasts_list()
+
+                def update_cast(self, uuid, service):
+                    self.service_instance._rebuild_chromecasts_list()
+
+            self._cast_listener = ChromecastListener(self)
+            
+            merged_known_hosts = list(self._known_chromecast_hosts.keys())
             self._browser = CastBrowser(
                 self._cast_listener,
                 zeroconf_instance=self._zc,
                 known_hosts=merged_known_hosts,
             )
             self._browser.start_discovery()
-            # Use _shutdown_event.wait() instead of time.sleep() so shutdown()
-            # can interrupt the scan immediately rather than waiting the full timeout.
-            self._shutdown_event.wait(timeout=self._scan_timeout)
+
+    def _rebuild_chromecasts_list(self):
+        """Rebuilds self.chromecasts from self._browser.devices without recreating existing cast objects."""
+        if not self._browser:
+            return
+            
+        to_register = []
+        with self._lock:
+            new_chromecasts = []
+            mdns_devices = dict(self._browser.devices)
+            
+            for uuid, cast_info in mdns_devices.items():
+                device_uuid = str(uuid)
+                existing_cast = self._cast_objects.get(device_uuid)
+                if existing_cast:
+                    new_chromecasts.append(existing_cast)
+                else:
+                    try:
+                        cast = pychromecast.get_chromecast_from_cast_info(cast_info, self._zc)
+                        self._cast_objects[device_uuid] = cast
+                        new_chromecasts.append(cast)
+                        
+                        if device_uuid not in self._registered_uuids:
+                            to_register.append(cast)
+                            self._registered_uuids.add(device_uuid)
+                        if device_uuid not in self._connection_failure_counts:
+                            self._connection_failure_counts[device_uuid] = 0
+                    except Exception as e:
+                        logger.warning("Failed to create cast for UUID %s: %s", uuid, e)
+                        
+            # Keep fallback scanned devices or currently selected device even if not in mdns_devices
+            for device_uuid, cast in list(self._cast_objects.items()):
+                if device_uuid not in mdns_devices:
+                    sc = getattr(cast, "socket_client", None)
+                    is_active = sc and hasattr(sc, "is_alive") and sc.is_alive()
+                    is_selected = (self.selected_cast and str(self.selected_cast.uuid) == device_uuid)
+                    if is_active or is_selected:
+                        if cast not in new_chromecasts:
+                            new_chromecasts.append(cast)
+            
+            # Clean stale registered UUIDs
+            active_uuids = {str(cc.uuid) for cc in new_chromecasts}
+            selected_uuid = str(self.selected_cast.uuid) if self.selected_cast else None
+            
+            stale = self._registered_uuids - active_uuids
+            if selected_uuid:
+                stale.discard(selected_uuid)
+                
+            for stale_uuid in stale:
+                self._registered_uuids.discard(stale_uuid)
+                self._connection_failure_counts.pop(stale_uuid, None)
+                old_cast = self._cast_objects.pop(stale_uuid, None)
+                if old_cast:
+                    try:
+                        sc = getattr(old_cast, "socket_client", None)
+                        if sc and hasattr(sc, "_started") and sc._started.is_set():
+                            old_cast.disconnect(blocking=False)
+                    except Exception:
+                        pass
+                        
+            self.chromecasts = new_chromecasts
+            
+        # Register connection listeners outside the lock to prevent deadlocks
+        for cast in to_register:
+            try:
+                listener = ChromecastConnectionListener(self, cast)
+                cast.register_connection_listener(listener)
+            except Exception as e:
+                logger.error("Failed to register connection listener on %s: %s", cast.cast_info.friendly_name, e)
+
+    def _do_scan(self, known_hosts=None):
+        """Internal blocking scan implementation using long-lived Zeroconf and CastBrowser."""
+        if self._shutdown_event.is_set():
+            logger.info("Scan aborted: shutdown was requested before scan started.")
+            with self._lock:
+                self._scanning = False
+            return
+            
+        self._shutdown_event.clear()
+        logger.debug("Scanning for Chromecast devices...")
+        
+        try:
+            # Lazily initialize long-lived Zeroconf and browser
+            just_initialized = False
+            if self._zc is None:
+                self._init_discovery()
+                just_initialized = True
+                
+            # If known hosts provided, trigger discovery lookup
+            if known_hosts:
+                for host in known_hosts:
+                    self._remember_chromecast_host(host)
+                    if hasattr(self._browser, 'lookup_cast'):
+                        self._browser.lookup_cast(host)
+                    
+            for host in list(self._known_chromecast_hosts.keys()):
+                if hasattr(self._browser, 'lookup_cast'):
+                    self._browser.lookup_cast(host)
+                
+            # Wait for mDNS queries to resolve
+            wait_time = self._scan_timeout if just_initialized else 2.0
+            self._shutdown_event.wait(timeout=wait_time)
+            
             if self._shutdown_event.is_set():
                 logger.info("Scan aborted early due to shutdown signal.")
                 return
-
-            # Build fresh cast objects (bound to the new zeroconf instance)
-            discovered_chromecasts = []
-            for uuid, service in discovered_casts.items():
-                try:
-                    cast_info = self._browser.devices.get(uuid)
-                    if cast_info:
-                        cast = pychromecast.get_chromecast_from_cast_info(cast_info, self._zc)
-                        discovered_chromecasts.append(cast)
-                except Exception as e:
-                    logger.warning("Failed to create cast for UUID %s: %s", uuid, e)
-
-            if not discovered_chromecasts:
-                logger.info("No chromecasts discovered (even with known hosts). Running fallback scan...")
+                
+            # Fallback scan if no devices are found
+            with self._lock:
+                has_devices = len(self.chromecasts) > 0
+                
+            if not has_devices:
+                logger.info("No chromecasts discovered via mDNS. Running fallback network scan...")
                 fallback_chromecasts = self._scan_private_networks_for_chromecasts()
                 if fallback_chromecasts:
-                    discovered_chromecasts = fallback_chromecasts
-
+                    to_register = []
+                    with self._lock:
+                        for fc in fallback_chromecasts:
+                            device_uuid = str(fc.uuid)
+                            if device_uuid not in self._cast_objects:
+                                self._cast_objects[device_uuid] = fc
+                                if device_uuid not in self._registered_uuids:
+                                    to_register.append(fc)
+                                    self._registered_uuids.add(device_uuid)
+                                if device_uuid not in self._connection_failure_counts:
+                                    self._connection_failure_counts[device_uuid] = 0
+                            
+                            if self._cast_objects[device_uuid] not in self.chromecasts:
+                                self.chromecasts.append(self._cast_objects[device_uuid])
+                                
+                    # Register connection listeners outside the lock to prevent deadlock
+                    for cast in to_register:
+                        try:
+                            listener = ChromecastConnectionListener(self, cast)
+                            cast.register_connection_listener(listener)
+                        except Exception as e:
+                            logger.error("Failed to register connection listener on %s: %s", cast.cast_info.friendly_name, e)
+                            
             self._last_scan_time = time.time()
-
-            # Determine which casts need a new listener BEFORE acquiring the lock,
-            # then register them OUTSIDE the lock.
-            #
-            # BUG FIX: pychromecast fires the current connection status synchronously
-            # to every newly registered listener.  Our listener callback
-            # (_handle_connection_status) tries to acquire self._lock, so calling
-            # register_connection_listener while already holding self._lock would
-            # deadlock.  Collecting the list under the lock and registering outside
-            # it is the correct pattern.
-            to_register = []
-            with self._lock:
-                self.chromecasts = discovered_chromecasts
-                current_uuids = set()
-                for cast in self.chromecasts:
-                    device_uuid = str(cast.uuid)
-                    current_uuids.add(device_uuid)
-                    if device_uuid not in self._registered_uuids:
-                        to_register.append(cast)
-                        self._registered_uuids.add(device_uuid)
-                    if device_uuid not in self._connection_failure_counts:
-                        self._connection_failure_counts[device_uuid] = 0
-
-                # Clean stale UUIDs that disappeared from scan
-                stale = self._registered_uuids - current_uuids
-                self._registered_uuids -= stale
-
-            # Register connection listeners OUTSIDE the lock (see comment above)
-            for cast in to_register:
-                listener = ChromecastConnectionListener(self, cast)
-                cast.register_connection_listener(listener)
-
-            logger.info("Discovery scan finished. Found %s devices.", len(self.chromecasts))
-        except pychromecast.error.NoChromecastFoundError:
-            logger.info("No Chromecast devices found in this scan.")
-            self._last_scan_time = time.time()
-            with self._lock:
-                self.chromecasts = []
+            
+            # Log changes in count
+            current_count = len(self.chromecasts)
+            if current_count != getattr(self, "_last_logged_device_count", None):
+                logger.info("Discovery scan finished. Found %s devices.", current_count)
+                self._last_logged_device_count = current_count
+            else:
+                logger.debug("Discovery scan finished. Found %s devices.", current_count)
+                
         except Exception as e:
-            logger.error("An error occurred during Chromecast discovery: %s", e)
+            _scan_error_log.warn(logger, "Chromecast discovery error", e)
         finally:
             with self._lock:
                 self._scanning = False
@@ -391,7 +492,10 @@ class ChromecastService:
             # Set flag before submit so select_device_with_timeout sees it immediately.
             self._scanning = True
 
-        logger.info("Submitting background device scan...")
+        # Demoted to DEBUG: this fires every time the frontend polls
+        # /api/chromecast/devices past the cache TTL. The actual scan result
+        # is logged at INFO via "Discovery scan finished" when the count changes.
+        logger.debug("Submitting background device scan...")
         if known_hosts is None:
             self._scan_future = self._scan_executor.submit(self._do_scan)
         else:
@@ -427,6 +531,7 @@ class ChromecastService:
             try:
                 new_cast = pychromecast.get_chromecast_from_cast_info(cast.cast_info, self._zc)
                 with self._lock:
+                    self._cast_objects[str(cast.uuid)] = new_cast
                     try:
                         idx = self.chromecasts.index(cast)
                         self.chromecasts[idx] = new_cast
@@ -451,6 +556,7 @@ class ChromecastService:
                     # Remember last connected device so the frontend can offer a one-click reconnect
                     self._last_device_uuid = str(cast.uuid)
                     self._last_device_name = cast.cast_info.friendly_name
+                self._save_state()
                 logger.info("Successfully selected Chromecast device: %s", cast.cast_info.friendly_name)
                 return True
             except Exception as e:
@@ -532,10 +638,12 @@ class ChromecastService:
             return True
 
         except pychromecast.PyChromecastError as e:
-            logger.error("PyChromecast error during casting: %s", e)
+            _cast_error_log.warn(logger, "PyChromecast error during casting", e)
             return False
         except Exception as e:
-            logger.error("An unexpected error occurred during casting: %s\n%s", e, traceback.format_exc())
+            # No more raw traceback.format_exc() — a stuck cast device hitting
+            # this path repeatedly would otherwise dump 2-5 KB per attempt.
+            _cast_error_log.warn(logger, "Unexpected error during casting", e)
             return False
 
     def stop_cast(self, uuid=None):
@@ -564,7 +672,7 @@ class ChromecastService:
 
         # Null-safe media status check
         mc_status = mc.status if mc else None
-        if is_selected and mc and mc_status and mc_status.player_is_playing:
+        if is_selected and mc and mc_status and (mc_status.player_is_playing or mc_status.player_is_paused):
             logger.info("Stopping cast media playback...")
             # Run mc.stop() in a thread so we can cap it at 3s instead of
             # pychromecast's default 10s blocking timeout.
@@ -610,6 +718,7 @@ class ChromecastService:
                     del self._connection_failure_counts[device_uuid]
                 self._registered_uuids.discard(device_uuid)
                 self._disconnect_in_progress.discard(device_uuid)
+            self._save_state()
         return True
 
     def get_status(self):
@@ -622,10 +731,18 @@ class ChromecastService:
 
         # Null-safe status access
         mc_status = mc.status if mc else None
+        volume_level = selected.status.volume_level if selected.status else 1.0
+        
+        duration = mc_status.duration if mc_status else None
+        current_time = mc_status.adjusted_current_time if mc_status else None
+        
         return {
             'status': 'connected',
             'device_name': selected.cast_info.friendly_name,
-            'is_playing': mc_status.player_is_playing if mc_status else False
+            'is_playing': mc_status.player_is_playing if mc_status else False,
+            'volume_level': volume_level,
+            'duration': duration,
+            'current_time': current_time
         }
 
     def get_last_device(self):
@@ -675,6 +792,109 @@ class ChromecastService:
             logger.info("Chromecast %s (%s) reconnected successfully. Resetting failure count.", cast.cast_info.friendly_name, device_uuid)
             with self._lock:
                 self._connection_failure_counts[device_uuid] = 0
+
+    def _load_state(self):
+        import json
+        import os
+        cache_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".kick_chromecast_cache.json")
+        try:
+            if os.path.exists(cache_file):
+                with open(cache_file, "r") as f:
+                    state = json.load(f)
+                self._last_device_uuid = state.get("last_device_uuid")
+                self._last_device_name = state.get("last_device_name")
+                for host in state.get("known_chromecast_hosts", []):
+                    self._known_chromecast_hosts[host] = None
+                logger.info("Loaded Chromecast state cache: %s", state)
+        except Exception as e:
+            logger.warning("Failed to load Chromecast state cache: %s", e)
+
+    def _save_state(self):
+        import json
+        import os
+        cache_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".kick_chromecast_cache.json")
+        try:
+            state = {
+                "last_device_uuid": self._last_device_uuid,
+                "last_device_name": self._last_device_name,
+                "known_chromecast_hosts": list(self._known_chromecast_hosts.keys()),
+            }
+            with open(cache_file, "w") as f:
+                json.dump(state, f)
+            logger.debug("Saved Chromecast state cache.")
+        except Exception as e:
+            logger.warning("Failed to save Chromecast state cache: %s", e)
+
+    def _detect_local_subnet(self):
+        """Detect the local subnet dynamically based on the active routing interface.
+        
+        Returns a list of ipaddress.IPv4Network, falling back to the configured networks.
+        """
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            local_ip = s.getsockname()[0]
+            s.close()
+            # Extract prefix (e.g. 192.168.68.53 -> 192.168.68.0/24)
+            parts = local_ip.split(".")
+            net_str = f"{parts[0]}.{parts[1]}.{parts[2]}.0/24"
+            detected = [ipaddress.ip_network(net_str, strict=False)]
+            logger.info("Dynamically detected local Chromecast scan subnet: %s", net_str)
+            return detected
+        except Exception as e:
+            logger.debug("Failed to dynamically detect local subnet: %s, using defaults.", e)
+            return self._fallback_scan_networks
+
+    def pause_media(self) -> bool:
+        with self._lock:
+            mc = self.media_controller
+        if mc:
+            try:
+                mc.pause()
+                logger.info("Paused media playback.")
+                return True
+            except Exception as e:
+                logger.error("Failed to pause media: %s", e)
+        return False
+
+    def play_media(self) -> bool:
+        with self._lock:
+            mc = self.media_controller
+        if mc:
+            try:
+                mc.play()
+                logger.info("Resumed media playback.")
+                return True
+            except Exception as e:
+                logger.error("Failed to resume media: %s", e)
+        return False
+
+    def set_volume(self, level: float) -> bool:
+        """Set volume level (between 0.0 and 1.0)."""
+        with self._lock:
+            cast = self.selected_cast
+        if cast:
+            try:
+                clamped = max(0.0, min(1.0, float(level)))
+                cast.set_volume(clamped)
+                logger.info("Set volume to %s", clamped)
+                return True
+            except Exception as e:
+                logger.error("Failed to set volume: %s", e)
+        return False
+
+    def seek_media(self, position_seconds: float) -> bool:
+        """Seek media to a specific position in seconds."""
+        with self._lock:
+            mc = self.media_controller
+        if mc:
+            try:
+                logger.info("Seeking media to %s seconds", position_seconds)
+                mc.seek(position_seconds)
+                return True
+            except Exception as e:
+                logger.error("Failed to seek media: %s", e)
+        return False
 
 
 class ChromecastConnectionListener:

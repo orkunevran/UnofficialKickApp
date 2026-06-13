@@ -12,6 +12,10 @@
     <link rel="icon" href="{{ url_for('static', filename='Kick_logo.svg') }}">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <!-- Warm DNS+TLS for upstreams the backend will hit on first request -->
+    <link rel="preconnect" href="https://kick.com" crossorigin>
+    <link rel="preconnect" href="https://search.kick.com" crossorigin>
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Syne:wght@600;700;800&display=swap">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css', ) }}">
 </head>
@@ -76,6 +80,9 @@
                     <svg class="search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
                     <label for="channelSlugInput" class="sr-only">Search channels</label>
                     <input type="text" id="channelSlugInput" placeholder="Search channels..." maxlength="255" autocomplete="off" class="search-input" role="combobox" aria-expanded="false" aria-controls="searchSuggestions" aria-autocomplete="list" aria-haspopup="listbox">
+                    <button type="button" id="search-clear-btn" class="search-clear-btn" aria-label="Clear search" hidden>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
                     <kbd class="search-kbd">/</kbd>
                     <div id="searchSuggestions" class="search-suggestions" style="display:none;" role="listbox" aria-label="Search results"></div>
                 </div>
@@ -187,6 +194,46 @@
                 <button class="close-button" aria-label="Close">&times;</button>
             </div>
             <div id="chromecast-device-list" aria-live="polite"></div>
+            <!-- Chromecast Remote Controls -->
+            <div id="chromecast-remote-controls" style="display: none;" class="cc-remote-controls">
+                <div class="cc-status-row">
+                    <span class="cc-status-label">Now Casting:</span>
+                    <span id="cc-status-device" class="cc-status-device-name">None</span>
+                </div>
+                <div class="cc-playback-row">
+                    <button id="cc-rewind-btn" class="cc-control-btn cc-skip-btn" title="Rewind 10s" aria-label="Rewind 10 seconds" style="display: none;">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+                            <polyline points="3 3 3 8 8 8"/>
+                            <text x="12" y="15" font-size="7" font-weight="bold" text-anchor="middle" fill="currentColor" stroke="none">10</text>
+                        </svg>
+                    </button>
+                    <button id="cc-play-pause-btn" class="cc-control-btn" title="Play / Pause" aria-label="Play or Pause">
+                        <svg class="cc-control-icon play-icon" width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                        <svg class="cc-control-icon pause-icon" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" style="display:none"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                    </button>
+                    <button id="cc-forward-btn" class="cc-control-btn cc-skip-btn" title="Forward 30s" aria-label="Forward 30 seconds" style="display: none;">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M21 12a9 9 0 1 1-9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>
+                            <polyline points="21 3 21 8 16 8"/>
+                            <text x="12" y="15" font-size="7" font-weight="bold" text-anchor="middle" fill="currentColor" stroke="none">30</text>
+                        </svg>
+                    </button>
+                </div>
+                <div id="cc-progress-row" class="cc-progress-row" style="display: none;">
+                    <span id="cc-current-time" class="cc-time-label">00:00:00</span>
+                    <input type="range" id="cc-progress-slider" min="0" max="100" value="0" class="cc-progress-slider" aria-label="Media Position">
+                    <span id="cc-total-time" class="cc-time-label">00:00:00</span>
+                </div>
+                <div class="cc-volume-row">
+                    <svg class="cc-volume-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+                        <path d="M15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14"/>
+                    </svg>
+                    <input type="range" id="cc-volume-slider" min="0" max="100" value="50" class="cc-volume-slider" aria-label="Volume">
+                    <span id="cc-volume-percent" class="cc-volume-percent">50%</span>
+                </div>
+            </div>
             <div class="modal-actions">
                 <button id="rescan-devices-btn" class="btn-secondary">
                     <svg class="rescan-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>

@@ -207,6 +207,9 @@ function initSidebar() {
 function initSearch() {
     const input = document.getElementById('channelSlugInput');
     if (!input) return;
+    const clearBtn = document.getElementById('search-clear-btn');
+    const searchContainer = document.getElementById('search-container');
+    const sugg = document.getElementById('searchSuggestions');
 
     const REMOTE_SEARCH_DEBOUNCE_MS = 260;
     const REMOTE_SEARCH_MIN_CHARS = 4;
@@ -218,10 +221,46 @@ function initSearch() {
     let activeSearchController = null;
     const serverSearchCache = new Map();
 
+    const hideSuggestions = () => {
+        if (sugg) sugg.style.display = 'none';
+    };
+
+    const cancelActiveSearch = () => {
+        clearTimeout(remoteSearchDebounce);
+        remoteSearchDebounce = null;
+        if (activeSearchController) {
+            activeSearchController.abort();
+            activeSearchController = null;
+        }
+    };
+
+const syncClearButton = () => {
+    if (!clearBtn) return;
+    clearBtn.hidden = input.value.length === 0;
+};
+
+const syncClearVisibility = () => {
+    const hasQuery = input.value.length > 0;
+    clearBtn.classList.toggle('is-visible', hasQuery);
+    searchContainer.classList.toggle('has-query', hasQuery);
+};
+syncClearVisibility(); // Initialize state on load
+
+    const clearSearch = ({ focus = true } = {}) => {
+        searchSeqId++;
+        cancelActiveSearch();
+        input.value = '';
+        hideSuggestions();
+        input.setAttribute('aria-expanded', 'false');
+        input.removeAttribute('aria-activedescendant');
+        syncClearButton();
+        if (focus) input.focus();
+    };
+
     const onSelect = (slug) => {
         input.value = slug;
-        const sugg = document.getElementById('searchSuggestions');
-        if (sugg) sugg.style.display = 'none';
+        hideSuggestions();
+        syncClearButton();
         navigate(`/channel/${slug}`);
     };
 
@@ -267,7 +306,6 @@ function initSearch() {
     };
 
     // Sync aria-expanded on the combobox with suggestions visibility
-    const sugg = document.getElementById('searchSuggestions');
     if (sugg) {
         new MutationObserver(() => {
             const open = sugg.style.display !== 'none';
@@ -277,20 +315,17 @@ function initSearch() {
     }
 
     input.addEventListener('input', () => {
+        syncClearVisibility();
         const q = input.value.trim();
         const queryKey = q.toLowerCase();
         searchSeqId++;
         const mySeq = searchSeqId;
+        syncClearButton();
 
-        clearTimeout(remoteSearchDebounce);
-        if (activeSearchController) {
-            activeSearchController.abort();
-            activeSearchController = null;
-        }
+        cancelActiveSearch();
 
         if (q.length < 2) {
-            const sugg = document.getElementById('searchSuggestions');
-            if (sugg) sugg.style.display = 'none';
+            hideSuggestions();
             return;
         }
 
@@ -357,18 +392,34 @@ function initSearch() {
         }, REMOTE_SEARCH_DEBOUNCE_MS);
     });
 
+    if (clearBtn) {
+        clearBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            clearSearch({ focus: true });
+        });
+        syncClearButton();
+    }
+
     // Enter key → navigate to channel
     input.addEventListener('keydown', (e) => {
         if (handleSuggestionKeydown(e)) return;
         if (e.key === 'Escape') {
-            const sugg = document.getElementById('searchSuggestions');
-            if (sugg) sugg.style.display = 'none';
+            e.preventDefault();
+            e.stopPropagation();
+            if (sugg && sugg.style.display !== 'none') {
+                hideSuggestions();
+                return;
+            }
+            if (input.value.length > 0) {
+                clearSearch({ focus: true });
+                return;
+            }
             input.blur();
+            return;
         }
         if (e.key === 'Enter') {
-            const sugg = document.getElementById('searchSuggestions');
             if (sugg && sugg.style.display !== 'none') {
-                sugg.style.display = 'none';
+                hideSuggestions();
             }
             const slug = input.value.trim();
             if (slug) navigate(`/channel/${slug}`);
@@ -378,8 +429,7 @@ function initSearch() {
     // Hide suggestions on outside click
     document.addEventListener('click', (e) => {
         if (!e.target.closest('#search-container')) {
-            const sugg = document.getElementById('searchSuggestions');
-            if (sugg) sugg.style.display = 'none';
+            hideSuggestions();
         }
     });
 }

@@ -50,10 +50,8 @@ def test_lifespan_initializes_singletons_and_shuts_down(monkeypatch):
                 assert fastapi_app.state.chromecast_service is chromecast_service
                 assert fastapi_app.state.cache is cache
                 assert fastapi_app.state.inflight_tracker is inflight_tracker
-                assert isinstance(fastapi_app.state.circuit_breaker, CircuitBreaker)
                 assert isinstance(fastapi_app.state.circuit_breaker_critical, CircuitBreaker)
                 assert isinstance(fastapi_app.state.circuit_breaker_non_critical, CircuitBreaker)
-                assert fastapi_app.state.circuit_breaker is fastapi_app.state.circuit_breaker_critical
 
     asyncio.run(_exercise_app())
 

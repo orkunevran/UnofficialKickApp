@@ -7,9 +7,14 @@ services:
     ports:
       - "8081:8081"
     restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
     environment:
       # Application Settings
-      FLASK_DEBUG: "False" 
+      DEBUG: "False" 
       PORT: "8081"
       LOG_LEVEL: "INFO"
       DEFAULT_LANGUAGE_CODE: "tr"

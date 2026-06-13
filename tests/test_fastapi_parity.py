@@ -10,15 +10,15 @@ from services.kick_api_service import kick_api_client
 
 
 def _install_stubs(monkeypatch, sample_api_data):
-    def fake_get_channel_data(channel_slug, timeout=8):
+    async def fake_get_channel_data(channel_slug, timeout=8):
         if channel_slug == "offline-user":
             return copy.deepcopy(sample_api_data["offline_channel"])
         return copy.deepcopy(sample_api_data["live_channel"])
 
-    def fake_get_channel_videos(channel_slug, timeout=10):
+    async def fake_get_channel_videos(channel_slug, timeout=10):
         return copy.deepcopy(sample_api_data["vods"])
 
-    def fake_get_featured_livestreams(language="en", page=1, timeout=8):
+    async def fake_get_featured_livestreams(language="en", page=1, timeout=8):
         return {
             "data": [copy.deepcopy(sample_api_data["featured_stream"])],
             "current_page": page,
@@ -27,7 +27,7 @@ def _install_stubs(monkeypatch, sample_api_data):
             "prev_page_url": None if page <= 1 else "/prev",
         }
 
-    def fake_get_all_livestreams(
+    async def fake_get_all_livestreams(
         language="en",
         page=1,
         category="",
@@ -47,19 +47,35 @@ def _install_stubs(monkeypatch, sample_api_data):
             "prev_page_url": None,
         }
 
-    def fake_get_channel_clips(channel_slug, timeout=10):
+    async def fake_get_channel_clips(channel_slug, timeout=10):
         return copy.deepcopy(sample_api_data["clips"])
 
-    def fake_search_channels_typesense(query, timeout=8):
+    async def fake_search_channels_typesense(query, timeout=8):
         return copy.deepcopy(sample_api_data["search_results"])
 
-    def fake_get_viewer_count(livestream_id, timeout=5):
+    async def fake_get_viewer_count(livestream_id, timeout=5):
         return sample_api_data["viewer_count"]
 
-    def fake_get_viewer_counts_batch(livestream_ids, timeout=5):
+    async def fake_get_viewer_counts_batch(livestream_ids, timeout=5):
         return {lid: 100 + lid for lid in livestream_ids}
 
+    class FakeResponse:
+        def __init__(self, content, status_code=200):
+            self.content = content
+            self.status_code = status_code
+            self.text = content.decode("utf-8") if isinstance(content, bytes) else content
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise Exception("HTTP error")
+
+    async def fake_session_get(url, *args, **kwargs):
+        if "master.m3u8" in url:
+            return FakeResponse(b"#EXTM3U\n#EXT-X-VERSION:3\n...")
+        return FakeResponse(b"", 404)
+
     monkeypatch.setattr(kick_api_client, "get_channel_data", fake_get_channel_data)
+    monkeypatch.setattr(kick_api_client.session, "get", fake_session_get)
     monkeypatch.setattr(kick_api_client, "get_channel_videos", fake_get_channel_videos)
     monkeypatch.setattr(kick_api_client, "get_featured_livestreams", fake_get_featured_livestreams)
     monkeypatch.setattr(kick_api_client, "get_all_livestreams", fake_get_all_livestreams)
@@ -174,7 +190,7 @@ def _expected_response(method, path, params, json_body, sample_api_data):
             "data": {
                 **profile,
                 "status": "live",
-                "playback_url": channel_data["playback_url"],
+                "playback_url": "/streams/m3u8/live-user.m3u8",
                 "livestream_id": livestream["id"],
                 "livestream_thumbnail_url": livestream["thumbnail"]["src"],
                 "livestream_title": livestream["session_title"],
@@ -216,7 +232,10 @@ def _expected_response(method, path, params, json_body, sample_api_data):
         }
 
     if path == "/streams/go/live-user":
-        return {"location": "https://cdn.example/live-user/master.m3u8"}
+        return {"location": "/streams/m3u8/live-user.m3u8"}
+
+    if path == "/streams/m3u8/live-user.m3u8":
+        return "#EXTM3U\n#EXT-X-VERSION:3\n..."
 
     if path == "/streams/clips/live-user":
         return {
@@ -332,6 +351,7 @@ def patched_app(monkeypatch, sample_api_data):
         ("GET", "/streams/vods/live-user/42", None, None),
         ("GET", "/streams/featured-livestreams", {"language": "en", "page": "2"}, None),
         ("GET", "/streams/go/live-user", None, None),
+        ("GET", "/streams/m3u8/live-user.m3u8", None, None),
         ("GET", "/streams/clips/live-user", None, None),
         ("GET", "/streams/search", {"q": "kick"}, None),
         ("GET", "/streams/avatar/live-user", None, None),

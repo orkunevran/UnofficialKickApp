@@ -9,8 +9,15 @@ from typing import Optional
 import requests
 
 from api.errors import ApiError, requests_exception_to_api_error
+from services.log_throttle import StateChangeLog, ThrottledErrorLog
 
 logger = logging.getLogger(__name__)
+
+# Circuit-breaker rejections fire on EVERY request while the breaker is open.
+# Under a thundering-herd outage that's thousands of identical log lines per
+# minute. Log only when the breaker transitions open/closed for each lane.
+_cb_state_log = StateChangeLog()
+_upstream_error_log = ThrottledErrorLog(summary_every=100)
 
 _SLUG_RE = re.compile(r"^[a-zA-Z0-9_-]{1,255}$")
 SUBCATEGORY_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9 &.:_()\-]{0,99}$")
@@ -18,6 +25,12 @@ SUBCATEGORY_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9 &.:_()\-]{0,99}$")
 # ── Thread-safe upstream call counter (observability) ─────────────────────
 _upstream_call_count = 0
 _upstream_lock = threading.Lock()
+_CB_LANE_NAMES = ("critical", "non_critical", "other")
+_cb_lane_events: dict[str, dict[str, int]] = {
+    lane: {"rejections": 0, "failures": 0}
+    for lane in _CB_LANE_NAMES
+}
+_cb_lane_lock = threading.Lock()
 
 
 def get_upstream_call_count() -> int:
@@ -31,6 +44,17 @@ def _increment_upstream_count() -> int:
     with _upstream_lock:
         _upstream_call_count += 1
         return _upstream_call_count
+
+
+def _increment_cb_lane_event(lane: str, key: str) -> None:
+    lane = lane if lane in _CB_LANE_NAMES else "other"
+    with _cb_lane_lock:
+        _cb_lane_events[lane][key] += 1
+
+
+def get_circuit_breaker_lane_events() -> dict[str, dict[str, int]]:
+    with _cb_lane_lock:
+        return {lane: dict(events) for lane, events in _cb_lane_events.items()}
 
 
 def validate_slug(slug: Optional[str]) -> bool:
@@ -55,29 +79,35 @@ async def kick_call(
     by design (``CircuitBreaker`` uses its own internal lock).
     """
     if circuit_breaker is not None and not circuit_breaker.allow_request():
-        logger.warning(
-            "Circuit breaker lane=%s rejected request for %s.",
-            circuit_breaker_name,
-            safe_value,
-        )
+        _increment_cb_lane_event(circuit_breaker_name, "rejections")
+        if _cb_state_log.transitioned(circuit_breaker_name, True):
+            logger.warning(
+                "Circuit breaker lane=%s OPEN — rejecting requests until recovery.",
+                circuit_breaker_name,
+            )
         raise ApiError("Service temporarily unavailable — upstream failures detected.", 503)
 
     try:
-        result = await asyncio.to_thread(func, *args, **kwargs)
+        if asyncio.iscoroutinefunction(func):
+            result = await func(*args, **kwargs)
+        else:
+            result = await asyncio.to_thread(func, *args, **kwargs)
         count = _increment_upstream_count()
         if count % 50 == 0:
             logger.info("Upstream Kick API calls total: %d", count)
         if circuit_breaker is not None:
             circuit_breaker.record_success()
+            if _cb_state_log.transitioned(circuit_breaker_name, False):
+                logger.info("Circuit breaker lane=%s CLOSED — upstream recovered.", circuit_breaker_name)
         return result
     except requests.exceptions.RequestException as exc:
         _increment_upstream_count()
         if circuit_breaker is not None:
             circuit_breaker.record_failure()
-            logger.warning(
-                "Upstream request failed in breaker lane=%s for %s: %s",
-                circuit_breaker_name,
-                safe_value,
-                type(exc).__name__,
+            _increment_cb_lane_event(circuit_breaker_name, "failures")
+            _upstream_error_log.warn(
+                logger,
+                f"Upstream request failed (breaker lane={circuit_breaker_name})",
+                exc,
             )
         raise requests_exception_to_api_error(exc, safe_value) from exc

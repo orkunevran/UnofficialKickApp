@@ -7,6 +7,7 @@ import { renderStreamGrid, renderCardSkeleton, updateFavoritesBadge, patchStream
 import { appState, featuredSortState, preferences } from '../state.js';
 import { applyFeaturedStreamsSort } from '../sorting.js';
 import { toast } from '../toast.js';
+import { throttle } from '../utils.js';
 
 const REFRESH_INTERVAL_MS = 120_000;
 const DEFAULT_PAGE_SIZE = 14;
@@ -309,9 +310,13 @@ async function backgroundRefresh(language, contentEl) {
         if (generation === refreshGeneration) refreshInFlight = false;
         if (inlineSpinner) inlineSpinner.classList.remove('is-active');
     }
-    // Safety: if refreshInFlight is stuck for >15s (e.g. due to stale generation),
-    // forcibly clear it so the page doesn't freeze permanently.
-    setTimeout(() => { refreshInFlight = false; }, 15000);
+    // (Previously: setTimeout(() => { refreshInFlight = false; }, 15000).
+    // That unconditional clear was a latent bug — if a *newer* refresh was
+    // in flight 15 s later, the stale setTimeout would clear ITS flag and
+    // allow a third concurrent refresh to fire. The finally-block clear
+    // above is sufficient because every refresh path (loadInitialPages,
+    // backgroundRefresh, loadMorePages) sets the flag at entry and clears
+    // it in its own finally when its generation is the latest.)
 }
 
 async function midCycleViewerRefresh(contentEl) {
@@ -570,8 +575,14 @@ export async function mount(params, contentEl) {
 
     const browseView = contentEl.querySelector('#browse-view');
 
-    // Language selector
-    await populateLanguageSelector();
+    // Language selector — populate dropdown and pre-resolve language in parallel
+    // so loadInitialPages below can start immediately instead of waiting for
+    // /config/languages and a DOM build that doesn't gate the network fetch.
+    const probableLanguage = preferences.language
+        || appState.languagesConfig?.default_language
+        || 'tr';
+    if (!currentLanguage) currentLanguage = probableLanguage;
+    const populatePromise = populateLanguageSelector();
     const langSel = document.getElementById('languageSelector');
     const catSel = document.getElementById('categorySelector');
 
@@ -658,18 +669,67 @@ export async function mount(params, contentEl) {
     };
     document.addEventListener('visibilitychange', onVisibility);
 
-    // Load initial data, THEN start auto-refresh timers
-    loadInitialPages(currentLanguage, contentEl, browseView).then(() => {
-        // Only start timers after initial data has settled (success or fail)
-        if (preferences.autoRefresh !== false) {
-            const intervalMs = (preferences.autoRefreshInterval || 120) * 1000;
-            refreshTimer = setInterval(() => {
-                void backgroundRefresh(currentLanguage, contentEl);
-            }, intervalMs);
-            midCycleTimer = setInterval(() => {
-                void midCycleViewerRefresh(contentEl);
-            }, intervalMs / 2);
+    // ── Hide-on-scroll (mobile only) ──────────────────────────────────────
+    const scrollEl = document.getElementById('content-area');
+    const mq = window.matchMedia('(max-width: 767px)');
+    let lastTop = 0;
+    const ENGAGE_AFTER = 80;
+    const HIDE_DELTA = 8;
+    const REVEAL_DELTA = 6;
+
+    const onScroll = throttle(() => {
+        if (!mq.matches) return;
+        const top = scrollEl.scrollTop;
+        if (top < ENGAGE_AFTER) {
+            document.body.classList.remove('browse-headers-hidden');
+        } else if (top - lastTop > HIDE_DELTA) {
+            document.body.classList.add('browse-headers-hidden');
+        } else if (lastTop - top > REVEAL_DELTA) {
+            document.body.classList.remove('browse-headers-hidden');
         }
+        lastTop = top;
+    }, 80);
+
+    scrollEl.addEventListener('scroll', onScroll, { passive: true });
+
+    const onMqChange = () => {
+        if (!mq.matches) document.body.classList.remove('browse-headers-hidden');
+    };
+    mq.addEventListener('change', onMqChange);
+
+    // Load initial data in parallel with language-selector population.
+    // The featured fetch is the slow part (~1.5s cold on Pi); waiting for
+    // the dropdown to render adds 50-200ms of pointless serial delay.
+    const loadPromise = loadInitialPages(currentLanguage, contentEl, browseView);
+
+    // Refresh-timer management — start/stop based on current preference, so
+    // toggling auto-refresh in Settings takes effect without a remount.
+    function startRefreshTimers() {
+        stopRefreshTimers(); // ensure no doubles
+        if (preferences.autoRefresh === false) return;
+        const intervalMs = (preferences.autoRefreshInterval || 120) * 1000;
+        refreshTimer = setInterval(() => {
+            void backgroundRefresh(currentLanguage, contentEl);
+        }, intervalMs);
+        midCycleTimer = setInterval(() => {
+            void midCycleViewerRefresh(contentEl);
+        }, intervalMs / 2);
+    }
+    function stopRefreshTimers() {
+        if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+        if (midCycleTimer) { clearInterval(midCycleTimer); midCycleTimer = null; }
+    }
+    function onPreferencesChanged(e) {
+        const key = e?.detail?.key;
+        if (key === 'autoRefresh' || key === 'autoRefreshInterval') {
+            startRefreshTimers(); // restarts with new preference value
+        }
+    }
+    window.addEventListener('preferences-changed', onPreferencesChanged);
+
+    // Wait for both to complete before starting auto-refresh timers
+    Promise.all([populatePromise, loadPromise]).then(() => {
+        startRefreshTimers();
         uptimeTimer = setInterval(() => {
             if (document.visibilityState !== 'visible') return;
             requestAnimationFrame(() => {
@@ -688,10 +748,7 @@ export async function mount(params, contentEl) {
 
     // Return cleanup function
     return () => {
-        clearInterval(refreshTimer);
-        refreshTimer = null;
-        clearInterval(midCycleTimer);
-        midCycleTimer = null;
+        stopRefreshTimers();
         clearInterval(uptimeTimer);
         uptimeTimer = null;
         if (scrollObserver) { scrollObserver.disconnect(); scrollObserver = null; }
@@ -701,5 +758,9 @@ export async function mount(params, contentEl) {
         viewToggleEl?.removeEventListener('click', onViewToggle);
         sortPillsEl?.removeEventListener('click', onSortPill);
         document.removeEventListener('visibilitychange', onVisibility);
+        scrollEl?.removeEventListener('scroll', onScroll);
+        mq.removeEventListener('change', onMqChange);
+        window.removeEventListener('preferences-changed', onPreferencesChanged);
+        document.body.classList.remove('browse-headers-hidden');
     };
 }

@@ -3,7 +3,7 @@
  * Renders instantly from localStorage with in-place DOM removal.
  */
 
-import { getHistory, clearHistory, removeFromHistory } from '../history.js';
+import { getHistory, clearHistory, removeFromHistory, addToHistory } from '../history.js';
 import { escapeHtml, formatRelativeTime } from '../utils.js';
 import { navigate } from '../router.js';
 import { toast } from '../toast.js';
@@ -70,29 +70,56 @@ export async function mount(params, contentEl) {
     }
 
     const handleClick = (e) => {
-        // Remove single item — in-place DOM removal, no full re-render
+        // Remove single item — with Undo affordance so accidental clicks
+        // don't silently lose data. Re-add restores the exact original entry.
         const removeBtn = e.target.closest('.history-remove-btn');
         if (removeBtn) {
             e.stopPropagation();
             const slug = removeBtn.dataset.slug;
             const type = removeBtn.dataset.type;
-            removeFromHistory(slug, type);
             const item = removeBtn.closest('.history-item');
+            // Snapshot the entry before removal so Undo can restore it verbatim.
+            const removed = getHistory().find(h => h.slug === slug && (h.type || 'stream') === type);
+            removeFromHistory(slug, type);
             if (item) item.remove();
             updateCount();
             showEmptyIfNeeded();
-            toast('Removed from history', 'success');
+            toast('Removed from history', 'info', {
+                duration: 6000,
+                action: removed ? {
+                    label: 'Undo',
+                    onClick: () => {
+                        addToHistory(removed);
+                        // Force the view to re-render from storage so the restored
+                        // entry appears in correct order.
+                        mount({}, contentEl);
+                    },
+                } : null,
+            });
             return;
         }
 
-        // Clear all — only replace the list content
+        // Clear all — already gated by toast feedback; keep as-is since
+        // Settings → "Clear watch history" uses the double-click-to-confirm
+        // pattern for the bulk action.
         if (e.target.closest('#clear-history-btn')) {
+            const snapshot = getHistory();
             clearHistory();
             listEl.innerHTML = renderEmptyState();
             if (countEl) countEl.textContent = '';
             const clearBtn = contentEl.querySelector('#clear-history-btn');
             if (clearBtn) clearBtn.remove();
-            toast('History cleared', 'success');
+            toast('History cleared', 'info', {
+                duration: 8000,
+                action: snapshot.length > 0 ? {
+                    label: 'Undo',
+                    onClick: () => {
+                        // Re-add in reverse order so original order is preserved.
+                        for (let i = snapshot.length - 1; i >= 0; i--) addToHistory(snapshot[i]);
+                        mount({}, contentEl);
+                    },
+                } : null,
+            });
             return;
         }
 

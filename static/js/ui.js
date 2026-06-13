@@ -80,10 +80,26 @@ export function renderStreamCard(stream, { showActions = true } = {}) {
             </button>
         </div>` : '';
 
+    // Thumbnail fallback chain: stream thumb → profile pic → placeholder div.
+    // Inline handlers avoid extra JS — the first failure swaps to profilePic;
+    // the second failure (rare) drops to the placeholder.
+    const thumbFallback = profilePic
+        ? `this.onerror=null;this.src='${escapeHtml(profilePic)}';this.style.objectFit='contain';this.classList.add('loaded');`
+        : `this.onerror=null;this.style.display='none';`;
+
+    const cardAriaLabel = `${username} — ${title}${viewers != null ? `, ${formatViewerCount(viewers)} viewers` : ''}`;
+
+    // Card pattern: the whole card is wrapped by an absolute-positioned <a>
+    // overlay link as a sibling of the action buttons. This gives middle-click
+    // "open in new tab", right-click context menu, native Enter activation,
+    // and clean screen-reader semantics — none of which a click-delegated
+    // div with role="article" could provide. Action buttons sit on a higher
+    // z-index so they receive their own clicks without bubbling to the link.
     return `
-        <div class="stream-card" data-slug="${escapeHtml(slug)}" data-start-time="${escapeHtml(stream.start_time || '')}" tabindex="0" role="article" aria-label="${escapeHtml(username)} — ${escapeHtml(title)}${viewers != null ? `, ${formatViewerCount(viewers)} viewers` : ''}">
+        <article class="stream-card" data-slug="${escapeHtml(slug)}" data-start-time="${escapeHtml(stream.start_time || '')}">
+            <a class="stream-card-link" href="#/channel/${encodeURIComponent(slug)}" aria-label="${escapeHtml(cardAriaLabel)}"></a>
             <div class="card-thumbnail">
-                ${thumbSrc ? `<img src="${escapeHtml(thumbSrc)}" alt="${escapeHtml(username)} stream thumbnail" loading="lazy" decoding="async" class="thumb-fade" onload="this.classList.add('loaded')" onerror="this.style.display='none'">` : '<div style="width:100%;height:100%;background:rgba(255,255,255,0.03)"></div>'}
+                ${thumbSrc ? `<img src="${escapeHtml(thumbSrc)}" alt="" loading="lazy" decoding="async" class="thumb-fade" onload="this.classList.add('loaded')" onerror="${thumbFallback}">` : '<div style="width:100%;height:100%;background:rgba(255,255,255,0.03)"></div>'}
                 <div class="card-uptime-badge"><span class="card-live-dot"></span><span class="card-uptime-text">${escapeHtml(formatUptime(stream.start_time) || 'LIVE')}</span></div>
                 ${viewers != null ? `<div class="card-viewers" data-count="${viewers}"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg><span class="viewer-num">${formatViewerCount(viewers)}</span></div>` : ''}
                 ${actionsHTML}
@@ -91,12 +107,12 @@ export function renderStreamCard(stream, { showActions = true } = {}) {
             <div class="card-info">
                 ${avatarHTML}
                 <div class="card-details">
-                    <div class="card-channel"><a href="#/channel/${encodeURIComponent(slug)}" class="card-channel-link">${escapeHtml(username)}</a></div>
+                    <div class="card-channel">${escapeHtml(username)}</div>
                     <div class="card-title">${escapeHtml(title)}</div>
                     ${category ? `<span class="card-category">${escapeHtml(category)}</span>` : ''}
                 </div>
             </div>
-        </div>`;
+        </article>`;
 }
 
 // ── Stream List Item ──────────────────────────────────────────────────────
@@ -109,10 +125,17 @@ export function renderStreamListItem(stream) {
     const viewers = stream.viewer_count;
     const thumbSrc = stream.thumbnail?.src || '';
 
+    const profilePic = stream.channel?.user?.profilepic || '';
+    const listThumbFallback = profilePic
+        ? `this.onerror=null;this.src='${escapeHtml(profilePic)}';this.style.objectFit='contain';`
+        : `this.onerror=null;this.style.display='none';`;
+    const listAriaLabel = `${username} — ${title}${viewers != null ? `, ${formatViewerCount(viewers)} viewers` : ''}`;
+
     return `
-        <div class="stream-list-item" data-slug="${escapeHtml(slug)}" tabindex="0" role="article" aria-label="${escapeHtml(username)} — ${escapeHtml(title)}${viewers != null ? `, ${formatViewerCount(viewers)} viewers` : ''}">
+        <article class="stream-list-item" data-slug="${escapeHtml(slug)}">
+            <a class="stream-card-link" href="#/channel/${encodeURIComponent(slug)}" aria-label="${escapeHtml(listAriaLabel)}"></a>
             <div class="list-thumb">
-                ${thumbSrc ? `<img src="${escapeHtml(thumbSrc)}" alt="${escapeHtml(username)} stream thumbnail" loading="lazy" decoding="async" onerror="this.style.display='none'">` : ''}
+                ${thumbSrc ? `<img src="${escapeHtml(thumbSrc)}" alt="" loading="lazy" decoding="async" onerror="${listThumbFallback}">` : ''}
                 ${viewers != null ? `<div class="card-viewers" style="position:absolute;top:4px;right:4px;font-size:11px;padding:1px 6px"><svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>${formatViewerCount(viewers)}</div>` : ''}
             </div>
             <div class="list-info">
@@ -123,7 +146,7 @@ export function renderStreamListItem(stream) {
                     ${viewers != null ? `<span>${formatViewerCount(viewers)} viewers</span>` : ''}
                 </div>
             </div>
-        </div>`;
+        </article>`;
 }
 
 // ── Stream Grid / List ────────────────────────────────────────────────────
@@ -585,20 +608,21 @@ export function initButtonDelegation() {
     if (delegationInitialized) return;
     delegationInitialized = true;
 
-    // Keyboard activation for focusable cards (Enter / Space)
+    // Keyboard activation for focusable cards that AREN'T navigation cards.
+    // Stream cards and list items use an overlay <a> now — the browser handles
+    // Enter natively. Only VOD/Clip cards (role="button") and History items
+    // (which navigate via JS) need this synthetic activation.
     document.addEventListener('keydown', (event) => {
         if (event.key !== 'Enter' && event.key !== ' ') return;
-        const card = event.target.closest('.stream-card, .stream-list-item, .history-item, .vod-card');
+        const card = event.target.closest('.history-item, .vod-card');
         if (!card) return;
-        // Don't interfere with buttons/links inside the card
         if (event.target.closest('.card-action-btn, a, button, .history-remove-btn')) return;
         event.preventDefault();
         const slug = card.dataset.slug;
-        if (slug) {
+        if (slug && card.classList.contains('history-item')) {
             navigate(`/channel/${slug}`);
             return;
         }
-
         if (card.dataset.playVod || card.dataset.playClip) {
             card.click();
         }
@@ -656,21 +680,10 @@ export function initButtonDelegation() {
             return;
         }
 
-        // Stream card click -> navigate to channel
-        const card = event.target.closest('.stream-card');
-        if (card && !event.target.closest('.card-action-btn') && !event.target.closest('a')) {
-            const slug = card.dataset.slug;
-            if (slug) navigate(`/channel/${slug}`);
-            return;
-        }
-
-        // Stream list item click -> navigate to channel
-        const listItem = event.target.closest('.stream-list-item');
-        if (listItem) {
-            const slug = listItem.dataset.slug;
-            if (slug) navigate(`/channel/${slug}`);
-            return;
-        }
+        // Stream cards and list items: the overlay <a class="stream-card-link">
+        // handles navigation natively, so no JS click delegation needed here.
+        // Action buttons (favorite, cast) above are handled by their own
+        // delegated handlers earlier in this function.
     });
 }
 

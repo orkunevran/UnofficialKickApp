@@ -53,8 +53,12 @@
     --primary-color: #16a34a;
     --primary-hover: #15803d;
     --text-color: #1a1a2e;
-    --text-muted: #64748b;
-    --text-secondary: #6b7280;
+    /* WCAG AA: minimum 4.5:1 for normal text against --bg-color #f5f6f8.
+       Previous values (#64748b ~4.0, #6b7280 ~4.4) failed.
+       New values: #4b5563 ≈ 7.0:1, #475569 ≈ 7.6:1 — both pass AA, and AAA
+       for large text. Visually indistinguishable from the old slate shades. */
+    --text-muted: #4b5563;
+    --text-secondary: #475569;
     --border-color: rgba(0, 0, 0, 0.08);
     --border-highlight: rgba(22, 163, 74, 0.3);
     --error-color: #dc2626;
@@ -102,6 +106,10 @@
 }
 [data-theme="light"] .search-input {
     background: rgba(0, 0, 0, 0.04);
+}
+[data-theme="light"] .search-clear-btn:hover,
+[data-theme="light"] .search-clear-btn:focus-visible {
+    background: rgba(0, 0, 0, 0.06);
 }
 [data-theme="light"] .search-suggestions {
     background: rgba(255, 255, 255, 0.98);
@@ -655,11 +663,55 @@ body {
     outline: none;
     transition: border-color 0.2s, box-shadow 0.3s, background 0.2s;
 }
+#search-container .search-input {
+    padding-right: 68px;
+}
 .search-input::placeholder { color: var(--text-secondary); }
 .search-input:focus {
     border-color: var(--border-highlight);
     box-shadow: 0 0 0 3px rgba(83, 252, 24, 0.1), 0 0 20px rgba(83, 252, 24, 0.05);
     background: rgba(255,255,255,0.08);
+}
+.search-clear-btn {
+    position: absolute;
+    right: 36px;
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    opacity: 0.82;
+    z-index: 2;
+    transition: color 0.16s ease, background 0.16s ease, opacity 0.16s ease, transform 0.16s ease;
+}
+.search-clear-btn[hidden] {
+    display: none;
+}
+.search-clear-btn:hover,
+.search-clear-btn:focus-visible {
+    background: rgba(255,255,255,0.1);
+    color: var(--text-color);
+    opacity: 1;
+}
+.search-clear-btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(83, 252, 24, 0.22);
+}
+.search-clear-btn:active {
+    transform: scale(0.94);
+}
+
+.search-container.has-query .search-kbd {
+  display: none;
+}
+.search-container.has-query .search-input {
+  padding-right: 44px;
 }
 .search-container:focus-within .search-kbd {
     opacity: 0;
@@ -1144,6 +1196,19 @@ body.no-cast .chromecast-disconnect-quick {
 .mini-player-slider:active::-moz-range-thumb {
     background: var(--primary-color);
 }
+/* Keyboard focus: visible ring around the thumb so keyboard users can see
+   where their input lands. :focus-visible avoids showing it on click. */
+.mini-player-slider:focus-visible {
+    outline: none;
+}
+.mini-player-slider:focus-visible::-webkit-slider-thumb {
+    background: var(--primary-color);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-color) 35%, transparent);
+}
+.mini-player-slider:focus-visible::-moz-range-thumb {
+    background: var(--primary-color);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-color) 35%, transparent);
+}
 .mini-player-expanded-video {
     width: 100%;
     height: 0;
@@ -1223,8 +1288,31 @@ body.no-cast .chromecast-disconnect-quick {
     overflow: hidden;
     contain: layout style paint;
     transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
-    cursor: pointer;
     animation: card-enter 0.35s ease-out both;
+    position: relative;
+}
+/* Overlay link: fills the card so the entire card area navigates. Action
+   buttons get a higher z-index so they still receive their own clicks.
+   Native <a> gives middle-click "open in new tab", right-click context
+   menu, and proper screen-reader announcement out of the box. */
+.stream-card-link {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    text-decoration: none;
+    color: inherit;
+    /* Invisible to sighted users; AT users get the aria-label. */
+    overflow: hidden;
+    text-indent: -9999px;
+    /* Inherit hover affordance from the parent card. */
+    cursor: pointer;
+}
+.stream-card .card-actions-overlay,
+.stream-card .card-action-btn,
+.stream-list-item .card-actions-overlay,
+.stream-list-item .card-action-btn {
+    position: relative;
+    z-index: 2;
 }
 /* Staggered entrance — first 24 cards get cascading delays */
 .stream-card:nth-child(1)  { animation-delay: 0ms; }
@@ -1250,7 +1338,16 @@ body.no-cast .chromecast-disconnect-quick {
             0 0 20px rgba(83, 252, 24, 0.06);
     }
 }
-/* Keyboard focus ring for cards */
+/* Keyboard focus ring travels with the overlay link (or the card itself for
+   non-link cards like history-item which keep tabindex/role). */
+.stream-card:focus-within,
+.stream-list-item:focus-within {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px var(--bg-color), 0 0 0 4px var(--primary-color);
+}
+.stream-card-link:focus-visible {
+    outline: none;
+}
 .stream-card:focus-visible,
 .stream-list-item:focus-visible {
     outline: none;
@@ -1387,6 +1484,12 @@ body.no-cast .chromecast-disconnect-quick {
     padding: 12px;
     display: flex;
     gap: 10px;
+    /* Reserve consistent vertical space so the grid doesn't reflow when
+       category/2nd title line resolves. Worst case: avatar (36) + channel
+       (~18) + 2-line title (~36) + category (~22) + spacing ≈ 92px content;
+       round up to 96 to keep math forgiving. */
+    min-height: 96px;
+    align-items: flex-start;
 }
 .card-avatar {
     width: 36px; height: 36px;
@@ -2096,6 +2199,15 @@ body.no-cast .chromecast-disconnect-quick {
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
     overflow: hidden;
+    /* Match real card height so the grid doesn't reflow when skeletons
+       swap out for actual cards. .card-info has min-height:96px which
+       (with skeleton's flex padding of 12+12) makes the lower section
+       reserve the same vertical footprint. */
+}
+.skeleton-card > div:last-child {
+    min-height: 96px;
+    box-sizing: border-box;
+    align-items: flex-start;
 }
 /* Skeleton shimmer uses a transform-based ::after overlay instead of
    background-position animation.  transform: translateX() is GPU-composited
@@ -2435,6 +2547,7 @@ body.no-cast .chromecast-disconnect-quick {
     contain: layout paint;
 }
 .toast {
+    box-sizing: border-box;
     display: flex;
     align-items: flex-start;
     gap: 10px;
@@ -2504,6 +2617,16 @@ body.no-cast .chromecast-disconnect-quick {
     padding: 0 2px; flex-shrink: 0;
 }
 .toast-close:hover { color: var(--text-color); }
+.toast-counter {
+    flex-shrink: 0; align-self: center;
+    background: var(--bg-elevated, rgba(255,255,255,0.08));
+    color: var(--text-secondary);
+    font-size: 11px; font-weight: 600;
+    padding: 1px 6px; border-radius: 999px;
+    font-variant-numeric: tabular-nums;
+    min-width: 24px; text-align: center;
+}
+.toast-counter.hidden { display: none; }
 /* Duplicate .toast::after and @keyframes toast-countdown removed — defined above */
 
 /* ── Scroll Sentinel ───────────────────────────────────────────────────── */
@@ -2942,6 +3065,14 @@ body.no-cast .chromecast-disconnect-quick {
     from { opacity: 1; transform: translateX(0); }
     to { opacity: 0; transform: translateX(20px); }
 }
+@keyframes toast-in-mobile {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+@keyframes toast-out-mobile {
+    from { opacity: 1; transform: translateY(0); }
+    to { opacity: 0; transform: translateY(20px); }
+}
 @keyframes fade-in {
     from { opacity: 0; transform: translateY(8px); }
     to { opacity: 1; transform: translateY(0); }
@@ -3016,8 +3147,19 @@ a:focus-visible,
         border-radius: 999px;
         padding: 0 12px 0 38px;
     }
+    #search-container .search-input {
+        padding: 0 48px 0 38px;
+    }
+    .search-container.has-query .search-input {
+        padding-right: 48px;
+    }
     .search-icon {
         left: 12px;
+    }
+    .search-clear-btn {
+        right: 8px;
+        width: 34px;
+        height: 34px;
     }
     .search-kbd {
         display: none;
@@ -3137,9 +3279,26 @@ a:focus-visible,
     }
     .toast-container {
         bottom: calc(var(--mini-player-mobile-toast-bottom) + env(safe-area-inset-bottom, 0px));
-        right: 10px;
-        left: 10px;
-        max-width: none;
+        left: 50%;
+        transform: translateX(-50%);
+        right: auto;
+        width: calc(100% - 20px);
+        max-width: 380px;
+    }
+    .toast {
+        transform: translateY(20px);
+    }
+    .toast-enter {
+        animation: toast-in-mobile 0.3s ease forwards;
+    }
+    .toast-exit {
+        animation: toast-out-mobile 0.3s ease forwards;
+    }
+    .toast-close {
+        padding: 8px 12px;
+        margin-top: -8px;
+        margin-right: -10px;
+        font-size: 22px;
     }
     /* ── Mobile video-first layout for live channels ────────────────── */
     .mobile-video-anchor {
@@ -3496,6 +3655,37 @@ html.safari .settings-group,
 html.safari .device-item {
     transition: none !important;
 }
+
+/* ── Hide-on-scroll Headers (Browse, mobile only) ───────────────────── */
+.top-bar {
+  transition: transform 0.25s ease, height 0.25s ease, padding 0.25s ease, border-color 0.25s ease;
+}
+.browse-sticky-header {
+  transition: transform 0.25s ease, opacity 0.2s ease;
+  will-change: transform;
+}
+@media (max-width: 767px) {
+  body.browse-headers-hidden .top-bar {
+    transform: translateY(-100%);
+    height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    border-bottom-color: transparent;
+    overflow: hidden;
+    pointer-events: none;
+  }
+  body.browse-headers-hidden .browse-sticky-header {
+    transform: translateY(-110%);
+    opacity: 0;
+    pointer-events: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    body.browse-headers-hidden .top-bar,
+    body.browse-headers-hidden .browse-sticky-header {
+      transition: none;
+    }
+  }
+}
 html.safari .video-container,
 html.safari .video-container.video-active {
     box-shadow: none !important;
@@ -3545,4 +3735,232 @@ html.safari .video-container.video-active {
     .card-viewers {
         font-weight: 700;
     }
+}
+
+/* ── Chromecast Remote Controls ────────────────────────────────────────── */
+.cc-remote-controls {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    margin-top: 8px;
+    margin-bottom: 8px;
+    animation: fadeIn 0.3s ease;
+}
+
+.cc-status-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 14px;
+}
+
+.cc-status-label {
+    color: var(--text-muted);
+}
+
+.cc-status-device-name {
+    font-weight: 600;
+    color: var(--primary-color);
+    text-shadow: 0 0 8px rgba(83, 252, 24, 0.15);
+}
+
+.cc-playback-row {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.cc-control-btn {
+    background: linear-gradient(135deg, var(--primary-color), var(--live-color, var(--primary-color)));
+    border: none;
+    color: #000;
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(83, 252, 24, 0.25);
+    transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s;
+}
+
+.cc-control-btn:hover {
+    transform: scale(1.08);
+    box-shadow: 0 6px 16px rgba(83, 252, 24, 0.4);
+}
+
+.cc-control-btn:active {
+    transform: scale(0.95);
+}
+
+.cc-control-icon {
+    transition: opacity 0.15s ease;
+}
+
+.cc-volume-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--text-color);
+    font-size: 13px;
+}
+
+.cc-volume-icon {
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
+.cc-volume-slider {
+    flex: 1;
+    -webkit-appearance: none;
+    appearance: none;
+    height: 6px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.1);
+    outline: none;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.cc-volume-slider:hover {
+    background: rgba(255, 255, 255, 0.15);
+}
+
+.cc-volume-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--primary-color);
+    cursor: pointer;
+    box-shadow: 0 0 6px rgba(83, 252, 24, 0.4);
+    transition: transform 0.1s;
+}
+
+.cc-volume-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.2);
+}
+
+.cc-volume-slider::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--primary-color);
+    border: none;
+    cursor: pointer;
+    box-shadow: 0 0 6px rgba(83, 252, 24, 0.4);
+    transition: transform 0.1s;
+}
+
+.cc-volume-slider::-moz-range-thumb:hover {
+    transform: scale(1.2);
+}
+
+.cc-volume-percent {
+    width: 36px;
+    text-align: right;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.cc-skip-btn {
+    background: var(--surface-color);
+    border: 1px solid var(--border-color);
+    color: var(--text-color);
+    width: 38px;
+    height: 38px;
+    margin: 0 16px;
+    box-shadow: none;
+    flex-shrink: 0;
+}
+
+.cc-skip-btn:hover {
+    background: var(--surface-hover);
+    color: var(--primary-color);
+    border-color: var(--border-highlight);
+    box-shadow: 0 0 10px rgba(83, 252, 24, 0.15);
+}
+
+.cc-skip-btn svg {
+    display: block;
+}
+
+.cc-progress-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--text-color);
+    font-size: 12px;
+}
+
+.cc-time-label {
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    font-family: monospace;
+    flex-shrink: 0;
+}
+
+.cc-progress-slider {
+    flex: 1;
+    -webkit-appearance: none;
+    appearance: none;
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.1);
+    outline: none;
+    cursor: pointer;
+    transition: background 0.25s;
+}
+
+.cc-progress-slider:hover {
+    background: rgba(255, 255, 255, 0.15);
+}
+
+.cc-progress-slider::-webkit-slider-runnable-track {
+    width: 100%;
+    height: 4px;
+    cursor: pointer;
+}
+
+.cc-progress-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--primary-color);
+    box-shadow: 0 0 6px rgba(83, 252, 24, 0.4);
+    cursor: pointer;
+    margin-top: -4px;
+    transition: transform 0.1s;
+}
+
+.cc-progress-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.2);
+}
+
+.cc-progress-slider::-moz-range-thumb {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--primary-color);
+    border: none;
+    box-shadow: 0 0 6px rgba(83, 252, 24, 0.4);
+    cursor: pointer;
+    transition: transform 0.1s;
+}
+
+.cc-progress-slider::-moz-range-thumb:hover {
+    transform: scale(1.2);
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
 }

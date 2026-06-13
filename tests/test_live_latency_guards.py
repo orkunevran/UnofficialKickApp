@@ -153,3 +153,82 @@ def test_play_stale_payload_preserved_when_background_refresh_hits_429(monkeypat
                 assert calls["count"] >= 2
 
     asyncio.run(_run())
+
+
+def test_metrics_exposes_breaker_lane_event_counters(monkeypatch):
+    """Metrics should expose per-lane breaker rejection/failure counters."""
+    _stub_chromecast(monkeypatch)
+
+    def _always_429(channel_slug, timeout=8):
+        _raise_http_429()
+
+    monkeypatch.setattr(kick_api_client, "get_channel_data", _always_429)
+
+    async def _run():
+        async with fastapi_app.router.lifespan_context(fastapi_app):
+            # Force a critical-lane rejection by opening critical breaker.
+            critical = fastapi_app.state.circuit_breaker_critical
+            for _ in range(critical.failure_threshold):
+                critical.record_failure()
+
+            transport = httpx.ASGITransport(app=fastapi_app, raise_app_exceptions=False)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                # Rejection (503 from open critical breaker)
+                await client.get("/streams/play/live-user")
+
+                # Reset breaker then trigger upstream failure event (429)
+                critical.record_success()
+                await client.get("/streams/play/live-user")
+
+                metrics = (await client.get("/metrics")).json()
+
+            events = metrics["upstream"]["circuit_breaker_events"]["critical"]
+            assert events["rejections"] >= 1
+            assert events["failures"] >= 1
+            assert "non_critical" in metrics["upstream"]["circuit_breaker_events"]
+            assert "other" in metrics["upstream"]["circuit_breaker_events"]
+
+    asyncio.run(_run())
+
+
+def test_background_refresh_limiter_can_skip_refresh_when_saturated(monkeypatch, sample_api_data):
+    """If refresh limiter is saturated, stale response should still return quickly and skip refresh."""
+    _stub_chromecast(monkeypatch)
+    monkeypatch.setattr(Config, "LIVE_CACHE_DURATION_SECONDS", 1)
+
+    calls = {"count": 0}
+
+    def _always_live(channel_slug, timeout=8):
+        calls["count"] += 1
+        return copy.deepcopy(sample_api_data["live_channel"])
+
+    monkeypatch.setattr(kick_api_client, "get_channel_data", _always_live)
+
+    async def _run():
+        async with fastapi_app.router.lifespan_context(fastapi_app):
+            transport = httpx.ASGITransport(app=fastapi_app, raise_app_exceptions=False)
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+                # Prime stale cache and fresh marker.
+                first = await client.get("/streams/play/live-user")
+                assert first.status_code == 200
+                assert calls["count"] == 1
+
+                await asyncio.sleep(1.1)  # expire fresh marker
+
+                limiter = fastapi_app.state.background_refresh_limiter
+                acquired = 0
+                for _ in range(Config.BACKGROUND_REFRESH_MAX_CONCURRENCY):
+                    await limiter.acquire()  # saturate limiter for refresh task
+                    acquired += 1
+                try:
+                    second = await client.get("/streams/play/live-user")
+                    assert second.status_code == 200
+                    await asyncio.sleep(0.15)
+                finally:
+                    for _ in range(acquired):
+                        limiter.release()
+
+                # Refresh should have been skipped while limiter saturated.
+                assert calls["count"] == 1
+
+    asyncio.run(_run())

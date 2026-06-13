@@ -6,9 +6,32 @@ of any HTTP or caching dependencies so they can be unit-tested in
 isolation.
 """
 
-from typing import Any
+from typing import Any, Union
 
 from config import Config
+
+
+# ── Shared Utility Helpers ───────────────────────────────────────────
+
+def extract_thumbnail(data: dict[str, Any], fallback_pic: Union[str, None]) -> Union[str, None]:
+    """Extract the best available thumbnail URL from livestream/stream data.
+
+    Priority: thumbnail.src → thumbnail.url → profile picture fallback.
+    """
+    thumb = data.get("thumbnail")
+    if isinstance(thumb, dict):
+        return thumb.get("src") or thumb.get("url") or fallback_pic
+    return fallback_pic
+
+
+def extract_category_name(data: dict[str, Any]) -> Union[str, None]:
+    """Safely extract the first category name from livestream/stream data."""
+    categories = data.get("categories")
+    if isinstance(categories, list) and categories:
+        first = categories[0]
+        if isinstance(first, dict):
+            return first.get("name")
+    return None
 
 # ── Channel profile ──────────────────────────────────────────────────
 
@@ -126,18 +149,21 @@ def warm_caches_from_featured(cache, streams: list) -> None:
         # Play cache — partial response for instant channel render (short TTL)
         play_key = f"live:/streams/play/{slug}"
         if cache.get(play_key) is None:
-            thumb_src = (stream.get("thumbnail") or {}).get("src") or pic
+            raw_url = ch.get("playback_url")
+            if raw_url:
+                cache.set(f"live-url:{slug}", raw_url, timeout=Config.LIVE_STALE_TTL_SECONDS)
+            thumb_src = extract_thumbnail(stream, pic)
             partial = {
                 "status": "success", "message": "", "data": {
                     "status": "live" if stream.get("is_live") else "offline",
                     "channel_slug": slug, "username": user.get("username", slug),
                     "profile_picture": pic,
-                    "playback_url": ch.get("playback_url"),
+                    "playback_url": f"/streams/m3u8/{slug}.m3u8",
                     "session_title": stream.get("session_title"),
                     "livestream_id": stream.get("id"),
                     "livestream_viewer_count": stream.get("viewer_count"),
                     "livestream_thumbnail_url": thumb_src,
-                    "livestream_category": (stream.get("categories") or [{}])[0].get("name"),
+                    "livestream_category": extract_category_name(stream),
                     "start_time": stream.get("start_time"),
                     "_partial": True,
                 }

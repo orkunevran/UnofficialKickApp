@@ -24,6 +24,15 @@ _SECURITY_HEADERS = {
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
 }
 
+# Endpoints whose access logs add zero diagnostic value but fire constantly
+# (docker healthcheck, frontend status poll). Logging each one wastes disk and
+# drowns out signal during incidents.
+_ACCESS_LOG_SKIP_PATHS = (
+    "/health/",
+    "/api/chromecast/status",
+    "/metrics",
+)
+
 
 class RequestContextMiddleware(BaseHTTPMiddleware):
     """Adds correlation ID, request timing, and security headers to every response."""
@@ -40,12 +49,12 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
 
         duration_ms = (time.monotonic() - start) * 1000
-        # Skip noisy status-poll endpoint
-        if "/api/chromecast/status" not in request.url.path:
+        path = request.url.path
+        if not any(skip in path for skip in _ACCESS_LOG_SKIP_PATHS):
             logger.info(
                 "%s %s -> %d (%.1fms) [%s]",
                 request.method,
-                request.url.path,
+                path,
                 response.status_code,
                 duration_ms,
                 rid,

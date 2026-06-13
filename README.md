@@ -1,7 +1,7 @@
 # Unofficial Kick App
 
 <p align="center">
-  <img src="static/Kick_logo.svg" alt="Kick Logo" width="100"/>
+  <img src="docs/screenshots/hero-dark-new.webp" alt="Browse view, dark theme" />
 </p>
 
 <p align="center">
@@ -30,6 +30,11 @@ Unofficial Kick App provides a web UI plus a REST API for Kick.com live streams,
 ### Discovery & Navigation
 - Featured streams with infinite scroll, language and category filtering
 - Smart prefetching — next page is cached in the background before you scroll to it
+<details>
+<summary><strong>Channel page — mobile</strong></summary>
+<br />
+<img src="docs/screenshots/channel-mobile-new.webp" alt="Channel page on a phone-portrait viewport with the bottom navigation bar" width="380" />
+</details>
 - Two-tier channel search: instant local results + full Typesense server-side search with keyboard navigation
 - Favorites and History tracking with localStorage persistence
 - SPA architecture with hash-based client-side routing and View Transitions
@@ -116,7 +121,11 @@ Tests use `monkeypatch` to stub service methods and `httpx.ASGITransport` for di
 | --- | --- | --- |
 | `GET` | `/streams/play/{channel_slug}` | Get live stream data for a channel |
 | `GET` | `/streams/go/{channel_slug}` | Redirect to the live HLS playback URL |
-| `GET` | `/streams/vods/{channel_slug}` | List VODs for a channel |
+<details>
+<summary><strong>Channel page — desktop</strong></summary>
+<br />
+<img src="docs/screenshots/channel-desktop-new.webp" alt="Channel page on desktop showing the live HLS player and profile" />
+</details>| `GET` | `/streams/vods/{channel_slug}` | List VODs for a channel |
 | `GET` | `/streams/vods/{channel_slug}/{vod_id}` | Redirect to a specific VOD |
 | `GET` | `/streams/clips/{channel_slug}` | List recent clips for a channel |
 | `GET` | `/streams/featured-livestreams?language=&page=&category=&subcategory=&sort=&strict=` | Get featured/filtered streams |
@@ -229,6 +238,12 @@ The browse view uses three render modes for optimal performance:
 - **Mid-cycle viewer refresh** — at the 60-second mark, batch viewer counts are fetched and animated in-place with eased counting transitions
 - **Server-side stale-while-revalidate** — each featured page is cached with a short fresh TTL and a longer stale TTL; stale responses are served instantly while a single background refresh runs
 - **Shared-video mini-player handoff** — when navigating away from a live channel, the same persistent `<video>` element is moved into the mini-player instead of recreating playback
+<details>
+<summary><strong>Mini-player slider resize on mobile</strong> (the headline UX change in v3.2.0)</summary>
+<br />
+<p>Drag the slider on the left edge of the bar to grow the mini-player video panel above the nav. Double-click to toggle.</p>
+<video src="docs/screenshots/mini-player-mobile-new.webm" autoplay loop muted playsinline width="380"></video>
+</details>
 - **Observer self-re-triggering** — if the scroll sentinel is still visible after a page loads, the next page loads immediately without waiting for the IntersectionObserver frame delay
 
 ### Theme System
@@ -245,7 +260,7 @@ The application is configured with environment variables (or a `.env` file):
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `FLASK_DEBUG` | `False` | Enable reload mode for local development |
+| `DEBUG` | `False` | Enable reload mode for local development |
 | `PORT` | `8081` | Application port |
 | `LOG_LEVEL` | `INFO` | Logging level |
 | `LOG_FORMAT_JSON` | `False` | Structured JSON logging for production |

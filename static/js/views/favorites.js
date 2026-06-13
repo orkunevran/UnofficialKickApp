@@ -54,8 +54,10 @@ function renderFavoriteCardBody(fav, state) {
     const avatarHTML = fav.profilePicture
         ? `<img src="${escapeHtml(fav.profilePicture)}" alt="" class="card-avatar" loading="lazy" decoding="async">`
         : initialsAvatar(fav.username || fav.slug);
+    const bodyAriaLabel = `${state.ariaLabel}${state.viewers != null ? ', ' + formatViewerCount(state.viewers) + ' viewers' : ''}`;
 
     return `
+            <a class="stream-card-link" href="#/channel/${encodeURIComponent(fav.slug)}" aria-label="${escapeHtml(bodyAriaLabel)}"></a>
             <div class="card-thumbnail">
                 ${state.thumbSrc ? `<img src="${escapeHtml(state.thumbSrc)}" alt="${escapeHtml(fav.username || fav.slug)} stream thumbnail" class="thumb-fade" loading="lazy" decoding="async" onload="this.classList.add('loaded')" onerror="this.onerror=null;this.src='${escapeHtml(fav.profilePicture || '')}';this.style.objectFit='contain';this.classList.add('loaded');">` : `<div class="favorite-thumb-placeholder ${state.isPending ? 'pending' : ''}">${state.statusLabel}</div>`}
                 <div class="card-uptime-badge ${state.isLive ? '' : 'card-uptime-badge--muted'}">${state.isLive ? '<span class="card-live-dot"></span>' : ''}${state.statusLabel}</div>
@@ -81,9 +83,7 @@ function renderFavoriteCard(fav, liveStatus = null) {
     const state = getFavoriteCardState(fav, liveStatus);
     const cardKey = getFavoriteCardKey(fav, state);
     return `
-        <div class="stream-card" data-slug="${escapeHtml(fav.slug)}" data-card-key="${escapeHtml(cardKey)}" style="cursor:pointer" tabindex="0" role="article" aria-label="${escapeHtml(state.ariaLabel)}${state.viewers != null ? ', ' + formatViewerCount(state.viewers) + ' viewers' : ''}">
-            ${renderFavoriteCardBody(fav, state)}
-        </div>`;
+        <article class="stream-card" data-slug="${escapeHtml(fav.slug)}" data-card-key="${escapeHtml(cardKey)}">${renderFavoriteCardBody(fav, state)}</article>`;
 }
 
 function renderFavoritesEmptyState() {
@@ -219,17 +219,18 @@ export async function mount(params, contentEl) {
         });
     }
 
-    // Click delegation
+    // Click delegation — the overlay <a> inside each card handles navigation
+    // natively, so we only need to intercept the unfavorite button here.
     const handleGridClick = (e) => {
         const unfavBtn = e.target.closest('[data-action="unfavorite"]');
         if (unfavBtn) {
+            e.preventDefault();
             e.stopPropagation();
             const slug = unfavBtn.dataset.slug;
             if (slug) {
                 suppressNextFavoritesChange = true;
                 removeFavorite(slug);
                 updateFavoritesBadge();
-                // Remove card in-place — no full re-render
                 const card = unfavBtn.closest('.stream-card');
                 if (card) card.remove();
                 currentResolved = currentResolved.filter(r => r.fav.slug !== slug);
@@ -242,10 +243,7 @@ export async function mount(params, contentEl) {
                     renderGrid();
                 }
             }
-            return;
         }
-        const card = e.target.closest('.stream-card');
-        if (card) navigate(`/channel/${card.dataset.slug}`);
     };
     grid.addEventListener('click', handleGridClick);
 

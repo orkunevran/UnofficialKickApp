@@ -5,7 +5,7 @@ import time
 from fastapi import APIRouter, Request
 
 from api.cache import inflight_tracker
-from api.routes._common import get_upstream_call_count
+from api.routes._common import get_circuit_breaker_lane_events, get_upstream_call_count
 
 router = APIRouter(tags=["metrics"])
 
@@ -28,6 +28,7 @@ async def metrics(request: Request):
                 "critical": critical_cb.stats(),
                 "non_critical": non_critical_cb.stats(),
             },
+            "circuit_breaker_events": get_circuit_breaker_lane_events(),
         },
         "inflight": inflight_tracker.stats(),
         "uptime_seconds": round(time.monotonic() - _start_time),

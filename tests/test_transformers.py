@@ -5,6 +5,8 @@ from services.transformers import (
     build_featured_response,
     normalize_clip_list,
     process_vod_data,
+    extract_thumbnail,
+    extract_category_name,
 )
 
 
@@ -145,3 +147,20 @@ class TestBuildFeaturedResponse:
         result = build_featured_response({"data": []}, 3)
         assert result["pagination"]["current_page"] == 3
         assert result["pagination"]["per_page"] == 14
+
+
+class TestUtilityHelpers:
+    def test_extract_thumbnail(self):
+        assert extract_thumbnail({"thumbnail": {"src": "https://img/src.png"}}, "fallback") == "https://img/src.png"
+        assert extract_thumbnail({"thumbnail": {"url": "https://img/url.png"}}, "fallback") == "https://img/url.png"
+        assert extract_thumbnail({"thumbnail": {}}, "fallback") == "fallback"
+        assert extract_thumbnail({"thumbnail": "not a dict"}, "fallback") == "fallback"
+        assert extract_thumbnail({}, "fallback") == "fallback"
+
+    def test_extract_category_name(self):
+        assert extract_category_name({"categories": [{"name": "IRL"}]}) == "IRL"
+        assert extract_category_name({"categories": []}) is None
+        assert extract_category_name({"categories": "string"}) is None
+        assert extract_category_name({"categories": [None]}) is None
+        assert extract_category_name({"categories": [{"no_name": True}]}) is None
+        assert extract_category_name({}) is None

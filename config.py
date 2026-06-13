@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     )
 
     # Application Settings
-    FLASK_DEBUG: bool = False
+    DEBUG: bool = False
     PORT: int = Field(8081, ge=1, le=65535)
     LOG_LEVEL: str = "INFO"
 
@@ -42,6 +42,10 @@ class Settings(BaseSettings):
 
     # Thread pool size for asyncio.to_thread() calls (0 = Python default)
     ASYNCIO_THREAD_WORKERS: int = Field(0, ge=0)
+    # Non-critical background thread tasks (Typesense warm-up, SWR refreshes)
+    NON_CRITICAL_THREAD_OP_CONCURRENCY: int = Field(4, ge=1, le=64)
+    BACKGROUND_REFRESH_MAX_CONCURRENCY: int = Field(4, ge=1, le=64)
+    BACKGROUND_REFRESH_ACQUIRE_TIMEOUT_SECONDS: float = Field(0.05, ge=0.001, le=5.0)
 
     # Chromecast Settings
     CHROMECAST_SCAN_TIMEOUT: int = Field(5, ge=1)
@@ -63,10 +67,18 @@ class Settings(BaseSettings):
     VIEWER_CACHE_DURATION_SECONDS: int = Field(30, ge=1)
     NEGATIVE_CACHE_DURATION_SECONDS: int = Field(10, ge=1)
     FEATURED_STALE_TTL_SECONDS: int = Field(300, ge=1)
+    LIVE_INFLIGHT_WAIT_TIMEOUT_SECONDS: float = Field(5.0, ge=0.1, le=15.0)
 
     # Circuit breaker settings
     CIRCUIT_BREAKER_FAILURE_THRESHOLD: int = Field(5, ge=1)
+    CIRCUIT_BREAKER_CRITICAL_FAILURE_THRESHOLD: int = Field(8, ge=1)
     CIRCUIT_BREAKER_RECOVERY_SECONDS: int = Field(30, ge=5)
+
+    # When an SWR background refresh fails, mark fresh_key=True for this many
+    # seconds before allowing another refresh attempt. Without this guard a
+    # failing upstream causes every request to spawn a new refresh task,
+    # which spins on DNS / TCP-connect failures and saturates disk I/O.
+    REFRESH_BACKOFF_SECONDS: int = Field(5, ge=1, le=300)
 
     # CORS settings — set CORS_ORIGINS to a comma-separated list to enable
     CORS_ORIGINS: str = ""

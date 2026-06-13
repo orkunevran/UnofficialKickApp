@@ -13,6 +13,8 @@ from api.schemas import (
     ChromecastCastRequest,
     ChromecastSelectRequest,
     ChromecastStopRequest,
+    ChromecastVolumeRequest,
+    ChromecastSeekRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -134,3 +136,39 @@ async def chromecast_status_stream(request: Request, service: ChromecastDep):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.post("/pause")
+async def chromecast_pause(service: ChromecastDep):
+    logger.info("Received request to pause Chromecast playback.")
+    success = service.pause_media()
+    if success:
+        return success_json(message="Playback paused.")
+    return error_json("Failed to pause playback. No active device or media controller.", 400)
+
+
+@router.post("/play")
+async def chromecast_play(service: ChromecastDep):
+    logger.info("Received request to resume Chromecast playback.")
+    success = service.play_media()
+    if success:
+        return success_json(message="Playback resumed.")
+    return error_json("Failed to resume playback. No active device or media controller.", 400)
+
+
+@router.post("/volume")
+async def chromecast_volume(service: ChromecastDep, payload: ChromecastVolumeRequest):
+    logger.info("Received request to set Chromecast volume to %s.", payload.level)
+    success = service.set_volume(payload.level)
+    if success:
+        return success_json(message=f"Volume set to {payload.level}.")
+    return error_json("Failed to set volume. No active device.", 400)
+
+
+@router.post("/seek")
+async def chromecast_seek(service: ChromecastDep, payload: ChromecastSeekRequest):
+    logger.info("Received request to seek Chromecast playback to %s seconds.", payload.position)
+    success = service.seek_media(payload.position)
+    if success:
+        return success_json(message=f"Media seeked to {payload.position} seconds.")
+    return error_json("Failed to seek media. No active device or media controller.", 400)

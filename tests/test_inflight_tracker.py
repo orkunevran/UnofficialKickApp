@@ -108,6 +108,26 @@ class TestDedup:
 
         asyncio.run(run())
 
+    def test_custom_wait_timeout_and_metric_increment(self, tracker):
+        """Per-call timeout should be respected and counted in timeout metrics."""
+        cache = FakeCache()
+        tracker._WAIT_TIMEOUT = 2.0
+
+        async def run():
+            # First call registers in-flight
+            r = await tracker.dedup_get(cache, "k")
+            assert r is None
+
+            # Second call uses short custom timeout and should time out quickly
+            started = time.monotonic()
+            r2 = await tracker.dedup_get(cache, "k", wait_timeout=0.05)
+            elapsed = time.monotonic() - started
+            assert r2 is None
+            assert elapsed < 0.5
+            assert tracker.stats()["timeout_count"] >= 1
+
+        asyncio.run(run())
+
 
 class TestClaimInflight:
     """Tests for claim_inflight (used by stale-while-revalidate)."""
@@ -125,22 +145,26 @@ class TestSweepStale:
     """Tests for periodic sweep of abandoned inflight entries."""
 
     def test_sweep_removes_old_entries(self, tracker):
-        # Insert an entry with an old timestamp
-        tracker._inflight["old-key"] = (asyncio.Event(), time.monotonic() - 60)
-        tracker._inflight["fresh-key"] = (asyncio.Event(), time.monotonic())
+        async def run():
+            # Insert an entry with an old timestamp
+            tracker._inflight["old-key"] = (asyncio.Event(), time.monotonic() - 60)
+            tracker._inflight["fresh-key"] = (asyncio.Event(), time.monotonic())
 
-        removed = tracker.sweep_stale()
-        assert removed == 1
-        assert "old-key" not in tracker._inflight
-        assert "fresh-key" in tracker._inflight
+            removed = tracker.sweep_stale()
+            assert removed == 1
+            assert "old-key" not in tracker._inflight
+            assert "fresh-key" in tracker._inflight
+        asyncio.run(run())
 
     def test_sweep_sets_event_on_stale_entries(self, tracker):
         """Stale entries should have their events set to unblock any waiters."""
-        event = asyncio.Event()
-        tracker._inflight["stale"] = (event, time.monotonic() - 60)
+        async def run():
+            event = asyncio.Event()
+            tracker._inflight["stale"] = (event, time.monotonic() - 60)
 
-        tracker.sweep_stale()
-        assert event.is_set()
+            tracker.sweep_stale()
+            assert event.is_set()
+        asyncio.run(run())
 
     def test_sweep_empty_tracker_returns_zero(self, tracker):
         assert tracker.sweep_stale() == 0
@@ -148,7 +172,9 @@ class TestSweepStale:
 
 class TestStats:
     def test_stats_reflects_active_keys(self, tracker):
-        assert tracker.stats() == {"active_keys": 0}
-        tracker._inflight["a"] = (asyncio.Event(), time.monotonic())
-        tracker._inflight["b"] = (asyncio.Event(), time.monotonic())
-        assert tracker.stats() == {"active_keys": 2}
+        async def run():
+            assert tracker.stats() == {"active_keys": 0, "timeout_count": 0}
+            tracker._inflight["a"] = (asyncio.Event(), time.monotonic())
+            tracker._inflight["b"] = (asyncio.Event(), time.monotonic())
+            assert tracker.stats() == {"active_keys": 2, "timeout_count": 0}
+        asyncio.run(run())

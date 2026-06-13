@@ -210,12 +210,20 @@ export async function mount(params, contentEl) {
         preferences.autoRefresh = e.target.checked;
         intervalRow.classList.toggle('settings-row-disabled', !e.target.checked);
         savePreferences();
+        // Broadcast so a currently-mounted Browse view can clear/restart its
+        // timers immediately instead of waiting for the next mount.
+        window.dispatchEvent(new CustomEvent('preferences-changed', {
+            detail: { key: 'autoRefresh', value: e.target.checked },
+        }));
         toast(e.target.checked ? 'Auto-refresh enabled' : 'Auto-refresh disabled', 'success');
     };
 
     const onRefreshIntervalChange = (e) => {
         preferences.autoRefreshInterval = parseInt(e.target.value, 10);
         savePreferences();
+        window.dispatchEvent(new CustomEvent('preferences-changed', {
+            detail: { key: 'autoRefreshInterval', value: preferences.autoRefreshInterval },
+        }));
         toast('Refresh interval updated', 'success');
     };
 

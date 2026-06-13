@@ -22,9 +22,24 @@ class InflightTracker:
     _STALE_SECONDS = 30.0   # entries older than this are considered abandoned
 
     def __init__(self):
-        self._inflight: dict[str, tuple[asyncio.Event, float]] = {}
+        self._inflight: dict[str, tuple[object, float]] = {}
+        self._timeout_count = 0
 
-    async def dedup_get(self, cache, key: str):
+    def _create_event(self):
+        try:
+            loop = asyncio.get_running_loop()
+            return asyncio.Event()
+        except RuntimeError:
+            class DummyEvent:
+                async def wait(self):
+                    pass
+                def set(self):
+                    pass
+                def is_set(self):
+                    return True
+            return DummyEvent()
+
+    async def dedup_get(self, cache, key: str, wait_timeout: Optional[float] = None):
         """
         Cache-aware get with in-flight deduplication.
 
@@ -45,13 +60,15 @@ class InflightTracker:
         entry = self._inflight.get(key)
         if entry is not None:
             event, _ = entry
+            timeout = self._WAIT_TIMEOUT if wait_timeout is None else wait_timeout
             try:
-                await asyncio.wait_for(event.wait(), timeout=self._WAIT_TIMEOUT)
+                await asyncio.wait_for(event.wait(), timeout=timeout)
             except asyncio.TimeoutError:
+                self._timeout_count += 1
                 logger.warning("In-flight wait timed out for key: %s (fetcher still running)", key)
             return cache.get(key)
 
-        self._inflight[key] = (asyncio.Event(), time.monotonic())
+        self._inflight[key] = (self._create_event(), time.monotonic())
         return None
 
     def dedup_set(self, key: str) -> None:
@@ -69,7 +86,7 @@ class InflightTracker:
         """
         if key in self._inflight:
             return False
-        self._inflight[key] = (asyncio.Event(), time.monotonic())
+        self._inflight[key] = (self._create_event(), time.monotonic())
         return True
 
     def sweep_stale(self) -> int:
@@ -89,7 +106,7 @@ class InflightTracker:
         return len(stale_keys)
 
     def stats(self) -> dict:
-        return {"active_keys": len(self._inflight)}
+        return {"active_keys": len(self._inflight), "timeout_count": self._timeout_count}
 
 
 # Module-level singleton (attached to app.state during lifespan for testability)
@@ -100,8 +117,8 @@ inflight_tracker = InflightTracker()
 # Convenience functions (thin wrappers for backwards compat)
 # ---------------------------------------------------------------------------
 
-async def dedup_get(cache, key: str):
-    return await inflight_tracker.dedup_get(cache, key)
+async def dedup_get(cache, key: str, wait_timeout: Optional[float] = None):
+    return await inflight_tracker.dedup_get(cache, key, wait_timeout=wait_timeout)
 
 
 def dedup_set(key: str) -> None:
@@ -150,49 +167,6 @@ def cached_value_to_response(cached_value, default_status: int = 200):
         payload, status = cached_value, default_status
 
     return JSONResponse(content=payload, status_code=status)
-
-
-def extract_vods_from_cached_response(cached_value):
-    if cached_value is None:
-        return []
-
-    payload = cached_value[0] if isinstance(cached_value, tuple) and len(cached_value) == 2 else cached_value
-    if not isinstance(payload, dict):
-        return []
-
-    data = payload.get("data", {})
-    if isinstance(data, dict):
-        vods = data.get("vods", [])
-        if isinstance(vods, list):
-            return vods
-
-    return []
-
-
-def extract_redirect_location(cached_value):
-    if cached_value is None:
-        return None
-
-    if isinstance(cached_value, str):
-        return cached_value
-
-    if isinstance(cached_value, tuple) and len(cached_value) == 2:
-        cached_value = cached_value[0]
-
-    if hasattr(cached_value, "headers"):
-        headers = getattr(cached_value, "headers", None)
-        if headers is not None:
-            location = headers.get("location")
-            if location:
-                return location
-
-    if isinstance(cached_value, dict):
-        for key in ("location", "source_url", "playback_url", "url"):
-            location = cached_value.get(key)
-            if location:
-                return location
-
-    return None
 
 
 def extract_channel_data_from_live_cache(cached_value) -> Optional[dict]:

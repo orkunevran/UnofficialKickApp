@@ -1,7 +1,9 @@
 """Featured livestreams endpoint with stale-while-revalidate caching."""
 
 import asyncio
+import contextlib
 import logging
+from typing import Union
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
@@ -36,28 +38,42 @@ async def _refresh_featured(
     subcategories: str,
     sort: str,
     strict_bool: bool,
+    refresh_limiter: Union[asyncio.Semaphore, None] = None,
+    thread_limiter: Union[asyncio.Semaphore, None] = None,
 ) -> None:
     """Background task: refresh the featured-streams cache without blocking the caller."""
+    refresh_acquired = False
     try:
+        if refresh_limiter is not None:
+            try:
+                await asyncio.wait_for(refresh_limiter.acquire(), timeout=Config.BACKGROUND_REFRESH_ACQUIRE_TIMEOUT_SECONDS)
+                refresh_acquired = True
+            except asyncio.TimeoutError:
+                logger.info("Skipping featured refresh for %s: background refresh limiter saturated.", stale_key)
+                return
+
+        limiter = thread_limiter if thread_limiter is not None else contextlib.nullcontext()
         if category or subcategory or subcategories:
-            raw = await kick_call(
-                client.get_all_livestreams,
-                language, page_int,
-                category=category, subcategory=subcategory,
-                subcategories=subcategories, sort=sort, strict=strict_bool,
-                safe_value=language,
-                circuit_breaker=circuit_breaker,
-                circuit_breaker_name="non_critical",
-            )
+            async with limiter:
+                raw = await kick_call(
+                    client.get_all_livestreams,
+                    language, page_int,
+                    category=category, subcategory=subcategory,
+                    subcategories=subcategories, sort=sort, strict=strict_bool,
+                    safe_value=language,
+                    circuit_breaker=circuit_breaker,
+                    circuit_breaker_name="non_critical",
+                )
         else:
-            raw = await kick_call(
-                client.get_featured_livestreams,
-                language,
-                page_int,
-                safe_value=language,
-                circuit_breaker=circuit_breaker,
-                circuit_breaker_name="non_critical",
-            )
+            async with limiter:
+                raw = await kick_call(
+                    client.get_featured_livestreams,
+                    language,
+                    page_int,
+                    safe_value=language,
+                    circuit_breaker=circuit_breaker,
+                    circuit_breaker_name="non_critical",
+                )
 
         response_body = build_featured_response(raw, page_int)
         cache.set(stale_key, (response_body, 200), timeout=Config.FEATURED_STALE_TTL_SECONDS)
@@ -66,7 +82,12 @@ async def _refresh_featured(
         logger.info("Background refresh complete for featured streams: %s", stale_key)
     except Exception as exc:
         logger.warning("Background refresh failed for %s: %s", stale_key, exc)
+        # Refresh-attempt cooldown so a failing upstream doesn't get hammered
+        # by every subsequent request. Stale data keeps being served.
+        cache.set(fresh_key, True, timeout=Config.REFRESH_BACKOFF_SECONDS)
     finally:
+        if refresh_acquired and refresh_limiter is not None:
+            refresh_limiter.release()
         dedup_set(stale_key)
 
 
@@ -122,11 +143,19 @@ async def featured_livestreams(
             resp.headers.update(_FEATURED_CACHE_CONTROL)
             return resp
         if claim_inflight(stale_key):
-            asyncio.create_task(_refresh_featured(
-                cache, client, cb,
-                stale_key, fresh_key,
-                language, page_int, category, subcategory, subcategories, sort, strict_bool,
-            ))
+            if cb.state == "open":
+                cache.set(fresh_key, True, timeout=Config.REFRESH_BACKOFF_SECONDS)
+                dedup_set(stale_key)
+            else:
+                refresh_limiter = request.app.state.background_refresh_limiter
+                thread_limiter = request.app.state.non_critical_thread_limiter
+                asyncio.create_task(_refresh_featured(
+                    cache, client, cb,
+                    stale_key, fresh_key,
+                    language, page_int, category, subcategory, subcategories, sort, strict_bool,
+                    refresh_limiter=refresh_limiter,
+                    thread_limiter=thread_limiter,
+                ))
         resp = cached_value_to_response(stale_cached)
         resp.headers.update(_FEATURED_CACHE_CONTROL)
         return resp

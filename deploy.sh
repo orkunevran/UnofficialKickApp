@@ -54,9 +54,13 @@ echo "=== Step 1: Syncing code to Raspberry Pi ==="
   --exclude='.DS_Store' \
   --exclude='__pycache__' \
   --exclude='.claude' \
+  --exclude='.kilo' \
+  --exclude='.kilocode' \
+  --exclude='.pytest_cache' \
   --exclude='.vscode' \
   --exclude='.git' \
   --exclude='.env' \
+  --exclude='docs' \
   "${LOCAL_REPO_DIR}/" \
   "${PI_USER}@${PI_HOST}:${DEPLOY_DIR}/"
 

@@ -53,10 +53,14 @@ This file defines the default operating rules for AI coding agents in this repos
 ## Kilo Tool-Call Stability
 
 - In plan mode, prefer plain text once enough context is gathered.
+- In plan mode, inspect with at most 4 tool calls before producing a plan unless a concrete blocker remains.
+- In ask mode, answer from existing context when possible and inspect with at most 3 tool calls.
 - Use one tool call per assistant step; avoid parallel or nested tool calls in Kilo sessions.
 - Do not invent or emit tool-call metadata such as `id` values.
 - If a tool schema explicitly requires an `id`, provide it as a plain string only.
 - Keep tool arguments minimal and exactly shaped to the target schema.
+- Prefer read, grep, glob, and list tools over bash for repository inspection.
+- Do not use the question tool unless user input is required to avoid unsafe or destructive action.
 
 ## Fast Dev Commands
 

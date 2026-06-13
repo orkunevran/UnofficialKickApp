@@ -47,9 +47,12 @@ type Config struct {
 	FeaturedLanguages   []Language
 	DefaultLanguageCode string
 
-	// Concurrency (carried for later phases)
-	NonCriticalThreadOpConcurrency  int
-	BackgroundRefreshMaxConcurrency int
+	LiveInflightWaitTimeoutSeconds float64
+
+	// Concurrency
+	NonCriticalThreadOpConcurrency         int
+	BackgroundRefreshMaxConcurrency        int
+	BackgroundRefreshAcquireTimeoutSeconds float64
 
 	// Circuit breaker
 	CircuitBreakerFailureThreshold         int
@@ -93,11 +96,14 @@ func Load() *Config {
 		NegativeCacheDurationSeconds: envInt("NEGATIVE_CACHE_DURATION_SECONDS", 10),
 		FeaturedStaleTTLSeconds:      envInt("FEATURED_STALE_TTL_SECONDS", 300),
 
+		LiveInflightWaitTimeoutSeconds: envFloat("LIVE_INFLIGHT_WAIT_TIMEOUT_SECONDS", 5.0),
+
 		FeaturedLanguages:   envLanguages("FEATURED_LANGUAGES", defaultLanguages()),
 		DefaultLanguageCode: envStr("DEFAULT_LANGUAGE_CODE", "tr"),
 
-		NonCriticalThreadOpConcurrency:  envInt("NON_CRITICAL_THREAD_OP_CONCURRENCY", 4),
-		BackgroundRefreshMaxConcurrency: envInt("BACKGROUND_REFRESH_MAX_CONCURRENCY", 4),
+		NonCriticalThreadOpConcurrency:         envInt("NON_CRITICAL_THREAD_OP_CONCURRENCY", 4),
+		BackgroundRefreshMaxConcurrency:        envInt("BACKGROUND_REFRESH_MAX_CONCURRENCY", 4),
+		BackgroundRefreshAcquireTimeoutSeconds: envFloat("BACKGROUND_REFRESH_ACQUIRE_TIMEOUT_SECONDS", 0.05),
 
 		CircuitBreakerFailureThreshold:         envInt("CIRCUIT_BREAKER_FAILURE_THRESHOLD", 5),
 		CircuitBreakerCriticalFailureThreshold: envInt("CIRCUIT_BREAKER_CRITICAL_FAILURE_THRESHOLD", 8),
@@ -147,6 +153,15 @@ func envBool(key string, def bool) bool {
 	if v, ok := os.LookupEnv(key); ok {
 		if b, err := strconv.ParseBool(v); err == nil {
 			return b
+		}
+	}
+	return def
+}
+
+func envFloat(key string, def float64) float64 {
+	if v, ok := os.LookupEnv(key); ok {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
 		}
 	}
 	return def

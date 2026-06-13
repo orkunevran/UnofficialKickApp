@@ -11,20 +11,29 @@ import (
 	"strings"
 	"time"
 
+	"context"
+
 	"kickapi/internal/breaker"
 	"kickapi/internal/cache"
 	"kickapi/internal/config"
+	"kickapi/internal/inflight"
 	"kickapi/internal/kick"
 )
 
+// inflightStaleAge matches InflightTracker._STALE_SECONDS — markers older than
+// this are abandoned fetches and are swept.
+const inflightStaleAge = 30 * time.Second
+
 // App holds the server dependencies and rendered assets.
 type App struct {
-	cfg           *config.Config
-	log           *slog.Logger
-	cache         *cache.Cache
-	cbCritical    *breaker.Breaker
-	cbNonCritical *breaker.Breaker
-	kick          kickClient
+	cfg            *config.Config
+	log            *slog.Logger
+	cache          *cache.Cache
+	cbCritical     *breaker.Breaker
+	cbNonCritical  *breaker.Breaker
+	kick           kickClient
+	inflight       *inflight.Tracker
+	refreshLimiter *limiter
 
 	staticFS  fs.FS
 	indexHTML string
@@ -60,13 +69,32 @@ func New(cfg *config.Config, log *slog.Logger, assets fs.FS) (*App, error) {
 		cfg:           cfg,
 		log:           log,
 		cache:         cache.New(cfg.CacheMaxSize, time.Duration(cfg.CacheDefaultTimeout)*time.Second),
-		cbCritical:    breaker.New(cfg.CircuitBreakerCriticalFailureThreshold, time.Duration(cfg.CircuitBreakerRecoverySeconds)*time.Second),
-		cbNonCritical: breaker.New(cfg.CircuitBreakerFailureThreshold, time.Duration(cfg.CircuitBreakerRecoverySeconds)*time.Second),
-		kick:          kickClient,
-		staticFS:      staticFS,
-		indexHTML:     renderIndex(string(tmpl), hashes),
-		startTime:     time.Now(),
+		cbCritical:     breaker.New(cfg.CircuitBreakerCriticalFailureThreshold, time.Duration(cfg.CircuitBreakerRecoverySeconds)*time.Second),
+		cbNonCritical:  breaker.New(cfg.CircuitBreakerFailureThreshold, time.Duration(cfg.CircuitBreakerRecoverySeconds)*time.Second),
+		kick:           kickClient,
+		inflight:       inflight.New(),
+		refreshLimiter: newLimiter(cfg.BackgroundRefreshMaxConcurrency),
+		staticFS:       staticFS,
+		indexHTML:      renderIndex(string(tmpl), hashes),
+		startTime:      time.Now(),
 	}, nil
+}
+
+// RunSweeper periodically removes abandoned in-flight markers, mirroring the
+// Python _periodic_inflight_sweep background task. It returns when ctx is done.
+func (a *App) RunSweeper(ctx context.Context) {
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if n := a.inflight.SweepStale(inflightStaleAge); n > 0 {
+				a.log.Info("swept stale in-flight entries", "count", n)
+			}
+		}
+	}
 }
 
 // Cache exposes the cache (used by later phases / tests).

@@ -103,6 +103,12 @@ func checkBreaker(b *breaker.Breaker) map[string]any {
 	return map[string]any{"status": status, "state": state}
 }
 
+// inflightStats returns the in-flight dedup tracker snapshot for /metrics.
+func (a *App) inflightStats() map[string]any {
+	active, timeouts := a.inflight.Stats()
+	return map[string]any{"active_keys": active, "timeout_count": timeouts}
+}
+
 // handleMetrics returns cache, upstream, circuit-breaker, and inflight metrics.
 // Ports api/metrics.py.
 func (a *App) handleMetrics(w http.ResponseWriter, r *http.Request) {
@@ -118,9 +124,7 @@ func (a *App) handleMetrics(w http.ResponseWriter, r *http.Request) {
 			},
 			"circuit_breaker_events": obs.LaneEventsSnapshot(),
 		},
-		// Inflight dedup tracker arrives in Phase 2; report zeros for now so
-		// the metrics shape stays stable.
-		"inflight": map[string]any{"active_keys": 0, "timeout_count": 0},
+		"inflight":       a.inflightStats(),
 		"uptime_seconds": a.uptimeSeconds(),
 	})
 }

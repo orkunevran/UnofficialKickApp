@@ -17,8 +17,12 @@ import (
 	"kickapi/internal/transform"
 )
 
+// featuredInflightWait is the default in-flight wait for featured (Python uses
+// InflightTracker._WAIT_TIMEOUT = 15s for that endpoint).
+const featuredInflightWait = 15 * time.Second
+
 // kickClient is the subset of the Kick client the handlers use. The seam lets
-// later phases inject fakes for parity tests without a live network.
+// tests inject fakes without a live network.
 type kickClient interface {
 	GetChannelData(slug string) (map[string]any, error)
 	GetChannelVideos(slug string) (any, error)
@@ -52,6 +56,11 @@ func requestCacheKey(prefix string, r *http.Request) string {
 	return key
 }
 
+func (a *App) ttl(seconds int) time.Duration      { return time.Duration(seconds) * time.Second }
+func (a *App) ttlFloat(seconds float64) time.Duration {
+	return time.Duration(seconds * float64(time.Second))
+}
+
 // kickCall wraps an upstream call with circuit-breaker gating, the upstream
 // call/lane counters, and error→apierr mapping — porting _common.py kick_call.
 func kickCall[T any](cb *breaker.Breaker, lane, safeValue string, fn func() (T, error)) (T, *apierr.Error) {
@@ -75,9 +84,7 @@ func kickCall[T any](cb *breaker.Breaker, lane, safeValue string, fn func() (T, 
 	return result, nil
 }
 
-func (a *App) ttl(seconds int) time.Duration { return time.Duration(seconds) * time.Second }
-
-// ── /streams/play ────────────────────────────────────────────────────────────
+// ── /streams/play (stale-while-revalidate) ──────────────────────────────────
 
 func (a *App) handlePlayStream(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
@@ -85,29 +92,95 @@ func (a *App) handlePlayStream(w http.ResponseWriter, r *http.Request) {
 		errorJSON(w, fmt.Sprintf("Invalid channel slug: '%s'.", slug), 400)
 		return
 	}
-	key := "live:/streams/play/" + slug
-	if v, ok := a.cache.Get(key); ok {
-		writeJSON(w, 200, v)
+	staleKey := "live:/streams/play/" + slug
+	freshKey := "live-fresh:/streams/play/" + slug
+
+	if stale, ok := a.cacheGet(staleKey); ok {
+		_, fresh := a.cache.Get(freshKey)
+		if !fresh && a.inflight.ClaimInflight(staleKey) {
+			if a.cbCritical.State() == breaker.StateOpen {
+				// Breaker open — don't burn DNS/TCP attempts; hold off refresh.
+				a.cache.SetTTL(freshKey, true, a.ttl(a.cfg.RefreshBackoffSeconds))
+				a.inflight.DedupSet(staleKey)
+			} else {
+				go a.refreshPlayStream(staleKey, freshKey, slug)
+			}
+		}
+		writeCached(w, stale)
 		return
 	}
+
+	// Cold: wait for an in-flight fetch, or become the fetcher.
+	if v, ok := a.inflight.DedupGet(a.cache, staleKey, a.ttlFloat(a.cfg.LiveInflightWaitTimeoutSeconds)); ok {
+		if c, ok := v.(cachedResp); ok {
+			writeCached(w, c)
+			return
+		}
+	}
+	defer a.inflight.DedupSet(staleKey)
 
 	data, apiErr := kickCall(a.cbCritical, obs.LaneCritical, slug, func() (map[string]any, error) {
 		return a.kick.GetChannelData(slug)
 	})
 	if apiErr != nil {
+		if apiErr.Status == 404 {
+			a.negativeCache(staleKey, freshKey, apiErr.Message)
+		}
 		errorJSON(w, apiErr.Message, apiErr.Status)
 		return
 	}
+	payload, perr := a.cachePlayResult(staleKey, freshKey, slug, data)
+	if perr != nil {
+		errorJSON(w, perr.Message, perr.Status)
+		return
+	}
+	writeCached(w, cachedResp{payload: payload, status: 200})
+}
+
+// refreshPlayStream revalidates the play cache in the background.
+func (a *App) refreshPlayStream(staleKey, freshKey, slug string) {
+	defer a.inflight.DedupSet(staleKey)
+	if !a.refreshLimiter.tryAcquire(a.ttlFloat(a.cfg.BackgroundRefreshAcquireTimeoutSeconds)) {
+		a.log.Info("skipping live refresh: refresh limiter saturated", "key", staleKey)
+		return
+	}
+	defer a.refreshLimiter.release()
+
+	data, apiErr := kickCall(a.cbCritical, obs.LaneCritical, slug, func() (map[string]any, error) {
+		return a.kick.GetChannelData(slug)
+	})
+	if apiErr != nil {
+		if apiErr.Status == 404 {
+			a.negativeCache(staleKey, freshKey, apiErr.Message)
+		} else {
+			// Refresh cooldown so a down upstream isn't hammered every request.
+			a.cache.SetTTL(freshKey, true, a.ttl(a.cfg.RefreshBackoffSeconds))
+		}
+		return
+	}
+	if _, perr := a.cachePlayResult(staleKey, freshKey, slug, data); perr != nil {
+		a.cache.SetTTL(freshKey, true, a.ttl(a.cfg.RefreshBackoffSeconds))
+	}
+}
+
+// cachePlayResult builds the play payload, caches stale+fresh+live-url, and
+// returns the payload.
+func (a *App) cachePlayResult(staleKey, freshKey, slug string, data map[string]any) (map[string]any, *apierr.Error) {
 	if pb, ok := data["playback_url"].(string); ok && pb != "" {
 		a.cache.SetTTL("live-url:"+slug, pb, a.ttl(a.cfg.LiveStaleTTLSeconds))
 	}
 	payload, perr := buildPlayStreamPayload(data, slug)
 	if perr != nil {
-		errorJSON(w, perr.Message, perr.Status)
-		return
+		return nil, perr
 	}
-	a.cache.SetTTL(key, payload, a.ttl(a.cfg.LiveCacheDurationSeconds))
-	writeJSON(w, 200, payload)
+	a.cachePut(staleKey, payload, 200, a.ttl(a.cfg.LiveStaleTTLSeconds))
+	a.cache.SetTTL(freshKey, true, a.ttl(a.cfg.LiveCacheDurationSeconds))
+	return payload, nil
+}
+
+func (a *App) negativeCache(staleKey, freshKey, message string) {
+	a.cachePut(staleKey, envelopeMap("error", message, map[string]any{}), 404, a.ttl(a.cfg.NegativeCacheDurationSeconds))
+	a.cache.SetTTL(freshKey, true, a.ttl(a.cfg.NegativeCacheDurationSeconds))
 }
 
 // buildPlayStreamPayload ports _build_play_stream_payload (channel.py).
@@ -204,8 +277,8 @@ func (a *App) handleAvatar(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := "avatar:/streams/avatar/" + slug
-	if v, ok := a.cache.Get(key); ok {
-		writeJSON(w, 200, v)
+	if c, ok := a.cacheGet(key); ok {
+		writeCached(w, c)
 		return
 	}
 
@@ -214,8 +287,8 @@ func (a *App) handleAvatar(w http.ResponseWriter, r *http.Request) {
 		if data := extractDataMap(lv); data != nil {
 			if _, present := data["profile_picture"]; present {
 				payload := envelopeMap("success", "", map[string]any{"profile_picture": data["profile_picture"]})
-				a.cache.SetTTL(key, payload, a.ttl(a.cfg.AvatarCacheDurationSeconds))
-				writeJSON(w, 200, payload)
+				a.cachePut(key, payload, 200, a.ttl(a.cfg.AvatarCacheDurationSeconds))
+				writeCached(w, cachedResp{payload: payload, status: 200})
 				return
 			}
 		}
@@ -233,16 +306,25 @@ func (a *App) handleAvatar(w http.ResponseWriter, r *http.Request) {
 		pic = user["profile_pic"]
 	}
 	payload := envelopeMap("success", "", map[string]any{"profile_picture": pic})
-	a.cache.SetTTL(key, payload, a.ttl(a.cfg.AvatarCacheDurationSeconds))
-	writeJSON(w, 200, payload)
+	a.cachePut(key, payload, 200, a.ttl(a.cfg.AvatarCacheDurationSeconds))
+	writeCached(w, cachedResp{payload: payload, status: 200})
 }
 
+// extractDataMap pulls the "data" map from a cached play response (cachedResp
+// or a bare payload map).
 func extractDataMap(v any) map[string]any {
-	if m, ok := v.(map[string]any); ok {
-		d, _ := m["data"].(map[string]any)
-		return d
+	var payload map[string]any
+	switch t := v.(type) {
+	case cachedResp:
+		payload = t.payload
+	case map[string]any:
+		payload = t
 	}
-	return nil
+	if payload == nil {
+		return nil
+	}
+	d, _ := payload["data"].(map[string]any)
+	return d
 }
 
 // ── /streams/clips ───────────────────────────────────────────────────────────
@@ -254,8 +336,8 @@ func (a *App) handleClips(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := "clips:/streams/clips/" + slug
-	if v, ok := a.cache.Get(key); ok {
-		writeJSON(w, 200, v)
+	if c, ok := a.cacheGet(key); ok {
+		writeCached(w, c)
 		return
 	}
 	raw, apiErr := kickCall(a.cbNonCritical, obs.LaneNonCritical, slug, func() (any, error) {
@@ -266,8 +348,8 @@ func (a *App) handleClips(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	payload := envelopeMap("success", "", map[string]any{"clips": transform.NormalizeClipList(raw, slug)})
-	a.cache.SetTTL(key, payload, a.ttl(a.cfg.VODCacheDurationSeconds))
-	writeJSON(w, 200, payload)
+	a.cachePut(key, payload, 200, a.ttl(a.cfg.VODCacheDurationSeconds))
+	writeCached(w, cachedResp{payload: payload, status: 200})
 }
 
 // ── /streams/vods ────────────────────────────────────────────────────────────
@@ -279,8 +361,8 @@ func (a *App) handleVODs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := "vods:/streams/vods/" + slug
-	if v, ok := a.cache.Get(key); ok {
-		writeJSON(w, 200, v)
+	if c, ok := a.cacheGet(key); ok {
+		writeCached(w, c)
 		return
 	}
 	raw, apiErr := kickCall(a.cbNonCritical, obs.LaneNonCritical, slug, func() (any, error) {
@@ -291,8 +373,8 @@ func (a *App) handleVODs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	payload := envelopeMap("success", "", map[string]any{"vods": transform.ProcessVODData(raw)})
-	a.cache.SetTTL(key, payload, a.ttl(a.cfg.VODCacheDurationSeconds))
-	writeJSON(w, 200, payload)
+	a.cachePut(key, payload, 200, a.ttl(a.cfg.VODCacheDurationSeconds))
+	writeCached(w, cachedResp{payload: payload, status: 200})
 }
 
 func (a *App) handlePlayVOD(w http.ResponseWriter, r *http.Request) {
@@ -324,7 +406,7 @@ func (a *App) handlePlayVOD(w http.ResponseWriter, r *http.Request) {
 	errorJSON(w, "VOD not found.", 404)
 }
 
-// ── /streams/featured-livestreams ────────────────────────────────────────────
+// ── /streams/featured-livestreams (stale-while-revalidate) ───────────────────
 
 func (a *App) handleFeatured(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
@@ -339,13 +421,11 @@ func (a *App) handleFeatured(w http.ResponseWriter, r *http.Request) {
 	if p, err := strconv.Atoi(q.Get("page")); err == nil && p > 1 {
 		page = p
 	}
-
 	category := strings.TrimSpace(q.Get("category"))
 	subcategory := strings.TrimSpace(q.Get("subcategory"))
 	subcategories := strings.TrimSpace(q.Get("subcategories"))
 	sortParam := strings.ToLower(strings.TrimSpace(q.Get("sort")))
 	strict := strings.EqualFold(strings.TrimSpace(q.Get("strict")), "true")
-
 	if category != "" && !subcategoryRe.MatchString(category) {
 		category = ""
 	}
@@ -362,28 +442,73 @@ func (a *App) handleFeatured(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cacheControl := fmt.Sprintf("public, max-age=%d", a.cfg.FeaturedCacheDurationSeconds)
-	key := requestCacheKey("featured-livestreams", r)
-	if v, ok := a.cache.Get(key); ok {
+	staleKey := requestCacheKey("featured-livestreams", r)
+	freshKey := requestCacheKey("featured-fresh", r)
+
+	if stale, ok := a.cacheGet(staleKey); ok {
 		w.Header().Set("Cache-Control", cacheControl)
-		writeJSON(w, 200, v)
+		_, fresh := a.cache.Get(freshKey)
+		if !fresh && a.inflight.ClaimInflight(staleKey) {
+			if a.cbNonCritical.State() == breaker.StateOpen {
+				a.cache.SetTTL(freshKey, true, a.ttl(a.cfg.RefreshBackoffSeconds))
+				a.inflight.DedupSet(staleKey)
+			} else {
+				go a.refreshFeatured(staleKey, freshKey, language, page, category, subcategory, subcategories, sortParam, strict)
+			}
+		}
+		writeCached(w, stale)
 		return
 	}
 
-	filtered := category != "" || subcategory != "" || subcategories != ""
-	raw, apiErr := kickCall(a.cbNonCritical, obs.LaneNonCritical, language, func() (any, error) {
-		if filtered {
-			return a.kick.GetAllLivestreams(language, page, category, subcategory, subcategories, sortParam, strict)
+	if v, ok := a.inflight.DedupGet(a.cache, staleKey, featuredInflightWait); ok {
+		if c, ok := v.(cachedResp); ok {
+			w.Header().Set("Cache-Control", cacheControl)
+			writeCached(w, c)
+			return
 		}
-		return a.kick.GetFeaturedLivestreams(language, page)
-	})
+	}
+	defer a.inflight.DedupSet(staleKey)
+
+	raw, apiErr := a.fetchFeatured(language, page, category, subcategory, subcategories, sortParam, strict)
 	if apiErr != nil {
 		errorJSON(w, apiErr.Message, apiErr.Status)
 		return
 	}
 	body := transform.BuildFeaturedResponse(raw, page)
-	a.cache.SetTTL(key, body, a.ttl(a.cfg.FeaturedCacheDurationSeconds))
+	a.cachePut(staleKey, body, 200, a.ttl(a.cfg.FeaturedStaleTTLSeconds))
+	a.cache.SetTTL(freshKey, true, a.ttl(a.cfg.FeaturedCacheDurationSeconds))
+	a.warmCachesFromFeatured(dataList(body))
 	w.Header().Set("Cache-Control", cacheControl)
-	writeJSON(w, 200, body)
+	writeCached(w, cachedResp{payload: body, status: 200})
+}
+
+func (a *App) fetchFeatured(language string, page int, category, subcategory, subcategories, sortParam string, strict bool) (any, *apierr.Error) {
+	filtered := category != "" || subcategory != "" || subcategories != ""
+	return kickCall(a.cbNonCritical, obs.LaneNonCritical, language, func() (any, error) {
+		if filtered {
+			return a.kick.GetAllLivestreams(language, page, category, subcategory, subcategories, sortParam, strict)
+		}
+		return a.kick.GetFeaturedLivestreams(language, page)
+	})
+}
+
+func (a *App) refreshFeatured(staleKey, freshKey, language string, page int, category, subcategory, subcategories, sortParam string, strict bool) {
+	defer a.inflight.DedupSet(staleKey)
+	if !a.refreshLimiter.tryAcquire(a.ttlFloat(a.cfg.BackgroundRefreshAcquireTimeoutSeconds)) {
+		a.log.Info("skipping featured refresh: refresh limiter saturated", "key", staleKey)
+		return
+	}
+	defer a.refreshLimiter.release()
+
+	raw, apiErr := a.fetchFeatured(language, page, category, subcategory, subcategories, sortParam, strict)
+	if apiErr != nil {
+		a.cache.SetTTL(freshKey, true, a.ttl(a.cfg.RefreshBackoffSeconds))
+		return
+	}
+	body := transform.BuildFeaturedResponse(raw, page)
+	a.cachePut(staleKey, body, 200, a.ttl(a.cfg.FeaturedStaleTTLSeconds))
+	a.cache.SetTTL(freshKey, true, a.ttl(a.cfg.FeaturedCacheDurationSeconds))
+	a.warmCachesFromFeatured(dataList(body))
 }
 
 func (a *App) isValidLanguage(code string) bool {
@@ -393,6 +518,66 @@ func (a *App) isValidLanguage(code string) bool {
 		}
 	}
 	return false
+}
+
+func dataList(body map[string]any) []any {
+	l, _ := body["data"].([]any)
+	return l
+}
+
+// warmCachesFromFeatured pre-populates avatar (7d) and partial play (short TTL)
+// caches from a featured response — porting transformers.warm_caches_from_featured.
+func (a *App) warmCachesFromFeatured(streams []any) {
+	for _, s := range streams {
+		stream, ok := s.(map[string]any)
+		if !ok {
+			continue
+		}
+		ch, _ := stream["channel"].(map[string]any)
+		slug, _ := ch["slug"].(string)
+		if slug == "" {
+			continue
+		}
+		user, _ := ch["user"].(map[string]any)
+		pic := user["profilepic"]
+
+		avatarKey := "avatar:/streams/avatar/" + slug
+		if pic != nil {
+			if _, exists := a.cache.Get(avatarKey); !exists {
+				a.cachePut(avatarKey, envelopeMap("success", "", map[string]any{"profile_picture": pic}), 200, a.ttl(a.cfg.AvatarCacheDurationSeconds))
+			}
+		}
+
+		playKey := "live:/streams/play/" + slug
+		if _, exists := a.cache.Get(playKey); !exists {
+			if rawURL, ok := ch["playback_url"].(string); ok && rawURL != "" {
+				a.cache.SetTTL("live-url:"+slug, rawURL, a.ttl(a.cfg.LiveStaleTTLSeconds))
+			}
+			status := "offline"
+			if b, ok := stream["is_live"].(bool); ok && b {
+				status = "live"
+			}
+			username := any(slug)
+			if u, ok := user["username"]; ok {
+				username = u
+			}
+			partial := envelopeMap("success", "", map[string]any{
+				"status":                   status,
+				"channel_slug":             slug,
+				"username":                 username,
+				"profile_picture":          pic,
+				"playback_url":             "/streams/m3u8/" + slug + ".m3u8",
+				"session_title":            stream["session_title"],
+				"livestream_id":            stream["id"],
+				"livestream_viewer_count":  stream["viewer_count"],
+				"livestream_thumbnail_url": transform.ExtractThumbnail(stream, pic),
+				"livestream_category":      transform.ExtractCategoryName(stream),
+				"start_time":               stream["start_time"],
+				"_partial":                 true,
+			})
+			a.cachePut(playKey, partial, 200, a.ttl(a.cfg.LiveCacheDurationSeconds))
+		}
+	}
 }
 
 // ── /streams/search ──────────────────────────────────────────────────────────
@@ -408,8 +593,8 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := requestCacheKey("search", r)
-	if v, ok := a.cache.Get(key); ok {
-		writeJSON(w, 200, v)
+	if c, ok := a.cacheGet(key); ok {
+		writeCached(w, c)
 		return
 	}
 	results, apiErr := kickCall(a.cbNonCritical, obs.LaneNonCritical, query, func() ([]map[string]any, error) {
@@ -420,8 +605,8 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	payload := envelopeMap("success", "", results)
-	a.cache.SetTTL(key, payload, a.ttl(a.cfg.SearchCacheDurationSeconds))
-	writeJSON(w, 200, payload)
+	a.cachePut(key, payload, 200, a.ttl(a.cfg.SearchCacheDurationSeconds))
+	writeCached(w, cachedResp{payload: payload, status: 200})
 }
 
 // ── /streams/viewers ─────────────────────────────────────────────────────────
@@ -437,8 +622,8 @@ func (a *App) handleViewers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key := requestCacheKey("viewers", r)
-	if v, ok := a.cache.Get(key); ok {
-		writeJSON(w, 200, v)
+	if c, ok := a.cacheGet(key); ok {
+		writeCached(w, c)
 		return
 	}
 	viewers, apiErr := kickCall(a.cbNonCritical, obs.LaneNonCritical, strconv.Itoa(id), func() (int, error) {
@@ -449,8 +634,8 @@ func (a *App) handleViewers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	payload := envelopeMap("success", "", map[string]any{"viewer_count": viewers})
-	a.cache.SetTTL(key, payload, a.ttl(a.cfg.ViewerCacheDurationSeconds))
-	writeJSON(w, 200, payload)
+	a.cachePut(key, payload, 200, a.ttl(a.cfg.ViewerCacheDurationSeconds))
+	writeCached(w, cachedResp{payload: payload, status: 200})
 }
 
 func (a *App) handleViewersBatch(w http.ResponseWriter, r *http.Request) {
@@ -485,8 +670,8 @@ func (a *App) handleViewersBatch(w http.ResponseWriter, r *http.Request) {
 		parts[i] = strconv.Itoa(id)
 	}
 	key := "viewers-batch:" + strings.Join(parts, ",")
-	if v, ok := a.cache.Get(key); ok {
-		writeJSON(w, 200, v)
+	if c, ok := a.cacheGet(key); ok {
+		writeCached(w, c)
 		return
 	}
 
@@ -502,6 +687,6 @@ func (a *App) handleViewersBatch(w http.ResponseWriter, r *http.Request) {
 		data[strconv.Itoa(k)] = v
 	}
 	payload := envelopeMap("success", "", data)
-	a.cache.SetTTL(key, payload, a.ttl(a.cfg.ViewerCacheDurationSeconds))
-	writeJSON(w, 200, payload)
+	a.cachePut(key, payload, 200, a.ttl(a.cfg.ViewerCacheDurationSeconds))
+	writeCached(w, cachedResp{payload: payload, status: 200})
 }

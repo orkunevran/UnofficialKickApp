@@ -45,6 +45,9 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Background: sweep abandoned in-flight dedup markers until shutdown.
+	go app.RunSweeper(ctx)
+
 	errCh := make(chan error, 1)
 	go func() {
 		log.Info("server listening", "addr", srv.Addr)

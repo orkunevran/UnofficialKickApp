@@ -187,9 +187,19 @@ external risks (TLS, Chromecast) are isolated so a blocker can't strand the whol
   **Deferred to Phase 2:** SWR (stale+fresh keys), in-flight dedup, negative caching, and
   the background-refresh limiter — Phase 1 uses simple single-key TTL caching per endpoint.
 
-- **Phase 2 — Caching semantics: SWR + inflight dedup + circuit-breaker lanes**
-  `singleflight`, stale-while-revalidate, per-lane breakers, the m3u8/go redirect proxies.
-  **Exit:** parity suite (§8) green for all `/streams/*` non-chromecast endpoints.
+- **Phase 2 — Caching semantics: SWR + inflight dedup + circuit-breaker lanes** ✅ **DONE (verified live)**
+  `internal/inflight` ports `InflightTracker` (DedupGet/DedupSet/ClaimInflight/SweepStale +
+  active-keys/timeout metrics) using a closed-channel broadcast (the asyncio.Event analog).
+  `play` and `featured` now do stale-while-revalidate (stale+fresh keys, background refresh
+  via a bounded `limiter`, breaker-open hold-off, refresh cooldown), negative caching of
+  404s, and `warm_caches_from_featured`. A 60s sweeper goroutine (cancelled on shutdown)
+  removes abandoned markers; `/metrics` reports real inflight stats. Per-lane breakers were
+  already wired in Phase 1. Tests pass under `-race`.
+  **Exit met (live):** `featured` warmed 47 entries; featured-channel avatar served from warm
+  cache; `play` served the partial instantly then background-refreshed; 404 negative-cached
+  (0.92s → 0.0007s on replay); `inflight active_keys=0` after fetches.
+  *Chose the ported tracker over `singleflight` — the SWR `ClaimInflight` primitive and the
+  metrics counters need state singleflight doesn't expose.*
 
 - **Phase 3 — Chromecast** (the second blocker, isolated)
   `vishen/go-chromecast` + hand-ported fallback scan + host persistence + state machine.

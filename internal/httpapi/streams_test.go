@@ -152,6 +152,27 @@ func TestCircuitBreakerRejection(t *testing.T) {
 	}
 }
 
+func TestNegativeCache404Replays(t *testing.T) {
+	fake := &fakeKick{channelErr: &kick.HTTPError{Status: 404}}
+	app := appWithKick(t, fake)
+
+	// First request fetches and 404s.
+	if code, _ := getJSON(t, app, "/streams/play/ghost"); code != 404 {
+		t.Fatalf("first call status = %d; want 404", code)
+	}
+	// Second request must be served from the negative cache (no extra fetch).
+	code, body := getJSON(t, app, "/streams/play/ghost")
+	if code != 404 {
+		t.Fatalf("second call status = %d; want 404 (from negative cache)", code)
+	}
+	if body["status"] != "error" {
+		t.Fatalf("negative-cached body should be an error envelope: %v", body)
+	}
+	if fake.calls != 1 {
+		t.Fatalf("expected 1 upstream call (404 negative-cached), got %d", fake.calls)
+	}
+}
+
 func TestViewersBatch(t *testing.T) {
 	fake := &fakeKick{batch: map[int]int{101: 5, 202: 9}}
 	code, body := getJSON(t, appWithKick(t, fake), "/streams/viewers/batch?ids=202,101")

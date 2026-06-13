@@ -60,10 +60,17 @@ type Config struct {
 	CircuitBreakerRecoverySeconds          int
 	RefreshBackoffSeconds                  int
 
-	// Chromecast (carried for later phases)
-	ChromecastPeriodicScanInterval int
-	ChromecastFallbackScanEnabled  bool
-	ChromecastFallbackScanSubnets  string
+	// Chromecast
+	ChromecastScanTimeout               int
+	ChromecastSelectMaxRetries          int
+	ChromecastSelectRetryDelay          int
+	ChromecastDeviceCacheSeconds        int
+	ChromecastPeriodicScanInterval      int
+	ChromecastFallbackScanEnabled       bool
+	ChromecastFallbackScanSubnets       string
+	ChromecastFallbackScanWorkers       int
+	ChromecastFallbackScanProbeTimeout  float64
+	ChromecastFallbackDeviceInfoTimeout float64
 
 	// HTTP / security
 	CORSOrigins            string
@@ -110,9 +117,16 @@ func Load() *Config {
 		CircuitBreakerRecoverySeconds:          envInt("CIRCUIT_BREAKER_RECOVERY_SECONDS", 30),
 		RefreshBackoffSeconds:                  envInt("REFRESH_BACKOFF_SECONDS", 5),
 
-		ChromecastPeriodicScanInterval: envInt("CHROMECAST_PERIODIC_SCAN_INTERVAL", 90),
-		ChromecastFallbackScanEnabled:  envBool("CHROMECAST_FALLBACK_SCAN_ENABLED", true),
-		ChromecastFallbackScanSubnets:  envStr("CHROMECAST_FALLBACK_SCAN_SUBNETS", "192.168.0.0/24,192.168.1.0/24,192.168.2.0/24,10.0.0.0/24,10.0.1.0/24,10.0.2.0/24"),
+		ChromecastScanTimeout:               envInt("CHROMECAST_SCAN_TIMEOUT", 5),
+		ChromecastSelectMaxRetries:          envInt("CHROMECAST_SELECT_MAX_RETRIES", 2),
+		ChromecastSelectRetryDelay:          envInt("CHROMECAST_SELECT_RETRY_DELAY", 2),
+		ChromecastDeviceCacheSeconds:        envInt("CHROMECAST_DEVICE_CACHE_SECONDS", 30),
+		ChromecastPeriodicScanInterval:      envInt("CHROMECAST_PERIODIC_SCAN_INTERVAL", 90),
+		ChromecastFallbackScanEnabled:       envBool("CHROMECAST_FALLBACK_SCAN_ENABLED", true),
+		ChromecastFallbackScanSubnets:       envStr("CHROMECAST_FALLBACK_SCAN_SUBNETS", "192.168.0.0/24,192.168.1.0/24,192.168.2.0/24,10.0.0.0/24,10.0.1.0/24,10.0.2.0/24"),
+		ChromecastFallbackScanWorkers:       envInt("CHROMECAST_FALLBACK_SCAN_WORKERS", 96),
+		ChromecastFallbackScanProbeTimeout:  envFloat("CHROMECAST_FALLBACK_SCAN_PROBE_TIMEOUT", 1.5),
+		ChromecastFallbackDeviceInfoTimeout: envFloat("CHROMECAST_FALLBACK_DEVICE_INFO_TIMEOUT", 3.0),
 
 		CORSOrigins:            envStr("CORS_ORIGINS", ""),
 		CORSAllowCredentials:   envBool("CORS_ALLOW_CREDENTIALS", false),

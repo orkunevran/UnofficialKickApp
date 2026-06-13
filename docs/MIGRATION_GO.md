@@ -201,13 +201,31 @@ external risks (TLS, Chromecast) are isolated so a blocker can't strand the whol
   *Chose the ported tracker over `singleflight` — the SWR `ClaimInflight` primitive and the
   metrics counters need state singleflight doesn't expose.*
 
-- **Phase 3 — Chromecast** (the second blocker, isolated)
-  `vishen/go-chromecast` + hand-ported fallback scan + host persistence + state machine.
-  **Exit:** manual cast/stop against real LAN devices; `chromecast` endpoint parity.
+- **Phase 3 — Chromecast** ✅ **DONE (unit tests green; manual cast test pending)**
+  `vishen/go-chromecast` + hand-ported fallback TCP subnet scan + LRU known-host
+  persistence + state machine (discovery/selection/control). 11 HTTP endpoints wired.
+  32 unit tests cover: ScanAsync state, device registry/dedup, SelectDevice state machine
+  (not-found/scanning/busy/timeout/success), CastStream/StopCast, volume clamping,
+  GetStatus, LRU eviction, candidateHosts IP math, subnet parsing.
+  Config fields added: ScanTimeout, SelectMaxRetries, SelectRetryDelay,
+  DeviceCacheSeconds, FallbackScanWorkers, FallbackScanProbeTimeout, FallbackDeviceInfoTimeout.
+  ⚠️ **Manual cast/stop against real LAN devices still required before cutover.**
 
-- **Phase 4 — Middleware + ops polish**
-  correlation IDs, security headers, gzip/brotli, request logging, log throttling, JSON
-  log mode, immutable static cache-control with hash query param.
+- **Phase 4 — Middleware + ops polish** ✅ **DONE**
+  All items complete:
+  - Correlation IDs (`X-Request-ID` generated/propagated in `requestContext`)
+  - Security headers (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`,
+    `Permissions-Policy`) via `requestContext`
+  - Request logging with method/path/status/duration/request_id (skip-list for high-freq
+    health+SSE+metrics paths)
+  - JSON log mode (`LOG_FORMAT_JSON` → `slog.JSONHandler`)
+  - Immutable static cache-control (`Cache-Control: public, max-age=31536000, immutable`
+    for `?h=`-busted URLs; 5-min TTL otherwise)
+  - Gzip compression (`klauspost/compress/gzhttp`, ≥1 KB, level 5 — matches
+    Python `GZipMiddleware(minimum_size=1024, compresslevel=5)`; preserves `http.Flusher`
+    for SSE stream endpoint)
+  - Log throttle (`logging.ThrottledLogger` + `StateChangeLog` — ports
+    `ThrottledErrorLog` / `StateChangeLog` from `services/log_throttle.py`)
 
 - **Phase 5 — Parity gate, load test, cutover**
   Full parity run, Pi load/soak test, Docker multi-stage `linux/arm64` build, cutover with

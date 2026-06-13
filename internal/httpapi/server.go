@@ -13,8 +13,10 @@ import (
 
 	"context"
 
+	"github.com/klauspost/compress/gzhttp"
 	"kickapi/internal/breaker"
 	"kickapi/internal/cache"
+	"kickapi/internal/chromecast"
 	"kickapi/internal/config"
 	"kickapi/internal/inflight"
 	"kickapi/internal/kick"
@@ -32,6 +34,7 @@ type App struct {
 	cbCritical     *breaker.Breaker
 	cbNonCritical  *breaker.Breaker
 	kick           kickClient
+	chromecast     chromecastService
 	inflight       *inflight.Tracker
 	refreshLimiter *limiter
 
@@ -65,6 +68,19 @@ func New(cfg *config.Config, log *slog.Logger, assets fs.FS) (*App, error) {
 		return nil, err
 	}
 
+	cc := chromecast.New(chromecast.Config{
+		ScanTimeout:          time.Duration(cfg.ChromecastScanTimeout) * time.Second,
+		SelectMaxRetries:     cfg.ChromecastSelectMaxRetries,
+		SelectRetryDelay:     time.Duration(cfg.ChromecastSelectRetryDelay) * time.Second,
+		DeviceCacheTTL:       time.Duration(cfg.ChromecastDeviceCacheSeconds) * time.Second,
+		FallbackScanEnabled:  cfg.ChromecastFallbackScanEnabled,
+		FallbackScanSubnets:  cfg.ChromecastFallbackScanSubnets,
+		FallbackScanWorkers:  cfg.ChromecastFallbackScanWorkers,
+		FallbackProbeTimeout: time.Duration(cfg.ChromecastFallbackScanProbeTimeout * float64(time.Second)),
+		FallbackInfoTimeout:  time.Duration(cfg.ChromecastFallbackDeviceInfoTimeout * float64(time.Second)),
+		StatePath:            ".kick_chromecast_cache.json",
+	}, log)
+
 	return &App{
 		cfg:           cfg,
 		log:           log,
@@ -72,6 +88,7 @@ func New(cfg *config.Config, log *slog.Logger, assets fs.FS) (*App, error) {
 		cbCritical:     breaker.New(cfg.CircuitBreakerCriticalFailureThreshold, time.Duration(cfg.CircuitBreakerRecoverySeconds)*time.Second),
 		cbNonCritical:  breaker.New(cfg.CircuitBreakerFailureThreshold, time.Duration(cfg.CircuitBreakerRecoverySeconds)*time.Second),
 		kick:           kickClient,
+		chromecast:     cc,
 		inflight:       inflight.New(),
 		refreshLimiter: newLimiter(cfg.BackgroundRefreshMaxConcurrency),
 		staticFS:       staticFS,
@@ -125,13 +142,33 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /streams/viewers", a.handleViewers)
 	mux.HandleFunc("GET /streams/viewers/batch", a.handleViewersBatch)
 
+	// Chromecast control endpoints.
+	mux.HandleFunc("GET /api/chromecast/devices", a.handleCCDevices)
+	mux.HandleFunc("POST /api/chromecast/select", a.handleCCSelect)
+	mux.HandleFunc("POST /api/chromecast/cast", a.handleCCCast)
+	mux.HandleFunc("POST /api/chromecast/stop", a.handleCCStop)
+	mux.HandleFunc("GET /api/chromecast/last-device", a.handleCCLastDevice)
+	mux.HandleFunc("GET /api/chromecast/status", a.handleCCStatus)
+	mux.HandleFunc("GET /api/chromecast/status/stream", a.handleCCStatusStream)
+	mux.HandleFunc("POST /api/chromecast/pause", a.handleCCPause)
+	mux.HandleFunc("POST /api/chromecast/play", a.handleCCPlay)
+	mux.HandleFunc("POST /api/chromecast/volume", a.handleCCVolume)
+	mux.HandleFunc("POST /api/chromecast/seek", a.handleCCSeek)
+
 	mux.Handle("GET /static/", a.cacheControl(http.StripPrefix("/static/", http.FileServerFS(a.staticFS))))
 
 	var handler http.Handler = mux
 	if a.cfg.CORSOrigins != "" {
 		handler = a.cors(handler)
 	}
-	return a.requestContext(handler)
+	handler = a.requestContext(handler)
+	// Gzip responses ≥1 KB, matching GZipMiddleware(minimum_size=1024,
+	// compresslevel=5) from the Python app. gzhttp preserves http.Flusher so
+	// the SSE status stream continues to work correctly.
+	if wrap, err := gzhttp.NewWrapper(gzhttp.MinSize(1024), gzhttp.CompressionLevel(5)); err == nil {
+		handler = wrap(handler)
+	}
+	return handler
 }
 
 // cacheControl sets long-lived caching for hash-busted assets and a modest TTL

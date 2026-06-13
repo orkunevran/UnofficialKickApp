@@ -253,10 +253,20 @@ external risks (TLS, Chromecast) are isolated so a blocker can't strand the whol
     dir on Pi, smoke-tests on port 8082 (no clash with running Python container),
     then cuts over via nohup with PID file. Rollback = kill PID + restart Python container.
 
-  ⚠️ **Still required (Pi was unreachable on 2026-06-13):**
-  1. Run `./scripts/deploy-pi.sh` when Pi (192.168.1.3) is back online
-  2. Pi soak: hit live endpoints for ≥30 min, watch /metrics counters and breaker state
-  3. Cloudflare bypass re-confirm from the Pi's IP (verified from Mac, may differ by IP)
+  **Pi cutover complete (2026-06-13, Pi at 192.168.68.53):**
+  - Cloudflare bypass confirmed from Pi IP: 14 live streams returned, viewer counts live
+  - Smoke test on port 8082 passed before cutover
+  - Python container (kick-api-v4-kick-proxy-1) stopped; Go binary started on port 8081
+  - Handed to systemd (`kick-api.service`, enabled for reboot survival)
+  - Memory at 34s uptime: **10 MB** (vs Python container's 512 MB limit)
+  - All endpoints verified: 200 health/live/config/featured/play/search/avatar/chromecast,
+    307 redirect (go/{slug}), 404 unknown route, 400 bad slug
+  - Metrics: 4 upstream calls, 93 cache entries, 9 hits / 64 misses, both breakers closed,
+    0 inflight, 0 rejections/failures
+  - Binary at `/home/pi/Desktop/kick-api-v5/kick-api-arm64` (13 MB, statically linked)
+  - Rollback: `sudo systemctl stop kick-api && cd /home/pi/Desktop/kick-api-v4 && docker compose up -d`
+
+  ✅ **Migration complete. Python app left in place at kick-api-v4 for rollback only.**
 
 ## 8. Testing & parity strategy
 

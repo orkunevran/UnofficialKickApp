@@ -52,6 +52,12 @@ node_modules/ # if you add npm packages later
 # Runtime cache (regenerated at startup)
 .kick_chromecast_cache.json
 
+# Go build artifacts (binaries built locally; build cache lives in GOCACHE)
+/server
+/kickapi-server
+*.test
+*.out
+
 # Home Assistant artifacts
 .ha_snapshots/
 00_READ_FIRST.md

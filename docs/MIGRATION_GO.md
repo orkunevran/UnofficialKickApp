@@ -162,10 +162,15 @@ its own keys when the in-flight call returns.
 Each phase is independently shippable and testable. **Order is deliberate: hardest
 external risks (TLS, Chromecast) are isolated so a blocker can't strand the whole effort.**
 
-- **Phase 0 — Scaffold + pure logic** (lowest risk, no external deps)
-  `go.mod`, config binding, router skeleton, `//go:embed` static/templates, `/`, `/health`,
-  `/health/live`, `/config/languages`, `/metrics`. Port `cache`, `breaker`, `transform`,
-  `logging` + their unit tests. **Exit:** ported unit tests green.
+- **Phase 0 — Scaffold + pure logic** ✅ **DONE** (zero external deps, pure stdlib)
+  `go.mod` (module `kickapi`, root layout), `//go:embed static templates`, and endpoints
+  `/`, `/health`, `/health/live`, `/config/languages`, `/metrics` + static serving with
+  hash-busted immutable caching. Ported packages: `config`, `cache` (two-pass eviction +
+  insertion-order parity), `breaker` (3-state, half-open probe), `transform` (null-vs-value
+  parity), `obs` (upstream + per-lane counters), `logging` (slog text/JSON), `httpapi`
+  (router, correlation-ID/timing/security-header middleware, Jinja `url_for`+`range` index
+  renderer). **Exit met:** `go vet` + `go build` clean; unit + handler tests green; live
+  server verified (JSON shapes match the Python `/health` and `/metrics` contracts).
 
 - **Phase 1 — Kick client + the TLS blocker** (de-risk early)
   `tls-client` integration, Typesense key scrape. Wire read-only endpoints:
@@ -228,16 +233,23 @@ conformance harness against the Go server.**
 | Cache / breaker / transformers | Low | — | pure logic, direct port |
 | Templating / static / gzip | Low | — | stdlib |
 
-## 11. Open decisions (need your call before Phase 0)
+## 11. Decisions
 
-1. **Router:** stdlib `net/http` 1.22+ (recommended, fewest deps) vs. `chi`?
-2. **Cutover style:** strangler-fig (proxy splits traffic Python↔Go per endpoint) vs.
-   parallel rewrite then atomic swap once parity is green? (Parallel + parity gate is
-   simpler for a single-service home deployment.)
-3. **Repo strategy:** Go service in this repo (e.g. `/go/` or repo root with Python moved
-   to `/legacy/`) vs. a fresh repo? Affects CI and the parity harness wiring.
-4. **Scope of "later":** is the **fallback TCP subnet scan** still needed, or is mDNS-only
-   acceptable on the current LAN? Dropping it removes the hardest-to-test chunk of Phase 3.
+Defaulted for Phase 0 (revisit any before Phase 1 — none are locked in):
+
+1. **Router:** ✅ stdlib `net/http` (Go 1.22 `ServeMux`, method+path patterns, `/{$}` exact
+   root). No framework, no external dep.
+2. **Repo strategy:** ✅ Go module at **repo root** (module `kickapi`, `cmd/server` +
+   `internal/*`), Python left in place. Enables `//go:embed static templates`. Python can
+   move to `/legacy/` once Go reaches parity.
+
+Still open (needed before the phases that depend on them):
+
+3. **Cutover style** (before Phase 5): strangler-fig proxy splitting traffic per endpoint
+   vs. parallel rewrite then atomic swap once parity is green. Parallel + parity gate is
+   simpler for a single-service home deployment.
+4. **Fallback TCP subnet scan** (before Phase 3): still needed, or is mDNS-only acceptable
+   on the current LAN? Dropping it removes the hardest-to-test chunk of the Chromecast port.
 
 ---
 

@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"net/http"
 	"os"
 	"sync"
 	"time"
@@ -100,6 +101,10 @@ type Service struct {
 	subs    map[chan map[string]any]struct{}
 	pollNow chan struct{} // capacity-1: control ops request an immediate poll
 
+	// infoClient is a single reusable client for the fallback scan's eureka_info
+	// probes (one-shot, keep-alives disabled) — avoids a per-probe Transport.
+	infoClient *http.Client
+
 	// Seams (real impls set in New; overridable in tests).
 	discover  func(ctx context.Context) ([]Device, error)
 	newCaster func(addr string, port int) (caster, error)
@@ -110,13 +115,14 @@ func New(cfg Config, log *slog.Logger) *Service {
 	closed := make(chan struct{})
 	close(closed) // pre-closed: waitScan returns immediately when idle
 	s := &Service{
-		cfg:      cfg,
-		log:      log,
-		devices:  make(map[string]Device),
-		known:    newLRU(knownHostsLimit),
-		scanDone: closed,
-		subs:     make(map[chan map[string]any]struct{}),
-		pollNow:  make(chan struct{}, 1),
+		cfg:        cfg,
+		log:        log,
+		devices:    make(map[string]Device),
+		known:      newLRU(knownHostsLimit),
+		scanDone:   closed,
+		subs:       make(map[chan map[string]any]struct{}),
+		pollNow:    make(chan struct{}, 1),
+		infoClient: newInfoClient(cfg.FallbackInfoTimeout),
 	}
 	s.discover = s.mdnsDiscover
 	s.newCaster = newRealCaster

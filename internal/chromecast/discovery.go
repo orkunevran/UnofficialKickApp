@@ -80,7 +80,7 @@ func (s *Service) fallbackScan() []Device {
 				if !probeHost(h, s.cfg.FallbackProbeTimeout) {
 					continue
 				}
-				dev, ok := fetchDeviceInfo(h, s.cfg.FallbackInfoTimeout)
+				dev, ok := s.fetchDeviceInfo(h)
 				if !ok {
 					continue
 				}
@@ -111,19 +111,32 @@ func probeHost(host string, timeout time.Duration) bool {
 	return true
 }
 
-// fetchDeviceInfo queries a Cast device's eureka_info for name + UUID. Tries the
-// modern HTTPS endpoint then the legacy HTTP one (cert verification disabled —
-// these are self-signed LAN devices). Mirrors pychromecast.dial.get_device_info.
-func fetchDeviceInfo(host string, timeout time.Duration) (Device, bool) {
-	client := &http.Client{
-		Timeout:   timeout,
-		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}, //nolint:gosec // LAN self-signed
+// newInfoClient builds the reusable client for eureka_info probes. Keep-alives
+// are disabled: each device is queried at most twice and connections aren't
+// reused, so pooling would only leak idle conns to scanned hosts. Cert
+// verification is off — these are self-signed LAN Cast devices.
+func newInfoClient(timeout time.Duration) *http.Client {
+	if timeout <= 0 {
+		timeout = 3 * time.Second
 	}
+	return &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			TLSClientConfig:   &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // LAN self-signed
+			DisableKeepAlives: true,
+		},
+	}
+}
+
+// fetchDeviceInfo queries a Cast device's eureka_info for name + UUID using the
+// service's shared infoClient. Tries the modern HTTPS endpoint then the legacy
+// HTTP one. Mirrors pychromecast.dial.get_device_info.
+func (s *Service) fetchDeviceInfo(host string) (Device, bool) {
 	for _, url := range []string{
 		"https://" + host + ":8443/setup/eureka_info?options=detail",
 		"http://" + host + ":8008/setup/eureka_info?options=detail",
 	} {
-		resp, err := client.Get(url)
+		resp, err := s.infoClient.Get(url)
 		if err != nil {
 			continue
 		}

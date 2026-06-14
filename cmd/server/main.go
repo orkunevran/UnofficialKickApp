@@ -53,6 +53,10 @@ func run() error {
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
 		Handler:           app.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		// WriteTimeout is intentionally unset: the SSE status stream is a
+		// long-lived response and a global write deadline would terminate it.
 	}
 
 	// Cancel the root context on SIGINT/SIGTERM to trigger graceful shutdown.

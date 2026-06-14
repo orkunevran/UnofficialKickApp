@@ -131,16 +131,12 @@
                 <video id="sharedVideo" playsinline></video>
             </div>
 
-            <!-- Mini player -->
+            <!-- Mini player — floating, draggable, resizable picture-in-picture -->
             <div id="mini-player" class="mini-player hidden">
-                <div id="mini-player-expanded-video" class="mini-player-expanded-video"></div>
+                <div id="mini-player-thumb" class="mini-player-thumb" title="Drag to move · click to open channel">
+                    <img id="mini-player-poster" class="mini-player-poster hidden" alt="">
+                </div>
                 <div class="mini-player-inner">
-                    <input type="range" id="mini-player-slider" class="mini-player-slider"
-                           min="0" max="100" value="0" step="1"
-                           aria-label="Mini-player video size">
-                    <div id="mini-player-thumb" class="mini-player-thumb">
-                        <img id="mini-player-poster" class="mini-player-poster hidden" alt="">
-                    </div>
                     <div class="mini-player-info">
                         <span id="mini-player-title" class="mini-player-title"></span>
                         <span id="mini-player-channel" class="mini-player-channel"></span>
@@ -160,6 +156,7 @@
                         </button>
                     </div>
                 </div>
+                <span id="mini-player-resize" class="mini-player-resize" aria-hidden="true" title="Drag to resize"></span>
             </div>
         </div>
     </div>

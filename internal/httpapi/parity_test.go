@@ -39,8 +39,12 @@ func (f *fakeChromecast) SelectDevice(uuid string, _ time.Duration) (bool, strin
 func (f *fakeChromecast) CastStream(string, string) bool             { return true }
 func (f *fakeChromecast) StopCast(string) bool                       { return true }
 func (f *fakeChromecast) GetLastDevice() map[string]any              { return f.lastDevice }
-func (f *fakeChromecast) GetStatus() map[string]any                  { return f.status }
-func (f *fakeChromecast) PauseMedia() bool                           { return true }
+func (f *fakeChromecast) GetStatus() map[string]any { return f.status }
+func (f *fakeChromecast) Subscribe() (<-chan map[string]any, func()) {
+	ch := make(chan map[string]any)
+	return ch, func() { close(ch) }
+}
+func (f *fakeChromecast) PauseMedia() bool { return true }
 func (f *fakeChromecast) PlayMedia() bool                            { return true }
 func (f *fakeChromecast) SetVolume(float64) bool                     { return true }
 func (f *fakeChromecast) SeekMedia(float64) bool                     { return true }

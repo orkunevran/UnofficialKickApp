@@ -61,6 +61,10 @@ func run() error {
 
 	// Background: sweep abandoned in-flight dedup markers until shutdown.
 	go app.RunSweeper(ctx)
+	// Background: pre-warm featured and avatar caches for all languages.
+	go app.RunWarmup(ctx)
+	// Background: Chromecast status poller, periodic scan, and auto-reconnect.
+	go app.RunChromecastTasks(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {

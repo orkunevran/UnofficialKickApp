@@ -200,30 +200,45 @@ func (c *Client) GetViewerCount(livestreamID int) (int, error) {
 const batchViewerMax = 10 // Kick enforces max 10 ids per request
 
 // GetViewerCountsBatch returns {id: viewers} for up to 50 ids, chunked into
-// max-10 requests. Chunks that fail are skipped (matching the Python).
+// max-10 requests fired in parallel. Chunks that fail are skipped (matching the Python).
 func (c *Client) GetViewerCountsBatch(ids []int) (map[int]int, error) {
-	merged := map[int]int{}
 	if len(ids) == 0 {
-		return merged, nil
+		return map[int]int{}, nil
 	}
 	if len(ids) > 50 {
 		ids = ids[:50]
 	}
+	var chunks [][]int
 	for i := 0; i < len(ids); i += batchViewerMax {
 		end := i + batchViewerMax
 		if end > len(ids) {
 			end = len(ids)
 		}
-		chunk := ids[i:end]
-		parts := make([]string, len(chunk))
-		for j, id := range chunk {
-			parts[j] = fmt.Sprintf("ids[]=%d", id)
-		}
-		status, body, err := c.do(fhttp.MethodGet, "https://kick.com/current-viewers?"+strings.Join(parts, "&"), nil, nil)
-		if err != nil || status < 200 || status >= 300 {
-			continue // skip failed chunk
-		}
-		for k, v := range parseBatchViewers(body) {
+		chunks = append(chunks, ids[i:end])
+	}
+
+	results := make([]map[int]int, len(chunks))
+	var wg sync.WaitGroup
+	for i, chunk := range chunks {
+		wg.Add(1)
+		go func(i int, chunk []int) {
+			defer wg.Done()
+			parts := make([]string, len(chunk))
+			for j, id := range chunk {
+				parts[j] = fmt.Sprintf("ids[]=%d", id)
+			}
+			status, body, err := c.do(fhttp.MethodGet, "https://kick.com/current-viewers?"+strings.Join(parts, "&"), nil, nil)
+			if err != nil || status < 200 || status >= 300 {
+				return
+			}
+			results[i] = parseBatchViewers(body)
+		}(i, chunk)
+	}
+	wg.Wait()
+
+	merged := map[int]int{}
+	for _, r := range results {
+		for k, v := range r {
 			merged[k] = v
 		}
 	}
@@ -280,20 +295,33 @@ var nextChunkPattern = regexp.MustCompile(`/_next/static/chunks/[^\s"'<>]+\.js`)
 
 // GetTypesenseKey returns a valid Typesense key: cached (24h) → fresh bundle
 // scrape → hard fallback. Concurrency-safe.
+//
+// The mutex is released before the network scrape so concurrent search
+// requests don't serialise behind it (fetchTypesenseKeyFromBundle makes up to
+// 26 HTTP round-trips). Two goroutines may scrape simultaneously when the key
+// expires — both will write a valid key, and the last write wins, which is
+// harmless. This trades one redundant scrape per expiry for no mutex contention.
 func (c *Client) GetTypesenseKey(forceRefresh bool) string {
 	c.tsMu.Lock()
-	defer c.tsMu.Unlock()
 	if !forceRefresh && c.tsKey != "" && time.Since(c.tsFetchedAt) < typesenseKeyTTL {
-		return c.tsKey
+		key := c.tsKey
+		c.tsMu.Unlock()
+		return key
 	}
+	c.tsMu.Unlock()
+
+	// Fetch outside the lock — this is the slow path (HTTP requests).
 	fresh := c.fetchTypesenseKeyFromBundle()
+
+	c.tsMu.Lock()
+	defer c.tsMu.Unlock()
 	c.tsFetchedAt = time.Now()
 	if fresh != "" {
 		c.tsKey = fresh
 		return fresh
 	}
 	if c.tsKey != "" {
-		return c.tsKey // keep previous on scrape failure
+		return c.tsKey // keep previous valid key on scrape failure
 	}
 	c.tsKey = typesenseKeyFallback
 	return typesenseKeyFallback
@@ -413,13 +441,17 @@ func mergeTypesenseHits(data map[string]any) []map[string]any {
 			if u, ok := doc["username"].(string); ok && u != "" {
 				username = u
 			}
+			pic := doc["profile_picture"]
+			if pic == nil {
+				pic = doc["profile_pic"]
+			}
 			merged = append(merged, map[string]any{
 				"slug":            slug,
 				"username":        username,
 				"followers_count": orDefault(doc["followers_count"], float64(0)),
 				"is_live":         orDefault(doc["is_live"], false),
 				"verified":        orDefault(doc["verified"], false),
-				"profile_picture": nil,
+				"profile_picture": pic,
 			})
 			if len(merged) >= 8 {
 				return merged

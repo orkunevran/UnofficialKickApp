@@ -423,8 +423,8 @@ body {
     from { transform: translate(0, 0) scale(1); }
     to   { transform: translate(50px, -40px) scale(0.9); }
 }
-/* Ensure content sits above the orbs */
-.top-bar, .content-area, .mini-player { position: relative; z-index: 1; }
+/* Ensure content sits above the orbs (mini-player is fixed-position, handled separately) */
+.top-bar, .content-area { position: relative; z-index: 1; }
 
 ::selection {
     background-color: rgba(83, 252, 24, 0.3);
@@ -998,7 +998,6 @@ body.no-cast .chromecast-disconnect-quick {
 }
 
 #mini-player-thumb > video,
-.mini-player-expanded-video > video,
 .video-container > video {
     width: 100%;
     height: 100%;
@@ -1010,7 +1009,6 @@ body.no-cast .chromecast-disconnect-quick {
     object-position: center center;
     pointer-events: none;
 }
-.mini-player-expanded-video > video,
 .video-container > video {
     object-fit: contain;
     object-position: center center;
@@ -1022,50 +1020,78 @@ body.no-cast .chromecast-disconnect-quick {
     animation: none !important;
 }
 
-/* ── Mini Player ───────────────────────────────────────────────────────── */
+/* ── Mini Player — floating picture-in-picture ─────────────────────────────
+   A draggable, resizable 16:9 window. Position (left/top) and width are set
+   inline by JS (player.js _applyPipGeometry); CSS provides the card chrome. */
 .mini-player {
+    position: fixed;
+    width: 360px;               /* overridden inline by JS */
+    z-index: 45;
     background: var(--bg-color);
-    border-top: 1px solid var(--border-color);
-    flex-shrink: 0;
-    z-index: 35;
+    border: 1px solid var(--border-color);
+    border-radius: var(--mini-player-radius);
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+    overflow: hidden;
     animation: miniSlideUp 0.2s ease-out;
-    position: relative;
 }
-/* Gradient accent line along top edge */
+/* Gradient accent line along the top edge */
 .mini-player::before {
     content: '';
     position: absolute;
-    top: -1px; left: 0; right: 0;
-    height: 1px;
+    top: 0; left: 0; right: 0;
+    height: 2px;
     background: linear-gradient(90deg, transparent 5%, var(--primary-color) 30%, var(--live-color) 70%, transparent 95%);
-    opacity: 0.5;
+    opacity: 0.6;
+    z-index: 4;
+    pointer-events: none;
 }
 .mini-player.hidden { display: none; }
+/* While dragging/resizing, kill animations and text selection for a crisp feel */
+.mini-player.dragging,
+.mini-player.resizing {
+    animation: none;
+    user-select: none;
+}
 @keyframes miniSlideUp {
-    from { transform: translateY(100%); opacity: 0; }
+    from { transform: translateY(12px); opacity: 0; }
     to   { transform: translateY(0);    opacity: 1; }
 }
 .mini-player-inner {
     display: flex;
     align-items: center;
     gap: var(--mini-player-gap);
-    padding: var(--mini-player-padding-y) var(--mini-player-padding-x);
-    min-height: var(--mini-player-panel-height);
+    /* extra right padding keeps the close button clear of the corner resize grip */
+    padding: 8px 22px 8px 10px;
     box-sizing: border-box;
 }
 .mini-player-thumb {
     position: relative;
-    width: var(--mini-player-thumb-width);
-    height: var(--mini-player-thumb-height);
-    border-radius: var(--mini-player-thumb-radius);
+    width: 100%;
+    aspect-ratio: 16 / 9;
     box-sizing: border-box;
     background: #000;
     overflow: hidden;
-    flex-shrink: 0;
-    cursor: pointer;
+    cursor: grab;
     border: 0;
-    transition: box-shadow 0.3s;
+    touch-action: none;          /* let pointer drag work on touch without scroll */
 }
+.mini-player.dragging .mini-player-thumb { cursor: grabbing; }
+/* Corner grip for resizing — anchored to the card's true bottom-right corner
+   (child of .mini-player, not the video), always visible so it's discoverable. */
+.mini-player-resize {
+    position: absolute;
+    right: 0; bottom: 0;
+    width: 22px; height: 22px;
+    z-index: 6;                  /* above the control strip */
+    cursor: nwse-resize;
+    touch-action: none;
+    background: linear-gradient(135deg, transparent 42%, var(--text-secondary) 42%, var(--text-secondary) 56%, transparent 56%, transparent 70%, var(--text-secondary) 70%, var(--text-secondary) 84%, transparent 84%);
+    opacity: 0;                  /* hidden until the player is hovered */
+    transition: opacity 0.15s;
+}
+.mini-player:hover .mini-player-resize,
+.mini-player.resizing .mini-player-resize { opacity: 0.9; }
+.mini-player-resize:hover { opacity: 1; }
 /* Glow border when video is active — use a class toggled by JS instead of
    :has() which Safari re-evaluates continuously during video playback */
 .mini-player-thumb.has-video {
@@ -1142,92 +1168,6 @@ body.no-cast .chromecast-disconnect-quick {
 #mini-player-close:hover {
     color: var(--error-color);
     background: rgba(255, 51, 102, 0.08);
-}
-
-/* ── Mini Player Slider & Expanded Video ──────────────────────────────── */
-/* Vertical "upslider" — drag up to expand the video panel above */
-.mini-player-slider {
-    writing-mode: vertical-lr;
-    direction: rtl;          /* bottom = 0 (collapsed), top = 100 (full) */
-    -webkit-appearance: none;
-    appearance: none;
-    width: 28px;             /* touch/click target width */
-    height: clamp(48px, 6vh, 72px);
-    background: transparent;
-    outline: none;
-    cursor: ns-resize;
-    flex-shrink: 0;
-    padding: 0;
-}
-.mini-player-slider::-webkit-slider-runnable-track {
-    background: var(--border-color);
-    border-radius: 999px;
-    width: 4px;
-}
-.mini-player-slider::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    background: var(--text-secondary);
-    cursor: ns-resize;
-    border: none;
-    margin-left: -5px;
-}
-.mini-player-slider::-moz-range-track {
-    background: var(--border-color);
-    border-radius: 999px;
-    width: 4px;
-}
-.mini-player-slider::-moz-range-thumb {
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    background: var(--text-secondary);
-    cursor: ns-resize;
-    border: none;
-}
-.mini-player-slider:hover::-webkit-slider-thumb,
-.mini-player-slider:active::-webkit-slider-thumb {
-    background: var(--primary-color);
-}
-.mini-player-slider:hover::-moz-range-thumb,
-.mini-player-slider:active::-moz-range-thumb {
-    background: var(--primary-color);
-}
-/* Keyboard focus: visible ring around the thumb so keyboard users can see
-   where their input lands. :focus-visible avoids showing it on click. */
-.mini-player-slider:focus-visible {
-    outline: none;
-}
-.mini-player-slider:focus-visible::-webkit-slider-thumb {
-    background: var(--primary-color);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-color) 35%, transparent);
-}
-.mini-player-slider:focus-visible::-moz-range-thumb {
-    background: var(--primary-color);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary-color) 35%, transparent);
-}
-.mini-player-expanded-video {
-    width: 100%;
-    height: 0;
-    overflow: hidden;
-    background: #000;
-    /* transition removed — Safari chokes when transitioning height while
-       video is rendering. JS drag already disables it via inline style;
-       double-click toggle uses a class-based approach instead. */
-}
-.mini-player-expanded-video video {
-    width: 100%;
-    height: 100%;
-    object-fit: contain;
-    object-position: center center;
-    display: block;
-}
-/* When expanded, hide the inline thumb video (it moved to the expanded panel) */
-.mini-player.expanded .mini-player-thumb {
-    display: none;
 }
 
 /* ── Mobile Nav ────────────────────────────────────────────────────────── */
@@ -3227,52 +3167,10 @@ a:focus-visible,
     .content-area {
         padding: 10px 10px calc(92px + env(safe-area-inset-bottom, 0px));
     }
-    /* When mini-player is visible, add extra bottom padding dynamically */
-    body.mini-active .content-area {
-        padding-bottom: calc(var(--mini-player-mobile-content-pad) + env(safe-area-inset-bottom, 0px));
-    }
-    /* Video layer must sit above mini-player (45) so mini-mode video is visible */
-    #video-layer { z-index: 46; }
-    /* Mini player floats above mobile nav on small screens */
-    .mini-player {
-        position: fixed;
-        bottom: calc(var(--mini-player-mobile-bottom-gap) + env(safe-area-inset-bottom, 0px));
-        left: 10px;
-        right: 10px;
-        z-index: 45;
-        border-radius: var(--mini-player-radius);
-        border: 1px solid var(--border-color);
-        box-shadow: 0 18px 36px rgba(0, 0, 0, 0.32);
-        overflow: hidden;
-    }
-    .mini-player.hidden { position: static; }
-    .mini-player-inner {
-        gap: var(--mini-player-gap);
-        padding: var(--mini-player-padding-y) var(--mini-player-padding-x);
-        min-height: var(--mini-player-panel-height);
-    }
-    .mini-player-thumb {
-        width: var(--mini-player-thumb-width);
-        height: var(--mini-player-thumb-height);
-        border-radius: var(--mini-player-thumb-radius);
-    }
+    /* The mini-player is a floating PiP (position:fixed, JS-positioned), so the
+       content area no longer needs to reserve bottom space for it. */
     /* Hide the in-bar cast button on mobile (cast UI lives in the top bar). */
     #mini-player-cast { display: none; }
-    /* Slider + expanded panel are enabled on mobile so users can resize the
-       mini-player video by dragging upward — the panel grows above the bar. */
-    .mini-player-slider {
-        height: clamp(40px, 5.5vh, 56px);
-        width: 24px;
-    }
-    .mini-player-slider::-webkit-slider-thumb {
-        width: 18px;
-        height: 18px;
-        margin-left: -7px;
-    }
-    .mini-player-slider::-moz-range-thumb {
-        width: 18px;
-        height: 18px;
-    }
     .stream-grid {
         grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
         gap: 10px;

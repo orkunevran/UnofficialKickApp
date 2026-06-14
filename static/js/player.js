@@ -21,12 +21,20 @@ let _hlsInstance = null;
 let _currentStream = null;    // { slug, title, channel, playbackUrl, thumbnailUrl }
 let _cachedChannelData = null;
 let _fullSlot = null;
-let _panelHeight = 0;
 let _videoEventsBound = false;
 
-const _MIN_PANEL_H = 0;
-const _DEFAULT_PANEL_H = 300;
-const _SNAP_VALUE = 10;  // slider values below this snap to 0
+// Picture-in-picture geometry (persisted). The mini-player is a floating,
+// draggable, resizable 16:9 window — not a bottom bar with a size slider.
+const _PIP_MIN_W = 240;
+const _PIP_MAX_W = 1600;         // hard ceiling; the viewport is the real limit
+const _PIP_DEFAULT_W = 360;
+const _PIP_EDGE = 8;             // min gap kept between the card and viewport edges
+const _CONTROL_STRIP_H = 52;     // approx height of the control row under the video
+const _PIP_STORAGE_KEY = 'kick_pip_geom';
+
+let _pipW = _PIP_DEFAULT_W;
+let _pipLeft = null;             // px from viewport left; null → compute bottom-right
+let _pipTop = null;
 
 // ── DOM refs ─────────────────────────────────────────────────────────────
 
@@ -34,17 +42,9 @@ const _layer = () => document.getElementById('video-layer');
 const _video = () => document.getElementById('sharedVideo');
 const _thumb = () => document.getElementById('mini-player-thumb');
 const _miniPlayer = () => document.getElementById('mini-player');
-const _expandedPanel = () => document.getElementById('mini-player-expanded-video');
 
 function _isSafari() {
     return document.documentElement.classList.contains('safari');
-}
-
-function _supportsExpandedMini() {
-    // Slider-driven resize is supported on every viewport. The mini-player
-    // expanded panel grows above the bar regardless of width — mobile users
-    // can drag the slider to resize the video without leaving the mini state.
-    return true;
 }
 
 function _moveVideoTo(container) {
@@ -70,13 +70,9 @@ function _styleVideoForMode(mode) {
         return;
     }
 
-    if (mode === 'mini-expanded') {
-        video.style.objectFit = 'contain';
-        video.style.pointerEvents = 'none';
-        return;
-    }
-
     if (mode === 'mini') {
+        // cover fills the 16:9 PiP window; pointer-events:none lets the thumb
+        // receive drag gestures instead of the video swallowing them.
         video.style.objectFit = 'cover';
         video.style.pointerEvents = 'none';
         return;
@@ -105,65 +101,81 @@ function _clearFullSlot() {
     }
 }
 
-function _syncPanelChrome() {
-    const panel = _expandedPanel();
-    const player = _miniPlayer();
-    const expanded = _supportsExpandedMini() && _panelHeight > 0;
+// ── PiP geometry: clamp, persist, apply ──────────────────────────────────
 
-    if (panel) panel.style.height = expanded ? `${_panelHeight}px` : '0';
-    player?.classList.toggle('expanded', expanded);
+function _pipMaxW() {
+    // Bound by both viewport dimensions so the whole card (16:9 video + control
+    // strip) always fits — width on landscape, height on short/wide windows.
+    const byWidth = window.innerWidth - _PIP_EDGE * 2;
+    const byHeight = ((window.innerHeight - _PIP_EDGE * 2 - _CONTROL_STRIP_H) * 16) / 9;
+    return Math.max(_PIP_MIN_W, Math.min(_PIP_MAX_W, byWidth, byHeight));
+}
 
-    // Keep slider thumb in sync when panel changes programmatically
-    const slider = document.getElementById('mini-player-slider');
-    if (slider) {
-        const maxH = Math.round(window.innerHeight * 0.6);
-        slider.value = maxH > 0 ? Math.round((_panelHeight / maxH) * 100) : 0;
+// Default bottom-right anchor; clears the mobile nav on narrow viewports.
+function _pipMargin() {
+    return window.innerWidth <= 768 ? 84 : 24;
+}
+
+function _cardHeightFor(width) {
+    return Math.round((width * 9) / 16) + _CONTROL_STRIP_H;
+}
+
+// _applyPipGeometry writes width + position to the card, clamping it fully
+// inside the viewport. Position defaults to the bottom-right corner.
+function _applyPipGeometry() {
+    const card = _miniPlayer();
+    if (!card) return;
+    // Skip while the viewport has no layout (zero size during route
+    // transitions / background tabs); applying now would clamp the window into
+    // the corner. A later resize/render recomputes once dimensions are real.
+    if (window.innerWidth === 0 || window.innerHeight === 0) return;
+
+    _pipW = Math.max(_PIP_MIN_W, Math.min(_pipMaxW(), _pipW));
+    const w = _pipW;
+    const h = _cardHeightFor(w);
+
+    let left = _pipLeft;
+    let top = _pipTop;
+    if (left == null || top == null) {
+        const m = _pipMargin();
+        left = window.innerWidth - w - m;
+        top = window.innerHeight - h - m;
     }
+    left = Math.max(_PIP_EDGE, Math.min(window.innerWidth - w - _PIP_EDGE, left));
+    top = Math.max(_PIP_EDGE, Math.min(window.innerHeight - h - _PIP_EDGE, top));
+    _pipLeft = left;
+    _pipTop = top;
+
+    card.style.width = `${w}px`;
+    card.style.left = `${left}px`;
+    card.style.top = `${top}px`;
+    card.style.right = 'auto';
+    card.style.bottom = 'auto';
+}
+
+function _savePipGeom() {
+    try {
+        localStorage.setItem(_PIP_STORAGE_KEY, JSON.stringify({ w: _pipW, left: _pipLeft, top: _pipTop }));
+    } catch { /* storage unavailable — geometry just won't persist */ }
+}
+
+function _loadPipGeom() {
+    try {
+        const g = JSON.parse(localStorage.getItem(_PIP_STORAGE_KEY) || 'null');
+        if (g && typeof g.w === 'number') _pipW = g.w;
+        if (g && typeof g.left === 'number') _pipLeft = g.left;
+        if (g && typeof g.top === 'number') _pipTop = g.top;
+    } catch { /* ignore malformed state */ }
 }
 
 function _renderMiniVideo() {
     const thumb = _thumb();
-    const panel = _expandedPanel();
     if (!thumb) return;
-
-    const useExpanded = _supportsExpandedMini() && _panelHeight > 0 && panel;
-    _syncPanelChrome();
-
-    _moveVideoTo(useExpanded ? panel : thumb);
-    _styleVideoForMode(useExpanded ? 'mini-expanded' : 'mini');
-    thumb.classList.toggle('has-video', !useExpanded);
-    // Show poster in thumb only when video has moved to the expanded panel;
-    // when video is directly in the thumb, hide the poster so live video shows.
-    if (useExpanded) {
-        _showMiniPoster();
-    } else {
-        _hideMiniPoster();
-    }
-}
-
-function _setPanelHeight(h, { syncMiniVideo = true } = {}) {
-    if (!_supportsExpandedMini()) {
-        _panelHeight = 0;
-        _syncPanelChrome();
-        return;
-    }
-
-    const maxH = Math.round(window.innerHeight * 0.6);
-    _panelHeight = Math.max(_MIN_PANEL_H, Math.min(maxH, h));
-    _syncPanelChrome();
-
-    if (syncMiniVideo && _mode === 'mini') {
-        _renderMiniVideo();
-    }
-}
-
-function _expandVideoPanel(h) {
-    if (!_supportsExpandedMini()) return;
-    _setPanelHeight(h);
-}
-
-function _collapseVideoPanel(opts = {}) {
-    _setPanelHeight(0, opts);
+    _moveVideoTo(thumb);
+    _styleVideoForMode('mini');
+    thumb.classList.add('has-video');
+    _hideMiniPoster();
+    _applyPipGeometry();
 }
 
 function _showMiniBar(skipAnimation) {
@@ -298,7 +310,6 @@ export function loadStream(playbackUrl, streamInfo, channelData) {
  * @param {HTMLElement} [slot]
  * @param {object} [opts]
  * @param {boolean} [opts.animate]
- * @param {boolean} [opts.collapsePanel]
  */
 export function setMode(mode, slot, opts = {}) {
     const video = _video();
@@ -314,14 +325,8 @@ export function setMode(mode, slot, opts = {}) {
         && !_isSafari()
         && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const fromRect = shouldAnimate ? video.getBoundingClientRect() : null;
-    const collapsePanel = Boolean(opts.collapsePanel);
 
     _clearFullSlot();
-    if (mode !== 'mini' || collapsePanel) {
-        _collapseVideoPanel({ syncMiniVideo: false });
-    } else {
-        _syncPanelChrome();
-    }
 
     if (mode === 'hidden') {
         _mode = 'hidden';
@@ -403,27 +408,28 @@ export function stopStream() {
 
     _currentStream = null;
     _cachedChannelData = null;
-    setMode('hidden', null, { collapsePanel: true });
+    setMode('hidden', null);
 }
 
-// ── Mini-player bar controls ─────────────────────────────────────────────
+// ── Mini-player (PiP) controls ───────────────────────────────────────────
+
+function _openCurrentChannel() {
+    if (_currentStream?.slug) {
+        const { navigate } = window.__routerModule || {};
+        if (navigate) navigate(`/channel/${_currentStream.slug}`);
+    }
+}
 
 export function initMiniPlayerControls() {
     _bindVideoStateEvents();
-    _syncPanelChrome();
+    _loadPipGeom();
 
     const expandBtn = document.getElementById('mini-player-expand');
     const playBtn = document.getElementById('mini-player-play');
     const castBtn = document.getElementById('mini-player-cast');
     const closeBtn = document.getElementById('mini-player-close');
 
-    expandBtn?.addEventListener('click', () => {
-        if (_currentStream?.slug) {
-            const { navigate } = window.__routerModule || {};
-            if (navigate) navigate(`/channel/${_currentStream.slug}`);
-        }
-    });
-
+    expandBtn?.addEventListener('click', _openCurrentChannel);
     playBtn?.addEventListener('click', _togglePlayPause);
 
     castBtn?.addEventListener('click', () => {
@@ -434,43 +440,86 @@ export function initMiniPlayerControls() {
 
     closeBtn?.addEventListener('click', stopStream);
 
-    _thumb()?.addEventListener('click', () => {
-        if (_currentStream?.slug) {
-            const { navigate } = window.__routerModule || {};
-            if (navigate) navigate(`/channel/${_currentStream.slug}`);
-        }
-    });
-
-    _initResizeSlider();
+    _initPipInteractions();
+    // Keep the floating window on-screen when the viewport changes.
+    window.addEventListener('resize', () => { if (_mode === 'mini') _applyPipGeometry(); });
 }
 
-function _initResizeSlider() {
-    const slider = document.getElementById('mini-player-slider');
-    if (!slider) return;
+// _initPipInteractions wires drag-to-move (on the video surface) and
+// drag-to-resize (on the corner handle). A press on the video that doesn't
+// move past a small threshold is treated as a click → open the channel page.
+function _initPipInteractions() {
+    const card = _miniPlayer();
+    const thumb = _thumb();
+    const handle = document.getElementById('mini-player-resize');
+    if (!card || !thumb) return;
 
-    const getMaxH = () => Math.round(window.innerHeight * 0.6);
+    // ── Drag to move ──
+    let dragging = false, moved = false, startX = 0, startY = 0, baseLeft = 0, baseTop = 0;
 
-    slider.addEventListener('input', () => {
-        if (!_supportsExpandedMini() || _mode !== 'mini') return;
-        const h = Math.round((slider.value / 100) * getMaxH());
-        _setPanelHeight(h);
+    thumb.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0 || e.target === handle) return;
+        dragging = true;
+        moved = false;
+        startX = e.clientX;
+        startY = e.clientY;
+        const r = card.getBoundingClientRect();
+        baseLeft = _pipLeft ?? r.left;
+        baseTop = _pipTop ?? r.top;
+        try { thumb.setPointerCapture(e.pointerId); } catch { /* no-op */ }
+        card.classList.add('dragging');
     });
 
-    slider.addEventListener('change', () => {
-        if (Number(slider.value) < _SNAP_VALUE) {
-            slider.value = 0;
-            _collapseVideoPanel();
-        }
+    thumb.addEventListener('pointermove', (e) => {
+        if (!dragging) return;
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        if (Math.abs(dx) > 4 || Math.abs(dy) > 4) moved = true;
+        _pipLeft = baseLeft + dx;
+        _pipTop = baseTop + dy;
+        _applyPipGeometry();
     });
 
-    slider.addEventListener('dblclick', () => {
-        if (!_supportsExpandedMini() || _mode !== 'mini') return;
-        if (_panelHeight > 0) {
-            _collapseVideoPanel();
-        } else {
-            _expandVideoPanel(_DEFAULT_PANEL_H);
-        }
+    const endDrag = (e) => {
+        if (!dragging) return;
+        dragging = false;
+        card.classList.remove('dragging');
+        try { thumb.releasePointerCapture(e.pointerId); } catch { /* no-op */ }
+        if (moved) _savePipGeom();
+        else _openCurrentChannel();   // tap without drag → open channel
+    };
+    thumb.addEventListener('pointerup', endDrag);
+    thumb.addEventListener('pointercancel', endDrag);
+
+    // ── Drag the corner handle to resize (16:9 locked) ──
+    if (!handle) return;
+    let resizing = false, rStartX = 0, rBaseW = 0;
+
+    handle.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0) return;
+        e.stopPropagation();
+        resizing = true;
+        rStartX = e.clientX;
+        rBaseW = _pipW;
+        try { handle.setPointerCapture(e.pointerId); } catch { /* no-op */ }
+        card.classList.add('resizing');
     });
+
+    handle.addEventListener('pointermove', (e) => {
+        if (!resizing) return;
+        _pipW = rBaseW + (e.clientX - rStartX);
+        _applyPipGeometry();
+    });
+
+    const endResize = (e) => {
+        if (!resizing) return;
+        resizing = false;
+        card.classList.remove('resizing');
+        try { handle.releasePointerCapture(e.pointerId); } catch { /* no-op */ }
+        _savePipGeom();
+    };
+    handle.addEventListener('pointerup', endResize);
+    handle.addEventListener('pointercancel', endResize);
 }
 
 // ── Private helpers ──────────────────────────────────────────────────────

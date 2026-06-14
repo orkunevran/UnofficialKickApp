@@ -31,12 +31,7 @@ func (f *fakeCaster) Status() (*gccast.Application, *gccast.Media, *gccast.Volum
 func (f *fakeCaster) Close(bool) error { f.closed = true; return nil }
 
 func testService(cfg Config) *Service {
-	s := &Service{
-		cfg:     cfg,
-		log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
-		devices: make(map[string]Device),
-		known:   newLRU(10),
-	}
+	s := New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	s.discover = func(ctx context.Context) ([]Device, error) { return nil, nil }
 	s.newCaster = func(addr string, port int) (caster, error) {
 		return nil, errors.New("no real device")
@@ -169,11 +164,14 @@ func TestSelectDevice_NotFound(t *testing.T) {
 
 func TestSelectDevice_WhileScanning(t *testing.T) {
 	s := testService(defaultCfg())
+	// Simulate an in-progress scan: set scanning=true and an unclosed scanDone
+	// gate so waitScan blocks until the timeout fires.
 	s.mu.Lock()
 	s.scanning = true
+	s.scanDone = make(chan struct{})
 	s.mu.Unlock()
 
-	ok, reason := s.SelectDevice("any", time.Second)
+	ok, reason := s.SelectDevice("any", 20*time.Millisecond)
 	if ok || reason != "scanning" {
 		t.Fatalf("expected (false, scanning), got (%v, %q)", ok, reason)
 	}

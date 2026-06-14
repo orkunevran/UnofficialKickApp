@@ -56,6 +56,7 @@ type Config struct {
 	FallbackProbeTimeout time.Duration
 	FallbackInfoTimeout  time.Duration
 	StatePath            string
+	PeriodicScanInterval time.Duration // 0 disables the periodic background scan
 }
 
 // Service manages discovery, selection, and control of Cast devices.
@@ -75,6 +76,23 @@ type Service struct {
 	scanning  bool
 	selecting bool
 	lastScan  time.Time
+	// scanDone is closed when the in-progress scan finishes. Always non-nil:
+	// initialised to a pre-closed channel so waitScan returns immediately when
+	// no scan is running.
+	scanDone chan struct{}
+
+	// appMu serialises all Cast-protocol method calls on the active caster
+	// (Load, Update, Pause, Close, …). It is separate from mu so that state
+	// reads/writes never block behind network I/O, and Cast I/O never races
+	// between the status poller goroutine and HTTP-handler goroutines.
+	appMu sync.Mutex
+
+	// Pub-sub for status pushes: SSE handlers subscribe; control operations and
+	// the background poller broadcast. One poller goroutine drives app.Update()
+	// so N concurrent SSE connections don't each poll the device.
+	subsMu  sync.Mutex
+	subs    map[chan map[string]any]struct{}
+	pollNow chan struct{} // capacity-1: control ops request an immediate poll
 
 	// Seams (real impls set in New; overridable in tests).
 	discover  func(ctx context.Context) ([]Device, error)
@@ -83,11 +101,16 @@ type Service struct {
 
 // New constructs a Service with go-chromecast-backed discovery and casting.
 func New(cfg Config, log *slog.Logger) *Service {
+	closed := make(chan struct{})
+	close(closed) // pre-closed: waitScan returns immediately when idle
 	s := &Service{
-		cfg:     cfg,
-		log:     log,
-		devices: make(map[string]Device),
-		known:   newLRU(knownHostsLimit),
+		cfg:      cfg,
+		log:      log,
+		devices:  make(map[string]Device),
+		known:    newLRU(knownHostsLimit),
+		scanDone: closed,
+		subs:     make(map[chan map[string]any]struct{}),
+		pollNow:  make(chan struct{}, 1),
 	}
 	s.discover = s.mdnsDiscover
 	s.newCaster = newRealCaster
@@ -110,6 +133,7 @@ func (s *Service) ScanAsync(force bool, knownHosts []string) bool {
 		return false
 	}
 	s.scanning = true
+	s.scanDone = make(chan struct{}) // gate for this scan; closed by doScan
 	s.mu.Unlock()
 
 	for _, h := range knownHosts {
@@ -126,12 +150,36 @@ func (s *Service) IsScanning() bool {
 	return s.scanning
 }
 
+// waitScan blocks until no scan is in progress or the timeout elapses.
+// Returns false if the timeout fired before the scan finished.
+func (s *Service) waitScan(timeout time.Duration) bool {
+	s.mu.Lock()
+	if !s.scanning {
+		s.mu.Unlock()
+		return true
+	}
+	done := s.scanDone
+	s.mu.Unlock()
+	select {
+	case <-done:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
+}
+
 func (s *Service) doScan() {
+	// Capture the gate channel under lock so we close the right one.
+	s.mu.Lock()
+	scanDone := s.scanDone
+	s.mu.Unlock()
+
 	defer func() {
 		s.mu.Lock()
 		s.scanning = false
 		s.lastScan = time.Now()
 		s.mu.Unlock()
+		close(scanDone)
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), s.cfg.ScanTimeout)
@@ -209,11 +257,14 @@ func (s *Service) GetLastDevice() map[string]any {
 // SelectDevice connects to the device with the given uuid, bounded by timeout.
 // Reasons: "" (ok), "scanning", "busy", "failed".
 func (s *Service) SelectDevice(uuid string, timeout time.Duration) (bool, string) {
-	s.mu.Lock()
-	if s.scanning {
-		s.mu.Unlock()
+	// Wait for any in-progress scan via channel instead of a 200ms polling loop.
+	// The select timeout is comfortably larger than the scan timeout, so this
+	// only blocks for a few seconds on the very first click.
+	if !s.waitScan(timeout) {
 		return false, "scanning"
 	}
+
+	s.mu.Lock()
 	if s.selecting {
 		s.mu.Unlock()
 		return false, "busy"
@@ -267,6 +318,9 @@ func (s *Service) SelectDevice(uuid string, timeout time.Duration) (bool, string
 
 	select {
 	case r := <-done:
+		if r.ok {
+			s.triggerPoll()
+		}
 		return r.ok, r.reason
 	case <-time.After(timeout):
 		s.log.Error("select timed out", "device", dev.Name, "timeout", timeout)
@@ -286,11 +340,25 @@ func (s *Service) CastStream(streamURL, title string) bool {
 		return false
 	}
 	// content type matches the Python 'application/x-mpegurl'.
-	if err := app.Load(streamURL, 0, "application/x-mpegurl", false, false, false); err != nil {
-		s.log.Warn("cast load failed", "error", err)
-		return false
+	// Retry once: the TV may need a moment to launch the media receiver app
+	// (e.g. waking from standby), causing the first attempt to time out.
+	for attempt := 1; attempt <= 2; attempt++ {
+		s.appMu.Lock()
+		err := app.Load(streamURL, 0, "application/x-mpegurl", false, false, false)
+		s.appMu.Unlock()
+		if err != nil {
+			if attempt == 2 {
+				s.log.Warn("cast load failed", "error", err)
+				return false
+			}
+			s.log.Info("cast load attempt failed, retrying", "attempt", attempt, "error", err)
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+		s.triggerPoll()
+		return true
 	}
-	return true
+	return false
 }
 
 // StopCast stops playback and disconnects the selected (or specified) device.
@@ -309,10 +377,14 @@ func (s *Service) StopCast(uuid string) bool {
 	s.selected = ""
 	s.mu.Unlock()
 
-	if err := app.Close(true); err != nil {
+	s.appMu.Lock()
+	err := app.Close(true)
+	s.appMu.Unlock()
+	if err != nil {
 		s.log.Warn("error closing cast connection", "error", err)
 	}
 	s.saveState()
+	s.triggerPoll()
 	return true
 }
 
@@ -342,10 +414,14 @@ func (s *Service) withApp(fn func(caster) error) bool {
 	if app == nil {
 		return false
 	}
-	if err := fn(app); err != nil {
+	s.appMu.Lock()
+	err := fn(app)
+	s.appMu.Unlock()
+	if err != nil {
 		s.log.Error("chromecast control failed", "error", err)
 		return false
 	}
+	s.triggerPoll()
 	return true
 }
 
@@ -358,8 +434,10 @@ func (s *Service) GetStatus() map[string]any {
 	if app == nil {
 		return map[string]any{"status": "disconnected"}
 	}
+	s.appMu.Lock()
 	_ = app.Update()
 	_, media, volume := app.Status()
+	s.appMu.Unlock()
 
 	isPlaying := media != nil && media.PlayerState == "PLAYING"
 	var volumeLevel any = 1.0
@@ -389,7 +467,124 @@ func (s *Service) Shutdown() {
 	s.selected = ""
 	s.mu.Unlock()
 	if app != nil {
+		s.appMu.Lock()
 		_ = app.Close(true)
+		s.appMu.Unlock()
+	}
+}
+
+// ── pub-sub (status push) ─────────────────────────────────────────────────────
+
+// Subscribe returns a receive channel that is sent status maps whenever the
+// device state changes, and an unsubscribe function. The channel is buffered;
+// slow readers receive the most-recent event that fit and miss earlier ones.
+func (s *Service) Subscribe() (<-chan map[string]any, func()) {
+	ch := make(chan map[string]any, 4)
+	s.subsMu.Lock()
+	s.subs[ch] = struct{}{}
+	s.subsMu.Unlock()
+	return ch, func() {
+		s.subsMu.Lock()
+		delete(s.subs, ch)
+		s.subsMu.Unlock()
+	}
+}
+
+func (s *Service) broadcast(status map[string]any) {
+	s.subsMu.Lock()
+	defer s.subsMu.Unlock()
+	for ch := range s.subs {
+		select {
+		case ch <- status:
+		default: // slow subscriber: drop rather than block
+		}
+	}
+}
+
+// triggerPoll asks the status poller to wake up immediately rather than waiting
+// for the next scheduled tick. Non-blocking: if the channel is already full a
+// poll is already queued.
+func (s *Service) triggerPoll() {
+	select {
+	case s.pollNow <- struct{}{}:
+	default:
+	}
+}
+
+// ── background tasks ──────────────────────────────────────────────────────────
+
+// RunStatusPoller drives periodic status updates. A single goroutine calls
+// app.Update() and broadcasts to all subscribers, so N concurrent SSE
+// connections do not each poll the Cast device. Control operations send on
+// pollNow to request an out-of-cycle push. Exits when ctx is cancelled.
+func (s *Service) RunStatusPoller(ctx context.Context) {
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.broadcast(s.GetStatus())
+		case <-s.pollNow:
+			s.broadcast(s.GetStatus())
+		}
+	}
+}
+
+// RunPeriodicScan triggers a device re-scan at the configured interval so the
+// device list stays fresh without requiring an explicit /devices?force=true
+// request. Exits when ctx is cancelled or interval is zero (feature disabled).
+func (s *Service) RunPeriodicScan(ctx context.Context) {
+	if s.cfg.PeriodicScanInterval <= 0 {
+		return
+	}
+	ticker := time.NewTicker(s.cfg.PeriodicScanInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.ScanAsync(true, nil)
+		}
+	}
+}
+
+// AutoReconnect tries to reconnect to the last known device on startup, so the
+// Chromecast works immediately after a server restart without the user having
+// to re-select. It triggers a scan, waits for it, then selects the device.
+func (s *Service) AutoReconnect(ctx context.Context) {
+	s.mu.Lock()
+	uuid := s.lastUUID
+	name := s.lastName
+	known := s.known.keys()
+	s.mu.Unlock()
+	if uuid == "" {
+		return
+	}
+
+	s.ScanAsync(true, known)
+	if !s.waitScan(s.cfg.ScanTimeout + 5*time.Second) {
+		s.log.Warn("auto-reconnect: scan timed out", "device", name)
+		return
+	}
+	select {
+	case <-ctx.Done():
+		return
+	default:
+	}
+
+	s.mu.Lock()
+	_, found := s.devices[uuid]
+	s.mu.Unlock()
+	if !found {
+		s.log.Info("auto-reconnect: last device not found after scan", "device", name, "uuid", uuid)
+		return
+	}
+
+	if ok, _ := s.SelectDevice(uuid, 10*time.Second); ok {
+		s.log.Info("auto-reconnected to last Chromecast", "device", name)
 	}
 }
 
@@ -405,8 +600,8 @@ func (s *Service) rememberHost(host string) {
 }
 
 type persistedState struct {
-	LastDeviceUUID      string   `json:"last_device_uuid"`
-	LastDeviceName      string   `json:"last_device_name"`
+	LastDeviceUUID       string   `json:"last_device_uuid"`
+	LastDeviceName       string   `json:"last_device_name"`
 	KnownChromecastHosts []string `json:"known_chromecast_hosts"`
 }
 

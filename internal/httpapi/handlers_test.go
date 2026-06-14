@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"kickapi/internal/config"
+	"kickapi/internal/obs"
 )
 
 // newTestApp builds an App backed by the real repo static/ and templates/
@@ -79,6 +80,9 @@ func TestLivenessEndpoint(t *testing.T) {
 }
 
 func TestMetricsEndpoint(t *testing.T) {
+	// obs counters are process-global; reset so the call_count assertion is
+	// hermetic regardless of what other tests ran first.
+	obs.Reset()
 	rec := doGet(t, newTestApp(t), "/metrics")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d; want 200", rec.Code)

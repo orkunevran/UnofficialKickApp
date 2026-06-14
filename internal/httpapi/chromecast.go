@@ -20,6 +20,7 @@ type chromecastService interface {
 	StopCast(uuid string) bool
 	GetLastDevice() map[string]any
 	GetStatus() map[string]any
+	Subscribe() (<-chan map[string]any, func())
 	PauseMedia() bool
 	PlayMedia() bool
 	SetVolume(level float64) bool
@@ -141,6 +142,8 @@ func (a *App) handleCCStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /api/chromecast/status/stream — Server-Sent Events status pushes.
+// Events are driven by the shared RunStatusPoller goroutine, so N concurrent
+// SSE connections do not each call app.Update() on the Cast device.
 func (a *App) handleCCStatusStream(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -153,22 +156,23 @@ func (a *App) handleCCStatusStream(w http.ResponseWriter, r *http.Request) {
 	h.Set("Connection", "keep-alive")
 	h.Set("X-Accel-Buffering", "no")
 
-	ticker := time.NewTicker(3 * time.Second)
-	defer ticker.Stop()
+	ch, unsub := a.chromecast.Subscribe()
+	defer unsub()
+
 	ctx := r.Context()
-	write := func() {
-		payload := envelopeMap("success", "", a.chromecast.GetStatus())
+	write := func(status map[string]any) {
+		payload := envelopeMap("success", "", status)
 		b, _ := json.Marshal(payload)
 		_, _ = w.Write([]byte("data: " + string(b) + "\n\n"))
 		flusher.Flush()
 	}
-	write() // initial push
+	write(a.chromecast.GetStatus()) // initial push before first poller tick
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			write()
+		case status := <-ch:
+			write(status)
 		}
 	}
 }

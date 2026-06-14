@@ -55,6 +55,8 @@ node_modules/ # if you add npm packages later
 # Go build artifacts (binaries built locally; build cache lives in GOCACHE)
 /server
 /kickapi-server
+kick-api-arm64
+kick-api-amd64
 *.test
 *.out
 

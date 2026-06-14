@@ -35,11 +35,13 @@ type App struct {
 	cbNonCritical  *breaker.Breaker
 	kick           kickClient
 	chromecast     chromecastService
+	chromecastSvc  *chromecast.Service // concrete type for lifecycle methods
 	inflight       *inflight.Tracker
 	refreshLimiter *limiter
 
 	staticFS  fs.FS
 	indexHTML string
+	docsHTML  string
 	startTime time.Time
 }
 
@@ -55,6 +57,10 @@ func New(cfg *config.Config, log *slog.Logger, assets fs.FS) (*App, error) {
 		return nil, err
 	}
 	tmpl, err := fs.ReadFile(assets, "templates/index.html")
+	if err != nil {
+		return nil, err
+	}
+	docs, err := fs.ReadFile(assets, "templates/docs.html")
 	if err != nil {
 		return nil, err
 	}
@@ -79,20 +85,23 @@ func New(cfg *config.Config, log *slog.Logger, assets fs.FS) (*App, error) {
 		FallbackProbeTimeout: time.Duration(cfg.ChromecastFallbackScanProbeTimeout * float64(time.Second)),
 		FallbackInfoTimeout:  time.Duration(cfg.ChromecastFallbackDeviceInfoTimeout * float64(time.Second)),
 		StatePath:            ".kick_chromecast_cache.json",
+		PeriodicScanInterval: time.Duration(cfg.ChromecastPeriodicScanInterval) * time.Second,
 	}, log)
 
 	return &App{
-		cfg:           cfg,
-		log:           log,
-		cache:         cache.New(cfg.CacheMaxSize, time.Duration(cfg.CacheDefaultTimeout)*time.Second),
+		cfg:            cfg,
+		log:            log,
+		cache:          cache.New(cfg.CacheMaxSize, time.Duration(cfg.CacheDefaultTimeout)*time.Second),
 		cbCritical:     breaker.New(cfg.CircuitBreakerCriticalFailureThreshold, time.Duration(cfg.CircuitBreakerRecoverySeconds)*time.Second),
 		cbNonCritical:  breaker.New(cfg.CircuitBreakerFailureThreshold, time.Duration(cfg.CircuitBreakerRecoverySeconds)*time.Second),
 		kick:           kickClient,
 		chromecast:     cc,
+		chromecastSvc:  cc,
 		inflight:       inflight.New(),
 		refreshLimiter: newLimiter(cfg.BackgroundRefreshMaxConcurrency),
 		staticFS:       staticFS,
 		indexHTML:      renderIndex(string(tmpl), hashes),
+		docsHTML:       string(docs),
 		startTime:      time.Now(),
 	}, nil
 }
@@ -114,6 +123,15 @@ func (a *App) RunSweeper(ctx context.Context) {
 	}
 }
 
+// RunChromecastTasks starts the three Chromecast background goroutines:
+// status polling (shared across all SSE connections), periodic device
+// re-scanning, and one-shot auto-reconnect to the last known device.
+func (a *App) RunChromecastTasks(ctx context.Context) {
+	go a.chromecastSvc.RunStatusPoller(ctx)
+	go a.chromecastSvc.RunPeriodicScan(ctx)
+	go a.chromecastSvc.AutoReconnect(ctx)
+}
+
 // Cache exposes the cache (used by later phases / tests).
 func (a *App) Cache() *cache.Cache { return a.cache }
 
@@ -124,6 +142,7 @@ func (a *App) Handler() http.Handler {
 	// "/{$}" matches only the root path, so unknown paths 404 (matching the
 	// Python app's exact "/" route rather than a catch-all subtree).
 	mux.HandleFunc("GET /{$}", a.handleIndex)
+	mux.HandleFunc("GET /docs", a.handleDocs)
 	mux.HandleFunc("GET /config/languages", a.handleLanguages)
 	mux.HandleFunc("GET /health", a.handleHealth)
 	mux.HandleFunc("GET /health/live", a.handleLiveness)

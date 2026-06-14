@@ -108,6 +108,29 @@ func (c *Cache) Get(key string) (any, bool) {
 	return e.value, true
 }
 
+// SetIfAbsent stores value under key with ttl only when the key is absent or
+// already expired. Returns true if the value was stored. This is an atomic
+// check-and-set — callers that need "don't overwrite a live entry" use this
+// instead of separate Get+Set calls (which have a TOCTOU window).
+func (c *Cache) SetIfAbsent(key string, value any, ttl time.Duration) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e, ok := c.store[key]; ok && e.expiresAt.After(time.Now()) {
+		return false
+	}
+	// Key absent or expired — remove the stale entry before inserting.
+	if e, ok := c.store[key]; ok {
+		c.removeLocked(key, e)
+	}
+	c.evictIfNeeded()
+	c.store[key] = &entry{
+		expiresAt: c.expiry(ttl),
+		value:     value,
+		elem:      c.order.PushBack(key),
+	}
+	return true
+}
+
 // Delete removes key, reporting whether it was present.
 func (c *Cache) Delete(key string) bool {
 	c.mu.Lock()

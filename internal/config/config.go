@@ -101,7 +101,7 @@ func Load() *Config {
 		AvatarCacheDurationSeconds:   envInt("AVATAR_CACHE_DURATION_SECONDS", 604800),
 		ViewerCacheDurationSeconds:   envInt("VIEWER_CACHE_DURATION_SECONDS", 30),
 		NegativeCacheDurationSeconds: envInt("NEGATIVE_CACHE_DURATION_SECONDS", 10),
-		FeaturedStaleTTLSeconds:      envInt("FEATURED_STALE_TTL_SECONDS", 300),
+		FeaturedStaleTTLSeconds:      envInt("FEATURED_STALE_TTL_SECONDS", 3600),
 
 		LiveInflightWaitTimeoutSeconds: envFloat("LIVE_INFLIGHT_WAIT_TIMEOUT_SECONDS", 5.0),
 

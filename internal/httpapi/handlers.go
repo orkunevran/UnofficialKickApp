@@ -17,6 +17,12 @@ func (a *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(a.indexHTML))
 }
 
+// handleDocs serves the embedded, self-contained API reference page.
+func (a *App) handleDocs(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(a.docsHTML))
+}
+
 // handleLanguages returns the configured languages and the default code.
 func (a *App) handleLanguages(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{

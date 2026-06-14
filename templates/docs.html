@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kick App — API Reference</title>
+<style>
+  :root {
+    --bg: #0b0e14;
+    --panel: #11151f;
+    --panel-2: #161b27;
+    --border: #232a39;
+    --text: #e6e9ef;
+    --muted: #9aa3b2;
+    --primary: #53fc18;
+    --live: #ff3b30;
+    --get: #53fc18;
+    --post: #ffb020;
+    --code: #c8d0de;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--primary); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, pre {
+    font-family: "SF Mono", ui-monospace, "Cascadia Code", Menlo, Consolas, monospace;
+    font-size: 13px;
+  }
+  .layout { display: flex; min-height: 100vh; }
+
+  /* Sidebar */
+  .side {
+    width: 264px;
+    flex-shrink: 0;
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    padding: 22px 16px;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 10px;
+    font-weight: 800; font-size: 18px; letter-spacing: -0.3px;
+    margin-bottom: 4px;
+  }
+  .brand .logo {
+    background: var(--primary); color: #000; font-weight: 900;
+    padding: 2px 7px; border-radius: 6px; font-size: 15px;
+  }
+  .brand .ver { color: var(--muted); font-weight: 600; font-size: 12px; }
+  .side h4 {
+    color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em;
+    font-size: 11px; margin: 22px 0 8px;
+  }
+  .side a {
+    display: flex; align-items: center; gap: 8px;
+    color: var(--text); padding: 5px 10px; border-radius: 8px;
+    font-size: 13.5px;
+  }
+  .side a:hover { background: var(--panel-2); text-decoration: none; }
+  .side a .m { font: 700 10px/1 monospace; padding: 2px 4px; border-radius: 4px; }
+  .m.get { color: var(--get); background: rgba(83,252,24,0.12); }
+  .m.post { color: var(--post); background: rgba(255,176,32,0.14); }
+  .back { color: var(--muted) !important; font-size: 12.5px; margin-bottom: 8px; }
+
+  /* Content */
+  .main { flex: 1; min-width: 0; padding: 40px 48px 120px; max-width: 920px; }
+  .hero h1 { margin: 0 0 6px; font-size: 30px; letter-spacing: -0.5px; }
+  .hero p { color: var(--muted); margin: 0 0 4px; }
+  .pill {
+    display: inline-block; background: var(--panel-2); border: 1px solid var(--border);
+    color: var(--muted); border-radius: 999px; padding: 3px 12px; font-size: 12px; margin-top: 10px;
+  }
+
+  section { margin-top: 44px; }
+  section > h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: 0.1em;
+    color: var(--primary); border-bottom: 1px solid var(--border);
+    padding-bottom: 8px; margin: 0 0 4px;
+  }
+
+  .ep {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 18px 20px; margin-top: 16px;
+    scroll-margin-top: 16px;
+  }
+  .ep-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  .method {
+    font: 800 11px/1 monospace; padding: 5px 9px; border-radius: 6px; letter-spacing: 0.04em;
+  }
+  .method.get { color: #001b00; background: var(--get); }
+  .method.post { color: #221700; background: var(--post); }
+  .path { font-family: "SF Mono", ui-monospace, monospace; font-size: 14.5px; color: var(--code); font-weight: 600; }
+  .path .var { color: var(--primary); }
+  .desc { color: var(--muted); margin: 12px 0 0; }
+
+  table { width: 100%; border-collapse: collapse; margin-top: 14px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; }
+  td code { color: var(--primary); }
+  td .t { color: var(--muted); font-size: 12px; }
+  .req { color: var(--live); font-size: 11px; font-weight: 700; }
+  .opt { color: var(--muted); font-size: 11px; }
+
+  pre {
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 14px 16px; overflow-x: auto; margin: 14px 0 0; color: var(--code);
+  }
+  .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin-top: 14px; }
+  .note {
+    background: rgba(83,252,24,0.06); border: 1px solid rgba(83,252,24,0.25);
+    border-radius: 8px; padding: 12px 14px; margin-top: 24px; color: var(--text); font-size: 13.5px;
+  }
+  @media (max-width: 820px) {
+    .side { display: none; }
+    .main { padding: 28px 20px 80px; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+  <aside class="side">
+    <div class="brand"><span class="logo">KICK</span> App <span class="ver">v3.1.0</span></div>
+    <a class="back" href="/">← Back to app</a>
+
+    <h4>System</h4>
+    <a href="#health"><span class="m get">GET</span> /health</a>
+    <a href="#health-live"><span class="m get">GET</span> /health/live</a>
+    <a href="#metrics"><span class="m get">GET</span> /metrics</a>
+    <a href="#languages"><span class="m get">GET</span> /config/languages</a>
+
+    <h4>Streams</h4>
+    <a href="#featured"><span class="m get">GET</span> /featured-livestreams</a>
+    <a href="#play"><span class="m get">GET</span> /play/{slug}</a>
+    <a href="#m3u8"><span class="m get">GET</span> /m3u8/{file}</a>
+    <a href="#go"><span class="m get">GET</span> /go/{slug}</a>
+    <a href="#search"><span class="m get">GET</span> /search</a>
+    <a href="#avatar"><span class="m get">GET</span> /avatar/{slug}</a>
+    <a href="#clips"><span class="m get">GET</span> /clips/{slug}</a>
+    <a href="#vods"><span class="m get">GET</span> /vods/{slug}</a>
+    <a href="#vod"><span class="m get">GET</span> /vods/{slug}/{id}</a>
+    <a href="#viewers"><span class="m get">GET</span> /viewers</a>
+    <a href="#viewers-batch"><span class="m get">GET</span> /viewers/batch</a>
+
+    <h4>Chromecast</h4>
+    <a href="#cc-devices"><span class="m get">GET</span> /devices</a>
+    <a href="#cc-select"><span class="m post">POST</span> /select</a>
+    <a href="#cc-cast"><span class="m post">POST</span> /cast</a>
+    <a href="#cc-stop"><span class="m post">POST</span> /stop</a>
+    <a href="#cc-last"><span class="m get">GET</span> /last-device</a>
+    <a href="#cc-status"><span class="m get">GET</span> /status</a>
+    <a href="#cc-stream"><span class="m get">GET</span> /status/stream</a>
+    <a href="#cc-pause"><span class="m post">POST</span> /pause</a>
+    <a href="#cc-play"><span class="m post">POST</span> /play</a>
+    <a href="#cc-volume"><span class="m post">POST</span> /volume</a>
+    <a href="#cc-seek"><span class="m post">POST</span> /seek</a>
+  </aside>
+
+  <main class="main">
+    <div class="hero">
+      <h1>API Reference</h1>
+      <p>Stream-proxy and Chromecast control API for the Unofficial Kick App.</p>
+      <p>Base URL: <code>http://&lt;host&gt;:8081</code></p>
+      <span class="pill">Stream endpoints return a <code>{ status, message, data }</code> envelope</span>
+    </div>
+
+    <div class="note">
+      <strong>Response envelope.</strong> All <code>/streams/*</code> endpoints return JSON shaped as
+      <code>{ "status": "success" | "error", "message": "", "data": … }</code>.
+      On error, <code>status</code> is <code>"error"</code>, <code>message</code> carries the reason, and the HTTP status reflects the failure
+      (400 invalid input, 404 not found, 503 upstream unavailable). Slugs must match <code>^[a-zA-Z0-9_-]{1,255}$</code>.
+    </div>
+
+    <!-- ── System ─────────────────────────────────────────────── -->
+    <section>
+      <h2>System</h2>
+
+      <div class="ep" id="health">
+        <div class="ep-head"><span class="method get">GET</span><span class="path">/health</span></div>
+        <p class="desc">Per-component health (cache + circuit breakers). Returns <code>503</code> if any component is unhealthy, otherwise <code>200</code>.</p>
+        <div class="label">200 response</div>
+        <pre>{
+  "status": "healthy",
+  "uptime_seconds": 1432,
+  "components": {
+    "cache": { "status": "healthy", "size": 84, "max_size": 2000, "utilization_pct": 4.2 },
+    "circuit_breakers": {
+      "critical":     { "status": "healthy", "state": "closed" },
+      "non_critical": { "status": "healthy", "state": "closed" }
+    }
+  }
+}</pre>
+      </div>
+
+      <div class="ep" id="health-live">
+        <div class="ep-head"><span class="method get">GET</span><span class="path">/health/live</span></div>
+        <p class="desc">Minimal liveness probe (used by the container healthcheck).</p>
+        <div class="label">200 response</div>
+        <pre>{ "status": "ok" }</pre>
+      </div>
+
+      <div class="ep" id="metrics">
+        <div class="ep-head"><span class="method get">GET</span><span class="path">/metrics</span></div>
+        <p class="desc">Cache, upstream call count, circuit-breaker stats per lane, and in-flight dedup metrics.</p>
+        <div class="label">200 response (excerpt)</div>
+        <pre>{
+  "cache": { "size": 84, "max_size": 2000, "hit_count": 9201, "miss_count": 312 },
+  "upstream": {
+    "call_count": 514,
+    "circuit_breakers": { "critical": {…}, "non_critical": {…} },
+    "circuit_breaker_events": { "critical": { "rejections": 0, "failures": 1 }, … }
+  },
+  "inflight": { "active_keys": 0, "timeout_count": 3 },
+  "uptime_seconds": 1432
+}</pre>
+      </div>
+
+      <div class="ep" id="languages">
+        <div class="ep-head"><span class="method get">GET</span><span class="path">/config/languages</span></div>
+        <p class="desc">Featured-content languages and the default code.</p>
+        <div class="label">200 response</div>
+        <pre>{
+  "languages": [ { "code": "en", "name": "English" }, { "code": "tr", "name": "Turkish" }, … ],
+  "default_language": "tr"
+}</pre>
+      </div>
+    </section>
+
+    <!-- ── Streams ────────────────────────────────────────────── -->
+    <section>
+      <h2>Streams</h2>
+
+      <div class="ep" id="featured">
+        <div class="ep-head"><span class="method get">GET</span><span class="path">/streams/featured-livestreams</span></div>
+        <p class="desc">Featured livestreams for a language, with optional category filtering. Served stale-while-revalidate (instant from cache, refreshed in the background).</p>
+        <div class="label">Query parameters</div>
+        <table>
+          <tr><th>Name</th><th>Type</th><th></th><th>Notes</th></tr>
+          <tr><td><code>language</code></td><td class="t">string</td><td class="opt">optional</td><td>Language code (default <code>en</code>); falls back to the default if invalid.</td></tr>
+          <tr><td><code>page</code></td><td class="t">int</td><td class="opt">optional</td><td>Page number, ≥ 1 (default 1).</td></tr>
+          <tr><td><code>category</code></td><td class="t">string</td><td class="opt">optional</td><td>Category slug. Switches to the filtered livestreams source.</td></tr>
+          <tr><td><code>subcategory</code> / <code>subcategories</code></td><td class="t">string</td><td class="opt">optional</td><td>Further category filtering.</td></tr>
+          <tr><td><code>sort</code></td><td class="t">string</td><td class="opt">optional</td><td>One of <code>asc</code>, <code>desc</code>, <code>featured</code>.</td></tr>
+          <tr><td><code>strict</code></td><td class="t">bool</td><td class="opt">optional</td><td><code>true</code> to apply strict category matching.</td></tr>
+        </table>
+        <div class="label">200 response</div>
+        <pre>{ "status": "success", "message": "", "data": [ { "channel": {…}, "is_live": true, "viewer_count": 7531, … } ] }</pre>
+      </div>
+
+      <div class="ep" id="play">
+        <div class="ep-head"><span class="method get">GET</span><span class="path">/streams/play/<span class="var">{slug}</span></span></div>
+        <p class="desc">Channel play state and metadata. Stale-while-revalidate; 404s are negatively cached briefly.</p>
+        <div class="label">200 response (live)</div>
+        <pre>{
+  "status": "success", "message": "",
+  "data": {
+    "status": "live",
+    "channel_slug": "jahrein",
+    "username": "Jahrein",
+    "profile_picture": "https://…",
+    "playback_url": "/streams/m3u8/jahrein.m3u8",
+    "livestream_id": 12345678,
+    "livestream_title": "…",
+    "livestream_viewer_count": 7531,
+    "livestream_category": "Just Chatting",
+    "livestream_thumbnail_url": "https://…"
+  }
+}</pre>
+        <div class="label">When offline</div>
+        <pre>{ "status": "success", "message": "", "data": { "status": "offline", "channel_slug": "jahrein", … } }</pre>
+      </div>
+
+      <div class="ep" id="m3u8">
+        <div class="ep-head"><span class="method get">GET</span><span class="path">/streams/m3u8/<span class="var">{file}</span></span></div>
+        <p class="desc">HLS master playlist proxy. <code>{file}</code> is <code>{slug}.m3u8</code>. Returns the rewritten <code>application/vnd.apple.mpegurl</code> playlist for direct playback.</p>
+        <div class="label">Example</div>
+        <pre>GET /streams/m3u8/jahrein.m3u8  →  #EXTM3U … (HLS playlist)</pre>
+      </div>
+
+      <div class="ep" id="go">
+        <div class="ep-head"><span class="method get">GET</span><span class="path">/streams/go/<span class="var">{slug}</span></span></div>
+        <p class="desc">307 redirect to <code>/streams/m3u8/{slug}.m3u8</code> — a convenience entry point for external players.</p>
+      </div>
+
+      <div class="ep" id="search">
+        <div class="ep-head"><span class="method get">GET</span><span class="path">/streams/search</span></div>
+        <p class="desc">Channel search via Kick's Typesense cluster. Avatars are enriched server-side from cache when available.</p>
+        <div class="label">Query parameters</div>
+        <table>
+          <tr><th>Name</th><th>Type</th><th></th><th>Notes</th></tr>
+          <tr><td><code>q</code></td><td class="t">string</td><td class="req">required</td><td>Search query, 2–100 characters.</td></tr>
+        </table>
+        <div class="label">200 response</div>
+        <pre>{ "status": "success", "message": "",
+  "data": [ { "slug": "jahrein", "username": "Jahrein", "followers_count": 1200000,
+              "is_live": true, "verified": true, "profile_picture": "https://…" } ] }</pre>
+      </div>
+
+      <div class="ep" id="avatar">
+        <div class="ep-head"><span class="method get">GET</span><span class="path">/streams/avatar/<span class="var">{slug}</span></span></div>
+        <p class="desc">Channel profile picture. Reuses a cached play response when present, otherwise fetches the channel. 7-day cache TTL.</p>
+        <div class="label">200 response</div>
+        <pre>{ "status": "success", "message": "", "data": { "profile_picture": "https://…" } }</pre>
+      </div>
+
+      <div class="ep" id="clips">
+        <div class="ep-head"><span class="method get">GET</span><span class="path">/streams/clips/<span class="var">{slug}</span></span></div>
+        <p class="desc">Normalized clip list for a channel.</p>
+        <div class="label">200 response</div>
+        <pre>{ "status": "success", "message": "", "data": { "clips": [ { "id": "…", "title": "…", "thumbnail_url": "…", "duration": 42, … } ] } }</pre>
+      </div>
+
+      <div class="ep" id="vods">
+        <div class="ep-head"><span class="method get">GET</span><span class="path">/streams/vods/<span class="var">{slug}</span></span></div>
+        <p class="desc">Past-broadcast (VOD) list for a channel.</p>
+        <div class="label">200 response</div>
+        <pre>{ "status": "success", "message": "", "data": { "vods": [ { "id": …, "title": "…", "duration": …, … } ] } }</pre>
+      </div>
+
+      <div class="ep" id="vod">
+        <div class="ep-head"><span class="method get">GET</span><span class="path">/streams/vods/<span class="var">{slug}</span>/<span class="var">{vodID}</span></span></div>
+        <p class="desc">Playback details for a single VOD. Returns 404 if the VOD is not found.</p>
+      </div>
+
+      <div class="ep" id="viewers">
+        <div class="ep-head"><span class="method get">GET</span><span class="path">/streams/viewers</span></div>
+        <p class="desc">Live viewer count for one livestream.</p>
+        <div class="label">Query parameters</div>
+        <table>
+          <tr><th>Name</th><th>Type</th><th></th><th>Notes</th></tr>
+          <tr><td><code>id</code></td><td class="t">int</td><td class="req">required</td><td>Livestream ID (&gt; 0).</td></tr>
+        </table>
+        <div class="label">200 response</div>
+        <pre>{ "status": "success", "message": "", "data": { "viewer_count": 7531 } }</pre>
+      </div>
+
+      <div class="ep" id="viewers-batch">
+        <div class="ep-head"><span class="method get">GET</span><span class="path">/streams/viewers/batch</span></div>
+        <p class="desc">Viewer counts for many livestreams in one call. IDs are chunked and fetched in parallel upstream.</p>
+        <div class="label">Query parameters</div>
+        <table>
+          <tr><th>Name</th><th>Type</th><th></th><th>Notes</th></tr>
+          <tr><td><code>ids</code></td><td class="t">string</td><td class="req">required</td><td>Comma-separated livestream IDs, max 50 (excess is truncated).</td></tr>
+        </table>
+        <div class="label">200 response</div>
+        <pre>{ "status": "success", "message": "", "data": { "12345678": 7531, "23456789": 412 } }</pre>
+      </div>
+    </section>
+
+    <!-- ── Chromecast ─────────────────────────────────────────── -->
+    <section>
+      <h2>Chromecast</h2>
+
+      <div class="ep" id="cc-devices">
+        <div class="ep-head"><span class="method get">GET</span><span class="path">/api/chromecast/devices</span></div>
+        <p class="desc">List discovered Cast devices. Triggers a background scan when forced or when known hosts are supplied.</p>
+        <div class="label">Query parameters</div>
+        <table>
+          <tr><th>Name</th><th>Type</th><th></th><th>Notes</th></tr>
+          <tr><td><code>force</code></td><td class="t">bool</td><td class="opt">optional</td><td><code>true</code> to bypass the device-cache TTL and rescan.</td></tr>
+          <tr><td><code>known_hosts</code></td><td class="t">string</td><td class="opt">optional</td><td>Comma/space-separated hostnames or IPs to probe directly.</td></tr>
+        </table>
+        <div class="label">200 response</div>
+        <pre>{ "status": "success", "message": "",
+  "data": { "devices": [ { "name": "Living Room", "uuid": "…" } ], "scanning": true } }</pre>
+      </div>
+
+      <div class="ep" id="cc-select">
+        <div class="ep-head"><span class="method post">POST</span><span class="path">/api/chromecast/select</span></div>
+        <p class="desc">Connect to a device by UUID. Waits for any in-flight scan to finish first. <code>409</code> if a scan or another selection is in progress, <code>404</code> if not found / connect failed.</p>
+        <div class="label">Request body</div>
+        <pre>{ "uuid": "device-uuid" }</pre>
+      </div>
+
+      <div class="ep" id="cc-cast">
+        <div class="ep-head"><span class="method post">POST</span><span class="path">/api/chromecast/cast</span></div>
+        <p class="desc">Load an HLS stream on the selected device. Retries once if the receiver is waking from standby.</p>
+        <div class="label">Request body</div>
+        <pre>{ "stream_url": "http://…/jahrein.m3u8", "title": "Kick Stream" }</pre>
+      </div>
+
+      <div class="ep" id="cc-stop">
+        <div class="ep-head"><span class="method post">POST</span><span class="path">/api/chromecast/stop</span></div>
+        <p class="desc">Stop playback and disconnect. Optional <code>uuid</code> guards against stopping a different device.</p>
+        <div class="label">Request body (optional)</div>
+        <pre>{ "uuid": "device-uuid" }</pre>
+      </div>
+
+      <div class="ep" id="cc-last">
+        <div class="ep-head"><span class="method get">GET</span><span class="path">/api/chromecast/last-device</span></div>
+        <p class="desc">The last successfully selected device, or <code>null</code>.</p>
+        <div class="label">200 response</div>
+        <pre>{ "status": "success", "message": "", "data": { "device": { "uuid": "…", "name": "Living Room" } } }</pre>
+      </div>
+
+      <div class="ep" id="cc-status">
+        <div class="ep-head"><span class="method get">GET</span><span class="path">/api/chromecast/status</span></div>
+        <p class="desc">Current playback status snapshot.</p>
+        <div class="label">200 response</div>
+        <pre>{ "status": "success", "message": "",
+  "data": { "status": "connected", "device_name": "Living Room", "is_playing": true,
+            "volume_level": 0.6, "duration": 0, "current_time": 0 } }</pre>
+      </div>
+
+      <div class="ep" id="cc-stream">
+        <div class="ep-head"><span class="method get">GET</span><span class="path">/api/chromecast/status/stream</span></div>
+        <p class="desc">Server-Sent Events stream of status updates (<code>text/event-stream</code>). One shared poller drives all subscribers; control actions push an immediate update.</p>
+        <div class="label">Event payload</div>
+        <pre>data: { "status": "success", "message": "", "data": { "status": "connected", … } }</pre>
+      </div>
+
+      <div class="ep" id="cc-pause">
+        <div class="ep-head"><span class="method post">POST</span><span class="path">/api/chromecast/pause</span></div>
+        <p class="desc">Pause playback on the active device. No body.</p>
+      </div>
+
+      <div class="ep" id="cc-play">
+        <div class="ep-head"><span class="method post">POST</span><span class="path">/api/chromecast/play</span></div>
+        <p class="desc">Resume playback on the active device. No body.</p>
+      </div>
+
+      <div class="ep" id="cc-volume">
+        <div class="ep-head"><span class="method post">POST</span><span class="path">/api/chromecast/volume</span></div>
+        <p class="desc">Set the device volume.</p>
+        <div class="label">Request body</div>
+        <pre>{ "level": 0.6 }   // 0.0 – 1.0</pre>
+      </div>
+
+      <div class="ep" id="cc-seek">
+        <div class="ep-head"><span class="method post">POST</span><span class="path">/api/chromecast/seek</span></div>
+        <p class="desc">Seek to an absolute position (seconds) in the current media.</p>
+        <div class="label">Request body</div>
+        <pre>{ "position": 120 }   // seconds, ≥ 0</pre>
+      </div>
+    </section>
+
+    <div class="note" style="margin-top:40px">
+      For deeper notes on the upstream Kick endpoints this proxy wraps, see <code>KICK_PUBLIC_API.md</code> in the repository.
+    </div>
+  </main>
+</div>
+</body>
+</html>

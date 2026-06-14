@@ -1,9 +1,11 @@
 package httpapi
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -511,6 +513,45 @@ func (a *App) refreshFeatured(staleKey, freshKey, language string, page int, cat
 	a.warmCachesFromFeatured(dataList(body))
 }
 
+// RunWarmup pre-populates the featured and avatar caches for every configured
+// language shortly after startup, eliminating cold-start latency spikes.
+// It runs as a background goroutine and exits when ctx is cancelled.
+func (a *App) RunWarmup(ctx context.Context) {
+	select {
+	case <-time.After(2 * time.Second):
+	case <-ctx.Done():
+		return
+	}
+	for _, lang := range a.cfg.FeaturedLanguages {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		v := url.Values{}
+		v.Set("language", lang.Code)
+		v.Set("page", "1")
+		query := v.Encode()
+		staleKey := "featured-livestreams:/streams/featured-livestreams?" + query
+		if _, ok := a.cacheGet(staleKey); ok {
+			continue
+		}
+		raw, apiErr := a.fetchFeatured(lang.Code, 1, "", "", "", "", false)
+		if apiErr != nil {
+			a.log.Warn("startup warmup failed", "language", lang.Code, "error", apiErr.Message)
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+		body := transform.BuildFeaturedResponse(raw, 1)
+		freshKey := "featured-fresh:/streams/featured-livestreams?" + query
+		a.cachePut(staleKey, body, 200, a.ttl(a.cfg.FeaturedStaleTTLSeconds))
+		a.cache.SetTTL(freshKey, true, a.ttl(a.cfg.FeaturedCacheDurationSeconds))
+		a.warmCachesFromFeatured(dataList(body))
+		a.log.Info("startup warmup complete", "language", lang.Code)
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
 func (a *App) isValidLanguage(code string) bool {
 	for _, l := range a.cfg.FeaturedLanguages {
 		if l.Code == code {
@@ -543,40 +584,42 @@ func (a *App) warmCachesFromFeatured(streams []any) {
 
 		avatarKey := "avatar:/streams/avatar/" + slug
 		if pic != nil {
-			if _, exists := a.cache.Get(avatarKey); !exists {
-				a.cachePut(avatarKey, envelopeMap("success", "", map[string]any{"profile_picture": pic}), 200, a.ttl(a.cfg.AvatarCacheDurationSeconds))
-			}
+			// SetIfAbsent is atomic: avoids the check-then-set TOCTOU window
+			// where a concurrent handlePlayStream could write a full entry
+			// that we'd then overwrite with a partial one.
+			a.cache.SetIfAbsent(avatarKey, cachedResp{
+				payload: envelopeMap("success", "", map[string]any{"profile_picture": pic}),
+				status:  200,
+			}, a.ttl(a.cfg.AvatarCacheDurationSeconds))
 		}
 
 		playKey := "live:/streams/play/" + slug
-		if _, exists := a.cache.Get(playKey); !exists {
-			if rawURL, ok := ch["playback_url"].(string); ok && rawURL != "" {
-				a.cache.SetTTL("live-url:"+slug, rawURL, a.ttl(a.cfg.LiveStaleTTLSeconds))
-			}
-			status := "offline"
-			if b, ok := stream["is_live"].(bool); ok && b {
-				status = "live"
-			}
-			username := any(slug)
-			if u, ok := user["username"]; ok {
-				username = u
-			}
-			partial := envelopeMap("success", "", map[string]any{
-				"status":                   status,
-				"channel_slug":             slug,
-				"username":                 username,
-				"profile_picture":          pic,
-				"playback_url":             "/streams/m3u8/" + slug + ".m3u8",
-				"session_title":            stream["session_title"],
-				"livestream_id":            stream["id"],
-				"livestream_viewer_count":  stream["viewer_count"],
-				"livestream_thumbnail_url": transform.ExtractThumbnail(stream, pic),
-				"livestream_category":      transform.ExtractCategoryName(stream),
-				"start_time":               stream["start_time"],
-				"_partial":                 true,
-			})
-			a.cachePut(playKey, partial, 200, a.ttl(a.cfg.LiveCacheDurationSeconds))
+		if rawURL, ok := ch["playback_url"].(string); ok && rawURL != "" {
+			a.cache.SetIfAbsent("live-url:"+slug, rawURL, a.ttl(a.cfg.LiveStaleTTLSeconds))
 		}
+		status := "offline"
+		if b, ok := stream["is_live"].(bool); ok && b {
+			status = "live"
+		}
+		username := any(slug)
+		if u, ok := user["username"]; ok {
+			username = u
+		}
+		partial := envelopeMap("success", "", map[string]any{
+			"status":                   status,
+			"channel_slug":             slug,
+			"username":                 username,
+			"profile_picture":          pic,
+			"playback_url":             "/streams/m3u8/" + slug + ".m3u8",
+			"session_title":            stream["session_title"],
+			"livestream_id":            stream["id"],
+			"livestream_viewer_count":  stream["viewer_count"],
+			"livestream_thumbnail_url": transform.ExtractThumbnail(stream, pic),
+			"livestream_category":      transform.ExtractCategoryName(stream),
+			"start_time":               stream["start_time"],
+			"_partial":                 true,
+		})
+		a.cache.SetIfAbsent(playKey, cachedResp{payload: partial, status: 200}, a.ttl(a.cfg.LiveCacheDurationSeconds))
 	}
 }
 
@@ -594,7 +637,26 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	key := requestCacheKey("search", r)
 	if c, ok := a.cacheGet(key); ok {
-		writeCached(w, c)
+		// Enrich on cache hits too: avatar cache has 7-day TTL while search cache
+		// has 30s, so avatars may have been populated after this entry was stored.
+		// Shallow-copy each result map before enriching — the slice inside the
+		// cached payload is shared across concurrent requests; writing to the same
+		// map from multiple goroutines is an undefined-behaviour data race in Go.
+		if data, ok := c.payload["data"].([]map[string]any); ok {
+			copied := shallowCopyMaps(data)
+			a.enrichSearchAvatars(copied)
+			resp := cachedResp{
+				status: c.status,
+				payload: map[string]any{
+					"status":  c.payload["status"],
+					"message": c.payload["message"],
+					"data":    copied,
+				},
+			}
+			writeCached(w, resp)
+		} else {
+			writeCached(w, c)
+		}
 		return
 	}
 	results, apiErr := kickCall(a.cbNonCritical, obs.LaneNonCritical, query, func() ([]map[string]any, error) {
@@ -604,9 +666,45 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 		errorJSON(w, apiErr.Message, apiErr.Status)
 		return
 	}
+	a.enrichSearchAvatars(results)
 	payload := envelopeMap("success", "", results)
 	a.cachePut(key, payload, 200, a.ttl(a.cfg.SearchCacheDurationSeconds))
 	writeCached(w, cachedResp{payload: payload, status: 200})
+}
+
+// shallowCopyMaps returns a new slice where each element is a shallow copy of
+// the corresponding source map. Used before in-place enrichment so concurrent
+// requests don't race on writes to the same map stored in the cache.
+func shallowCopyMaps(src []map[string]any) []map[string]any {
+	out := make([]map[string]any, len(src))
+	for i, m := range src {
+		mc := make(map[string]any, len(m))
+		for k, v := range m {
+			mc[k] = v
+		}
+		out[i] = mc
+	}
+	return out
+}
+
+// enrichSearchAvatars fills profile_picture from the avatar cache (7-day TTL,
+// populated by featured warm-up and channel page visits). Zero-cost: each
+// lookup is a single map read under a mutex.
+func (a *App) enrichSearchAvatars(results []map[string]any) {
+	for _, r := range results {
+		slug, _ := r["slug"].(string)
+		if slug == "" || r["profile_picture"] != nil {
+			continue
+		}
+		avatarKey := "avatar:/streams/avatar/" + slug
+		if cv, ok := a.cache.Get(avatarKey); ok {
+			if cr, ok := cv.(cachedResp); ok {
+				if dataMap, ok := cr.payload["data"].(map[string]any); ok {
+					r["profile_picture"] = dataMap["profile_picture"]
+				}
+			}
+		}
+	}
 }
 
 // ── /streams/viewers ─────────────────────────────────────────────────────────

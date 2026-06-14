@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -446,4 +447,89 @@ func TestLRU_AddReturnsFalseOnDuplicate(t *testing.T) {
 	if l.add("x") {
 		t.Fatal("re-add of existing key should return false")
 	}
+}
+
+// ── SelectDevice concurrency (regression guards) ──────────────────────────────
+
+// raceCaster touches a shared field in both Update and Close, so the race
+// detector flags any concurrent (unserialised) Cast I/O on the same connection.
+type raceCaster struct{ ops int }
+
+func (r *raceCaster) Load(string, int, string, bool, bool, bool) error { r.ops++; return nil }
+func (r *raceCaster) Pause() error                                     { r.ops++; return nil }
+func (r *raceCaster) Unpause() error                                   { r.ops++; return nil }
+func (r *raceCaster) SetVolume(float32) error                          { r.ops++; return nil }
+func (r *raceCaster) SeekToTime(float32) error                         { r.ops++; return nil }
+func (r *raceCaster) Update() error                                    { r.ops++; return nil }
+func (r *raceCaster) Status() (*gccast.Application, *gccast.Media, *gccast.Volume) {
+	return nil, nil, nil
+}
+func (r *raceCaster) Close(bool) error { r.ops++; return nil }
+
+// TestSelectDevice_SwitchIsRaceFree guards finding #1: switching devices closed
+// the previous caster under s.mu (not appMu), racing the status poller's
+// Update() on that same connection. Run under `go test -race`.
+func TestSelectDevice_SwitchIsRaceFree(t *testing.T) {
+	s := testService(defaultCfg())
+	s.newCaster = func(addr string, port int) (caster, error) { return &raceCaster{}, nil }
+	s.setDevices([]Device{
+		{UUID: "a", Name: "A", Addr: "a", Port: 8009},
+		{UUID: "b", Name: "B", Addr: "b", Port: 8009},
+	})
+	if ok, _ := s.SelectDevice("a", time.Second); !ok {
+		t.Fatal("select A should succeed")
+	}
+
+	// Hammer GetStatus (Update on the active caster, under appMu) while repeatedly
+	// switching devices (each switch closes the previous connection). The close
+	// must be serialised with the poller, not racing it.
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				s.GetStatus()
+			}
+		}
+	}()
+	for i := 0; i < 60; i++ {
+		dev := "b"
+		if i%2 == 0 {
+			dev = "a"
+		}
+		s.SelectDevice(dev, time.Second)
+	}
+	close(stop)
+	wg.Wait()
+}
+
+// TestSelectDevice_HoldsSelectingDuringInFlightConnect guards finding #2: the
+// `selecting` guard must be held for the connect goroutine's whole lifetime, so a
+// timed-out caller can't let a second select run concurrently.
+func TestSelectDevice_HoldsSelectingDuringInFlightConnect(t *testing.T) {
+	s := testService(defaultCfg())
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	s.newCaster = func(addr string, port int) (caster, error) {
+		once.Do(func() { close(started) })
+		<-release
+		return &raceCaster{}, nil
+	}
+	s.setDevices([]Device{{UUID: "a", Name: "A", Addr: "a", Port: 8009}})
+
+	go func() { s.SelectDevice("a", 30*time.Millisecond) }() // times out; goroutine stays blocked in newCaster
+	<-started                                                // connect attempt is in flight
+
+	time.Sleep(80 * time.Millisecond) // first caller has timed out, but its goroutine still holds `selecting`
+	if ok, reason := s.SelectDevice("a", 30*time.Millisecond); ok || reason != "busy" {
+		t.Fatalf("concurrent select during in-flight connect: ok=%v reason=%q; want false/busy", ok, reason)
+	}
+	close(release)                    // let the first goroutine finish and release `selecting`
+	time.Sleep(20 * time.Millisecond) // allow it to complete before the test returns
 }

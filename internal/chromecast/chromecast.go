@@ -81,11 +81,17 @@ type Service struct {
 	// no scan is running.
 	scanDone chan struct{}
 
-	// appMu serialises all Cast-protocol method calls on the active caster
+	// appMu serialises ALL Cast-protocol method calls on the active caster
 	// (Load, Update, Pause, Close, …). It is separate from mu so that state
 	// reads/writes never block behind network I/O, and Cast I/O never races
 	// between the status poller goroutine and HTTP-handler goroutines.
+	// A slow/unreachable device only causes a bounded stall here — go-chromecast
+	// applies context deadlines to its calls — not a deadlock.
 	appMu sync.Mutex
+
+	// saveMu serialises state-cache writes (saveState) so concurrent savers
+	// can't interleave; the write itself is atomic (temp file + rename).
+	saveMu sync.Mutex
 
 	// Pub-sub for status pushes: SSE handlers subscribe; control operations and
 	// the background poller broadcast. One poller goroutine drives app.Update()
@@ -276,11 +282,6 @@ func (s *Service) SelectDevice(uuid string, timeout time.Duration) (bool, string
 	}
 	s.selecting = true
 	s.mu.Unlock()
-	defer func() {
-		s.mu.Lock()
-		s.selecting = false
-		s.mu.Unlock()
-	}()
 
 	type result struct {
 		ok     bool
@@ -288,6 +289,16 @@ func (s *Service) SelectDevice(uuid string, timeout time.Duration) (bool, string
 	}
 	done := make(chan result, 1)
 	go func() {
+		// `selecting` is held for this goroutine's whole lifetime — NOT just until
+		// SelectDevice returns. Otherwise a timed-out caller would clear it while
+		// we are still connecting, letting a second select run concurrently and
+		// race on s.app. A concurrent select during this window correctly gets "busy".
+		defer func() {
+			s.mu.Lock()
+			s.selecting = false
+			s.mu.Unlock()
+		}()
+
 		retries := s.cfg.SelectMaxRetries
 		if retries < 1 {
 			retries = 1
@@ -296,15 +307,17 @@ func (s *Service) SelectDevice(uuid string, timeout time.Duration) (bool, string
 			app, err := s.newCaster(dev.Addr, dev.Port)
 			if err == nil {
 				s.mu.Lock()
-				if s.app != nil {
-					_ = s.app.Close(false)
-				}
+				old := s.app
 				s.app = app
 				s.selected = uuid
 				s.lastUUID = uuid
 				s.lastName = dev.Name
 				s.mu.Unlock()
+				// Close the previous connection OUTSIDE s.mu and UNDER appMu, so it
+				// cannot race the status poller's Update() on that same caster.
+				s.closeApp(old, false)
 				s.saveState()
+				s.triggerPoll()
 				done <- result{true, ""}
 				return
 			}
@@ -318,13 +331,23 @@ func (s *Service) SelectDevice(uuid string, timeout time.Duration) (bool, string
 
 	select {
 	case r := <-done:
-		if r.ok {
-			s.triggerPoll()
-		}
 		return r.ok, r.reason
 	case <-time.After(timeout):
 		s.log.Error("select timed out", "device", dev.Name, "timeout", timeout)
 		return false, "failed"
+	}
+}
+
+// closeApp disconnects a caster under appMu (never under s.mu) so it cannot race
+// the status poller's Update() on the same connection. nil-safe.
+func (s *Service) closeApp(app caster, stopMedia bool) {
+	if app == nil {
+		return
+	}
+	s.appMu.Lock()
+	defer s.appMu.Unlock()
+	if err := app.Close(stopMedia); err != nil {
+		s.log.Warn("error closing cast connection", "error", err)
 	}
 }
 
@@ -377,12 +400,7 @@ func (s *Service) StopCast(uuid string) bool {
 	s.selected = ""
 	s.mu.Unlock()
 
-	s.appMu.Lock()
-	err := app.Close(true)
-	s.appMu.Unlock()
-	if err != nil {
-		s.log.Warn("error closing cast connection", "error", err)
-	}
+	s.closeApp(app, true)
 	s.saveState()
 	s.triggerPoll()
 	return true
@@ -466,11 +484,7 @@ func (s *Service) Shutdown() {
 	s.app = nil
 	s.selected = ""
 	s.mu.Unlock()
-	if app != nil {
-		s.appMu.Lock()
-		_ = app.Close(true)
-		s.appMu.Unlock()
-	}
+	s.closeApp(app, true) // nil-safe
 }
 
 // ── pub-sub (status push) ─────────────────────────────────────────────────────
@@ -640,7 +654,16 @@ func (s *Service) saveState() {
 	if err != nil {
 		return
 	}
-	if err := os.WriteFile(s.cfg.StatePath, data, 0o644); err != nil {
+	// Serialise concurrent savers and write atomically (temp + rename) so a
+	// save from doScan / SelectDevice / StopCast can't interleave or truncate.
+	s.saveMu.Lock()
+	defer s.saveMu.Unlock()
+	tmp := s.cfg.StatePath + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		s.log.Warn("failed to save chromecast state cache", "error", err)
+		return
+	}
+	if err := os.Rename(tmp, s.cfg.StatePath); err != nil {
 		s.log.Warn("failed to save chromecast state cache", "error", err)
 	}
 }

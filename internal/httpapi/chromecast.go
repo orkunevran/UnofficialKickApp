@@ -25,7 +25,6 @@ type chromecastService interface {
 	PlayMedia() bool
 	SetVolume(level float64) bool
 	SeekMedia(position float64) bool
-	Shutdown()
 }
 
 const selectTimeout = 15 * time.Second

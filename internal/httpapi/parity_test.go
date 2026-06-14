@@ -48,7 +48,6 @@ func (f *fakeChromecast) PauseMedia() bool       { return true }
 func (f *fakeChromecast) PlayMedia() bool        { return true }
 func (f *fakeChromecast) SetVolume(float64) bool { return true }
 func (f *fakeChromecast) SeekMedia(float64) bool { return true }
-func (f *fakeChromecast) Shutdown()              {}
 
 // ── sample data (mirrors tests/conftest.py sample_api_data) ──────────────
 

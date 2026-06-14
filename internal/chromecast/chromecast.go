@@ -483,15 +483,9 @@ func (s *Service) GetStatus() map[string]any {
 	}
 }
 
-// Shutdown closes any open connection.
-func (s *Service) Shutdown() {
-	s.mu.Lock()
-	app := s.app
-	s.app = nil
-	s.selected = ""
-	s.mu.Unlock()
-	s.closeApp(app, true) // nil-safe
-}
+// (No Shutdown method by design: a server restart must NOT disconnect/stop an
+// active cast — the device keeps playing and AutoReconnect re-attaches. The OS
+// reclaims the control socket on process exit.)
 
 // ── pub-sub (status push) ─────────────────────────────────────────────────────
 

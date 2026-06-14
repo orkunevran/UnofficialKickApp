@@ -50,5 +50,3 @@ func (l *lru) moveToEnd(host string) {
 func (l *lru) keys() []string {
 	return append([]string(nil), l.order...)
 }
-
-func (l *lru) len() int { return len(l.order) }

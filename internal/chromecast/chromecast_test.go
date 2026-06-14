@@ -410,12 +410,12 @@ func TestLRU_AddAndEvict(t *testing.T) {
 	l.add("a")
 	l.add("b")
 	l.add("c")
-	if l.len() != 3 {
-		t.Fatalf("expected 3, got %d", l.len())
+	if len(l.keys()) != 3 {
+		t.Fatalf("expected 3, got %d", len(l.keys()))
 	}
 	l.add("d") // evicts "a"
-	if l.len() != 3 {
-		t.Fatalf("expected 3 after eviction, got %d", l.len())
+	if len(l.keys()) != 3 {
+		t.Fatalf("expected 3 after eviction, got %d", len(l.keys()))
 	}
 	for _, k := range l.keys() {
 		if k == "a" {

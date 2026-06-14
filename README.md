@@ -1,4 +1,11 @@
-# Unofficial Kick App
+# Unofficial Kick App — Python backend (DEPRECATED)
+
+> [!CAUTION]
+> **⚠️ DEPRECATED — this is the original Python / FastAPI backend, and it is no longer maintained.**
+> Active development has moved to the **Go** backend on the [`main`](../../tree/main) branch
+> (identical HTTP API and frontend, deployed in production). This `legacy/python-backend` branch
+> is a frozen historical reference — **do not deploy from it.** See the migration plan in
+> [`docs/MIGRATION_GO.md`](../../blob/main/docs/MIGRATION_GO.md) on `main`.
 
 <p align="center">
   <img src="docs/screenshots/hero-dark-new.webp" alt="Browse view, dark theme" />

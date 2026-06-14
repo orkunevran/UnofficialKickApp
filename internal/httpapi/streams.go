@@ -527,6 +527,16 @@ func (a *App) refreshFeatured(staleKey, freshKey, language string, page int, cat
 	a.warmCachesFromFeatured(dataList(body))
 }
 
+// sleepCtx sleeps for d, returning false if ctx is cancelled first.
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	select {
+	case <-time.After(d):
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
 // RunWarmup pre-populates the featured and avatar caches for every configured
 // language shortly after startup, eliminating cold-start latency spikes. It
 // runs as a background goroutine and exits when ctx is cancelled.
@@ -553,7 +563,9 @@ func (a *App) RunWarmup(ctx context.Context) {
 		raw, apiErr := a.fetchFeatured(lang.Code, 1, "", "", "", "", false)
 		if apiErr != nil {
 			a.log.Warn("startup warmup failed", "language", lang.Code, "error", apiErr.Message)
-			time.Sleep(500 * time.Millisecond)
+			if !sleepCtx(ctx, 500*time.Millisecond) {
+				return
+			}
 			continue
 		}
 		body := transform.BuildFeaturedResponse(raw, 1)
@@ -562,7 +574,9 @@ func (a *App) RunWarmup(ctx context.Context) {
 		a.cache.SetTTL(freshKey, true, a.ttl(a.cfg.FeaturedCacheDurationSeconds))
 		a.warmCachesFromFeatured(dataList(body))
 		a.log.Info("startup warmup complete", "language", lang.Code)
-		time.Sleep(200 * time.Millisecond)
+		if !sleepCtx(ctx, 200*time.Millisecond) {
+			return
+		}
 	}
 }
 

@@ -40,6 +40,20 @@ func (r *statusRecorder) Write(b []byte) (int, error) {
 	return r.ResponseWriter.Write(b)
 }
 
+// Flush forwards to the wrapped writer so streaming handlers work through this
+// middleware. Without it, *statusRecorder embeds only the http.ResponseWriter
+// interface (which has no Flush), so it doesn't satisfy http.Flusher — and the
+// SSE status endpoint's `w.(http.Flusher)` assertion fails with a 500.
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Unwrap exposes the underlying writer to http.ResponseController and any other
+// wrapper that probes for optional interfaces.
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+
 // requestContext adds a correlation ID, request timing, an access log line,
 // and security headers — the Go equivalent of RequestContextMiddleware.
 func (a *App) requestContext(next http.Handler) http.Handler {

@@ -39,11 +39,6 @@ Unofficial Kick App provides a web UI plus a REST API for Kick.com live streams,
 ### Discovery & Navigation
 - Featured streams with infinite scroll, language and category filtering
 - Smart prefetching — next page is cached in the background before you scroll to it
-<details>
-<summary><strong>Channel page — mobile</strong></summary>
-<br />
-<img src="docs/screenshots/channel-mobile-new.webp" alt="Channel page on a phone-portrait viewport with the bottom navigation bar" width="380" />
-</details>
 - Two-tier channel search: instant local results + full Typesense server-side search with keyboard navigation
 - Favorites and History tracking with localStorage persistence
 - SPA architecture with hash-based client-side routing and View Transitions
@@ -68,6 +63,42 @@ Unofficial Kick App provides a web UI plus a REST API for Kick.com live streams,
 - Batch viewer count endpoint (up to 50 IDs, fanned out in parallel, chunked at 10)
 - gzip compression, graceful shutdown, static API docs at `/docs`, metrics at `/metrics`
 - Go test suite (unit, contract-parity, and `-race` concurrency tests) + GitHub Actions CI
+
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/hero-light-new.webp" alt="Browse — light theme" /><br />
+      <sub><b>Browse · light theme</b></sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="docs/screenshots/search-dropdown.webp" alt="Two-tier channel search" /><br />
+      <sub><b>Two-tier channel search</b></sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center">
+      <img src="docs/screenshots/chromecast-modal-new.webp" alt="Cast-to-device modal" /><br />
+      <sub><b>Chromecast — discovery &amp; cast</b></sub>
+    </td>
+    <td align="center">
+      <img src="docs/screenshots/settings.webp" alt="Settings" /><br />
+      <sub><b>Settings — theme, language, view</b></sub>
+    </td>
+  </tr>
+</table>
+
+### Responsive — tablet &amp; mobile
+
+<p align="center">
+  <img src="docs/screenshots/browse-tablet.webp" alt="Browse on a tablet" height="440" />
+  &nbsp;
+  <img src="docs/screenshots/channel-mobile-new.webp" alt="Channel page on mobile" height="440" />
+  &nbsp;
+  <img src="docs/screenshots/chromecast-modal-mobile-new.webp" alt="Cast modal on mobile" height="440" />
+</p>
+<p align="center"><sub><b>Tablet browse</b> · <b>mobile channel + player</b> · <b>mobile cast modal</b></sub></p>
 
 ## Quick Start
 
@@ -136,14 +167,6 @@ The Go suite covers the framework-independent logic and the HTTP contract:
 | `GET` | `/streams/play/{channel_slug}` | Get live stream data for a channel |
 | `GET` | `/streams/go/{channel_slug}` | Redirect to the proxied HLS playlist |
 | `GET` | `/streams/m3u8/{channel_slug}.m3u8` | CORS-wrapped HLS master playlist proxy |
-<details>
-<summary><strong>Channel page — desktop</strong></summary>
-<br />
-<img src="docs/screenshots/channel-desktop-new.webp" alt="Channel page on desktop showing the live HLS player and profile" />
-</details>
-
-| Method | Endpoint | Description |
-| --- | --- | --- |
 | `GET` | `/streams/vods/{channel_slug}` | List VODs for a channel |
 | `GET` | `/streams/vods/{channel_slug}/{vod_id}` | Redirect to a specific VOD |
 | `GET` | `/streams/clips/{channel_slug}` | List recent clips for a channel |

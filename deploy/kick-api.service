@@ -1,0 +1,33 @@
+# Example systemd unit for the Kick API Go server.
+#
+# Install (adjust User and paths to your host):
+#   sudo cp deploy/kick-api.service /etc/systemd/system/kick-api.service
+#   sudo mkdir -p /opt/kick-api
+#   sudo systemctl daemon-reload && sudo systemctl enable --now kick-api
+#
+# Then deploy/update the binary with:  ./scripts/deploy-pi.sh
+# (see README → Deployment). Full env-var list is in .env.example.
+
+[Unit]
+Description=Kick API Go Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/opt/kick-api
+ExecStart=/opt/kick-api/kick-api-arm64
+Restart=always
+RestartSec=5
+
+# Configuration — override as needed (see .env.example for the full set).
+Environment=PORT=8081
+Environment=LOG_LEVEL=INFO
+Environment=DEFAULT_LANGUAGE_CODE=en
+Environment=SECURITY_HEADERS_ENABLED=true
+# Fallback subnet scan is only used when mDNS discovery finds nothing.
+Environment=CHROMECAST_FALLBACK_SCAN_SUBNETS=192.168.0.0/24,192.168.1.0/24,10.0.0.0/24
+
+[Install]
+WantedBy=multi-user.target

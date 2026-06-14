@@ -19,7 +19,7 @@ services:
     environment:
       PORT: "8081"
       LOG_LEVEL: "INFO"
-      DEFAULT_LANGUAGE_CODE: "tr"
+      DEFAULT_LANGUAGE_CODE: "en"
       KICK_API_BASE_URL: "https://kick.com/api/v2/channels/"
       KICK_FEATURED_LIVESTREAMS_URL: "https://kick.com/stream/featured-livestreams/"
       CACHE_DEFAULT_TIMEOUT: "300"

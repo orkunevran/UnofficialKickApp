@@ -12,17 +12,22 @@
 #   ./scripts/deploy-pi.sh            # build + deploy + restart + verify
 #   ./scripts/deploy-pi.sh --build    # cross-compile only (no deploy)
 #
-# Env overrides:
-#   PI_HOST  SSH target           (default pi@192.168.68.53 — DHCP-assigned, override as needed)
-#   APP_DIR  service dir on Pi    (default /home/pi/Desktop/kick-api-v5; must match the unit's ExecStart)
-#   SERVICE  systemd unit name    (default kick-api)
-#   PORT     health-check port    (default 8081)
+# Install the systemd unit once from deploy/kick-api.service (see README), then:
 #
-# Assumes the SSH user can `sudo systemctl restart` (passwordless sudo on this Pi).
+# Env overrides:
+#   PI_HOST  SSH target            (default pi@raspberrypi.local)
+#   APP_DIR  install dir on host   (default /opt/kick-api; must match the unit's ExecStart)
+#   SERVICE  systemd unit name     (default kick-api)
+#   PORT     health-check port     (default 8081)
+#
+# Example:
+#   PI_HOST=pi@192.168.1.50 APP_DIR=/opt/kick-api ./scripts/deploy-pi.sh
+#
+# Assumes the SSH user can run `sudo systemctl restart` (e.g. passwordless sudo).
 set -euo pipefail
 
-PI_HOST="${PI_HOST:-pi@192.168.68.53}"
-APP_DIR="${APP_DIR:-/home/pi/Desktop/kick-api-v5}"
+PI_HOST="${PI_HOST:-pi@raspberrypi.local}"
+APP_DIR="${APP_DIR:-/opt/kick-api}"
 SERVICE="${SERVICE:-kick-api}"
 PORT="${PORT:-8081}"
 

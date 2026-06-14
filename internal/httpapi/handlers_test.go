@@ -47,8 +47,8 @@ func TestLanguagesEndpoint(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if body.DefaultLanguage != "tr" {
-		t.Fatalf("default_language = %q; want tr", body.DefaultLanguage)
+	if body.DefaultLanguage != "en" {
+		t.Fatalf("default_language = %q; want en", body.DefaultLanguage)
 	}
 	if len(body.Languages) != 6 {
 		t.Fatalf("languages count = %d; want 6", len(body.Languages))

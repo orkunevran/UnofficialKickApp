@@ -88,7 +88,8 @@ curl http://localhost:8081/config/languages
 
 ## Where To Read Extra Detail (On Demand)
 
-- Product/API deep details: `KICK_PUBLIC_API.md`
+- Product/API deep details: `docs/KICK_PUBLIC_API.md`
+- Architecture & data-flow: `docs/architecture.md`
 - Python→Go migration plan: `docs/MIGRATION_GO.md`
 - Human-oriented project overview: `README.md`
 

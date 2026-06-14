@@ -106,7 +106,7 @@ func Load() *Config {
 		LiveInflightWaitTimeoutSeconds: envFloat("LIVE_INFLIGHT_WAIT_TIMEOUT_SECONDS", 5.0),
 
 		FeaturedLanguages:   envLanguages("FEATURED_LANGUAGES", defaultLanguages()),
-		DefaultLanguageCode: envStr("DEFAULT_LANGUAGE_CODE", "tr"),
+		DefaultLanguageCode: envStr("DEFAULT_LANGUAGE_CODE", "en"),
 
 		NonCriticalThreadOpConcurrency:         envInt("NON_CRITICAL_THREAD_OP_CONCURRENCY", 4),
 		BackgroundRefreshMaxConcurrency:        envInt("BACKGROUND_REFRESH_MAX_CONCURRENCY", 4),

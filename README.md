@@ -12,6 +12,13 @@
   <code>v4.0.0</code>&ensp;·&ensp;Go 1.24+&ensp;·&ensp;stdlib net/http&ensp;·&ensp;Vanilla JS SPA&ensp;·&ensp;Docker
 </p>
 
+<p align="center">
+  <a href="https://github.com/orkunevran/UnofficialKickApp/actions/workflows/ci.yml"><img src="https://github.com/orkunevran/UnofficialKickApp/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <img src="https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go&logoColor=white" alt="Go 1.24+" />
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License" /></a>
+  <img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs welcome" />
+</p>
+
 ---
 
 Unofficial Kick App provides a web UI plus a REST API for Kick.com live streams, VODs, clips, featured streams, search, and Chromecast playback. It runs locally, in Docker, or on a small home server such as a Raspberry Pi.
@@ -242,10 +249,10 @@ Configured via environment variables (or a `.env` file). Variable names match th
 | `KICK_ALL_LIVESTREAMS_URL` | `https://kick.com/stream/livestreams/` | Public livestream discovery URL |
 | `CACHE_DEFAULT_TIMEOUT` | `300` | Default cache timeout (s) |
 | `CACHE_MAX_SIZE` | `2000` | Maximum cache entries before LRU eviction |
-| `LIVE_CACHE_DURATION_SECONDS` | `30` | Fresh TTL for live stream data |
+| `LIVE_CACHE_DURATION_SECONDS` | `60` | Fresh TTL for live stream data |
 | `VOD_CACHE_DURATION_SECONDS` | `300` | Cache duration for VOD and clip data |
 | `FEATURED_CACHE_DURATION_SECONDS` | `120` | Fresh TTL for featured streams |
-| `FEATURED_STALE_TTL_SECONDS` | `300` | Stale-while-revalidate window |
+| `FEATURED_STALE_TTL_SECONDS` | `3600` | Stale-while-revalidate window |
 | `SEARCH_CACHE_DURATION_SECONDS` | `30` | Cache duration for search results |
 | `AVATAR_CACHE_DURATION_SECONDS` | `604800` | Cache duration for avatars (7 days) |
 | `VIEWER_CACHE_DURATION_SECONDS` | `30` | Cache duration for viewer counts |
@@ -278,7 +285,13 @@ Production runs the binary directly under **systemd** (`kick-api.service`, `Rest
 ./scripts/deploy-pi.sh --build    # build only
 ```
 
-Override `PI_HOST`, `APP_DIR`, `SERVICE`, or `PORT` as needed. Logs: `journalctl -u kick-api -f`.
+An example unit is provided at [`deploy/kick-api.service`](deploy/kick-api.service) — install it once, then the script builds, syncs, restarts, and health-checks. Override `PI_HOST`, `APP_DIR`, `SERVICE`, or `PORT` as needed:
+
+```bash
+PI_HOST=pi@192.168.1.50 APP_DIR=/opt/kick-api ./scripts/deploy-pi.sh
+```
+
+Logs: `journalctl -u kick-api -f`.
 
 ### Docker
 
@@ -289,9 +302,12 @@ docker run -d --name kick-api --restart unless-stopped -p 8081:8081 kick-api:lat
 
 The multi-stage build compiles a static binary (stage 1) and ships it on `distroless/static` (stage 2) — a few-MB image with no shell or package manager. `docker build` targets the build platform by default; pass `--platform linux/arm64` (buildx) for the Pi.
 
-## Kick API Reference
+## Documentation
 
-[`KICK_PUBLIC_API.md`](KICK_PUBLIC_API.md) is a reverse-engineering memo of Kick's public API surface — confirmed endpoints, search infrastructure, Typesense key extraction, realtime config, and reproduction commands. It is the authoritative reference for the upstream endpoints this app depends on.
+- [`docs/architecture.md`](docs/architecture.md) — long-form architecture & runtime data-flow.
+- [`docs/MIGRATION_GO.md`](docs/MIGRATION_GO.md) — the Python→Go migration plan and rationale.
+- [`docs/KICK_PUBLIC_API.md`](docs/KICK_PUBLIC_API.md) — reverse-engineering memo of Kick's public API surface (confirmed endpoints, search infrastructure, Typesense key extraction, realtime config). The authoritative reference for the upstream endpoints this app depends on.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — how to build, test, and submit changes.
 
 ## Troubleshooting
 

@@ -1,65 +1,51 @@
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python/
-env/
-venv/
-.venv/
-pip-log.txt
-pip-delete-this-arg.txt
-.tox/
-.coverage
-.pytest_cache/
-nosetests.xml
-dist/
-build/
-*.egg-info/
-.ipynb_checkpoints/
+# ── Go ──────────────────────────────────────────────────────────────────
+# Compiled binaries (the Docker build / deploy script build their own).
+/server
+/kick-api
+kick-api-arm64
+kick-api-amd64
+*.exe
+# Test & coverage output
+*.test
+*.out
+coverage.*
 
-# OS specific
+# ── Environment ─────────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Runtime state (regenerated at startup) ───────────────────────────────
+.kick_chromecast_cache.json
+
+# ── Editors / IDEs ────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.code-workspace
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+
+# ── AI / agent tooling (local, not part of the project) ───────────────────
+.claude/
+.kilo/
+.kilocode/
+
+# ── OS ─────────────────────────────────────────────────────────────────────
 .DS_Store
 .Trashes
 ehthumbs.db
 Thumbs.db
 
-# Logs and temporary files
+# ── Misc ────────────────────────────────────────────────────────────────────
 *.log
 *.tmp
-*.swp
-*.swo
+node_modules/
 
-# Docker
-.env
-.env.*
-!.env.example
-
-# IDE specific (if any)
-.vscode/
-.idea/
-*.sublime-project
-*.sublime-workspace
-.claude/
-
-# Other
-node_modules/ # if you add npm packages later
-.kilo/node_modules/
-.kilo/package.json
-.kilo/package-lock.json
-.kilo/plans/
-
-# Runtime cache (regenerated at startup)
-.kick_chromecast_cache.json
-
-# Go build artifacts (binaries built locally; build cache lives in GOCACHE)
-/server
-/kickapi-server
-kick-api-arm64
-kick-api-amd64
-*.test
-*.out
-
-# Home Assistant artifacts
-.ha_snapshots/
-00_READ_FIRST.md
+# ── Local Python leftovers (the backend is Go; these may linger on dev machines) ──
+venv/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/

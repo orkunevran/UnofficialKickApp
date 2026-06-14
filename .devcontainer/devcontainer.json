@@ -1,14 +1,14 @@
 {
-  "name": "udi-ubi9-dev",
-  "image": "quay.io/devfile/universal-developer-image:ubi9-latest",
-  "features": {
-    "ghcr.io/devcontainers/features/common-utils:2": {}
-  },
-  "forwardPorts": [8000, 3000],
-
-  // 👇 Add these two lines
+  "name": "kick-api (Go)",
+  "image": "mcr.microsoft.com/devcontainers/go:1.24",
+  "forwardPorts": [8081],
+  "postCreateCommand": "go mod download",
+  // Host networking + raw sockets let Chromecast mDNS discovery work inside the
+  // container. Drop these if you don't need Cast discovery during development.
   "runArgs": ["--network=host", "--cap-add=NET_RAW", "--cap-add=NET_ADMIN"],
-  "privileged": true,
-
-  "postCreateCommand": "echo 'Happy coding 🐳'"
+  "customizations": {
+    "vscode": {
+      "extensions": ["golang.go"]
+    }
+  }
 }

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"context"
@@ -38,6 +39,11 @@ type App struct {
 	chromecastSvc  *chromecast.Service // concrete type for lifecycle methods
 	inflight       *inflight.Tracker
 	refreshLimiter *limiter
+
+	// shutdownCh is closed by BeginShutdown to signal long-lived handlers (the
+	// SSE status stream) to return, so http.Server.Shutdown can drain promptly.
+	shutdownCh   chan struct{}
+	shutdownOnce sync.Once
 
 	staticFS  fs.FS
 	indexHTML string
@@ -99,6 +105,7 @@ func New(cfg *config.Config, log *slog.Logger, assets fs.FS) (*App, error) {
 		chromecastSvc:  cc,
 		inflight:       inflight.New(),
 		refreshLimiter: newLimiter(cfg.BackgroundRefreshMaxConcurrency),
+		shutdownCh:     make(chan struct{}),
 		staticFS:       staticFS,
 		indexHTML:      renderIndex(string(tmpl), hashes),
 		docsHTML:       string(docs),
@@ -130,6 +137,15 @@ func (a *App) RunChromecastTasks(ctx context.Context) {
 	go a.chromecastSvc.RunStatusPoller(ctx)
 	go a.chromecastSvc.RunPeriodicScan(ctx)
 	go a.chromecastSvc.AutoReconnect(ctx)
+}
+
+// BeginShutdown signals long-lived handlers (the SSE status stream) to return
+// so http.Server.Shutdown can drain promptly instead of blocking until its
+// timeout. Without this, an open browser EventSource keeps a handler alive and
+// Shutdown exceeds its deadline (observed: "fatal: graceful shutdown: context
+// deadline exceeded" on every restart with the frontend connected). Idempotent.
+func (a *App) BeginShutdown() {
+	a.shutdownOnce.Do(func() { close(a.shutdownCh) })
 }
 
 // Cache exposes the cache (used by later phases / tests).

@@ -169,7 +169,9 @@ func (a *App) handleCCStatusStream(w http.ResponseWriter, r *http.Request) {
 	write(a.chromecast.GetStatus()) // initial push before first poller tick
 	for {
 		select {
-		case <-ctx.Done():
+		case <-ctx.Done(): // client disconnected
+			return
+		case <-a.shutdownCh: // server shutting down — return so Shutdown can drain
 			return
 		case status := <-ch:
 			write(status)

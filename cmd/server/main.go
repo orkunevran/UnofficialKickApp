@@ -79,6 +79,9 @@ func run() error {
 		return fmt.Errorf("listen: %w", err)
 	case <-ctx.Done():
 		log.Info("shutdown signal received, draining connections")
+		// Signal long-lived SSE handlers to return first, otherwise Shutdown
+		// blocks on them until the deadline and exits non-zero.
+		app.BeginShutdown()
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {

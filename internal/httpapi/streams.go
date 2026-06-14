@@ -42,7 +42,21 @@ var (
 	subcategoryRe = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9 &.:_()\-]{0,99}$`)
 )
 
-func validateSlug(slug string) bool { return slugRe.MatchString(slug) }
+func validateSlug(s string) bool { return slugRe.MatchString(s) }
+
+// slug extracts and validates the {slug} path value, writing a 400 and
+// returning ok=false when invalid.
+func (a *App) slug(w http.ResponseWriter, r *http.Request) (string, bool) {
+	s := r.PathValue("slug")
+	if !validateSlug(s) {
+		errorJSON(w, fmt.Sprintf("Invalid channel slug: '%s'.", s), 400)
+		return "", false
+	}
+	return s, true
+}
+
+// writeAPIErr renders an *apierr.Error as the JSON error envelope.
+func writeAPIErr(w http.ResponseWriter, e *apierr.Error) { errorJSON(w, e.Message, e.Status) }
 
 // envelopeMap builds the {status, message, data} response body.
 func envelopeMap(status, message string, data any) map[string]any {
@@ -86,29 +100,59 @@ func kickCall[T any](cb *breaker.Breaker, lane, safeValue string, fn func() (T, 
 	return result, nil
 }
 
+// serveCached serves key from cache, or builds the envelope via build, caches it
+// with ttl, and responds. The shared shape for the simple read endpoints.
+func (a *App) serveCached(w http.ResponseWriter, key string, ttl time.Duration, build func() (map[string]any, *apierr.Error)) {
+	if c, ok := a.cacheGet(key); ok {
+		writeCached(w, c)
+		return
+	}
+	payload, e := build()
+	if e != nil {
+		writeAPIErr(w, e)
+		return
+	}
+	a.cachePut(key, payload, 200, ttl)
+	writeCached(w, cachedResp{payload: payload, status: 200})
+}
+
+// serveStale serves a stale cache entry if present, triggering one background
+// refresh when the fresh marker has expired (the stale-while-revalidate read
+// path shared by /play and /featured). Returns true if it served a response.
+func (a *App) serveStale(w http.ResponseWriter, staleKey, freshKey, cacheControl string, cb *breaker.Breaker, refresh func()) bool {
+	stale, ok := a.cacheGet(staleKey)
+	if !ok {
+		return false
+	}
+	if cacheControl != "" {
+		w.Header().Set("Cache-Control", cacheControl)
+	}
+	if _, fresh := a.cache.Get(freshKey); !fresh && a.inflight.ClaimInflight(staleKey) {
+		if cb.State() == breaker.StateOpen {
+			// Breaker open — don't burn DNS/TCP attempts; hold off refresh.
+			a.cache.SetTTL(freshKey, true, a.ttl(a.cfg.RefreshBackoffSeconds))
+			a.inflight.DedupSet(staleKey)
+		} else {
+			go refresh()
+		}
+	}
+	writeCached(w, stale)
+	return true
+}
+
 // ── /streams/play (stale-while-revalidate) ──────────────────────────────────
 
 func (a *App) handlePlayStream(w http.ResponseWriter, r *http.Request) {
-	slug := r.PathValue("slug")
-	if !validateSlug(slug) {
-		errorJSON(w, fmt.Sprintf("Invalid channel slug: '%s'.", slug), 400)
+	slug, ok := a.slug(w, r)
+	if !ok {
 		return
 	}
 	staleKey := "live:/streams/play/" + slug
 	freshKey := "live-fresh:/streams/play/" + slug
 
-	if stale, ok := a.cacheGet(staleKey); ok {
-		_, fresh := a.cache.Get(freshKey)
-		if !fresh && a.inflight.ClaimInflight(staleKey) {
-			if a.cbCritical.State() == breaker.StateOpen {
-				// Breaker open — don't burn DNS/TCP attempts; hold off refresh.
-				a.cache.SetTTL(freshKey, true, a.ttl(a.cfg.RefreshBackoffSeconds))
-				a.inflight.DedupSet(staleKey)
-			} else {
-				go a.refreshPlayStream(staleKey, freshKey, slug)
-			}
-		}
-		writeCached(w, stale)
+	if a.serveStale(w, staleKey, freshKey, "", a.cbCritical, func() {
+		a.refreshPlayStream(staleKey, freshKey, slug)
+	}) {
 		return
 	}
 
@@ -128,12 +172,12 @@ func (a *App) handlePlayStream(w http.ResponseWriter, r *http.Request) {
 		if apiErr.Status == 404 {
 			a.negativeCache(staleKey, freshKey, apiErr.Message)
 		}
-		errorJSON(w, apiErr.Message, apiErr.Status)
+		writeAPIErr(w, apiErr)
 		return
 	}
 	payload, perr := a.cachePlayResult(staleKey, freshKey, slug, data)
 	if perr != nil {
-		errorJSON(w, perr.Message, perr.Status)
+		writeAPIErr(w, perr)
 		return
 	}
 	writeCached(w, cachedResp{payload: payload, status: 200})
@@ -217,12 +261,9 @@ func buildPlayStreamPayload(data map[string]any, slug string) (map[string]any, *
 // ── /streams/go ──────────────────────────────────────────────────────────────
 
 func (a *App) handleGoToLive(w http.ResponseWriter, r *http.Request) {
-	slug := r.PathValue("slug")
-	if !validateSlug(slug) {
-		errorJSON(w, fmt.Sprintf("Invalid channel slug: '%s'.", slug), 400)
-		return
+	if slug, ok := a.slug(w, r); ok {
+		http.Redirect(w, r, "/streams/m3u8/"+slug+".m3u8", http.StatusTemporaryRedirect)
 	}
-	http.Redirect(w, r, "/streams/m3u8/"+slug+".m3u8", http.StatusTemporaryRedirect)
 }
 
 // ── /streams/m3u8 ────────────────────────────────────────────────────────────
@@ -244,7 +285,7 @@ func (a *App) handlePlayM3U8(w http.ResponseWriter, r *http.Request) {
 			return a.kick.GetChannelData(slug)
 		})
 		if apiErr != nil {
-			errorJSON(w, apiErr.Message, apiErr.Status)
+			writeAPIErr(w, apiErr)
 			return
 		}
 		if pb, ok := data["playback_url"].(string); ok && pb != "" {
@@ -273,9 +314,8 @@ func (a *App) handlePlayM3U8(w http.ResponseWriter, r *http.Request) {
 // ── /streams/avatar ──────────────────────────────────────────────────────────
 
 func (a *App) handleAvatar(w http.ResponseWriter, r *http.Request) {
-	slug := r.PathValue("slug")
-	if !validateSlug(slug) {
-		errorJSON(w, fmt.Sprintf("Invalid channel slug: '%s'.", slug), 400)
+	slug, ok := a.slug(w, r)
+	if !ok {
 		return
 	}
 	key := "avatar:/streams/avatar/" + slug
@@ -300,7 +340,7 @@ func (a *App) handleAvatar(w http.ResponseWriter, r *http.Request) {
 		return a.kick.GetChannelData(slug)
 	})
 	if apiErr != nil {
-		errorJSON(w, apiErr.Message, apiErr.Status)
+		writeAPIErr(w, apiErr)
 		return
 	}
 	var pic any
@@ -329,60 +369,43 @@ func extractDataMap(v any) map[string]any {
 	return d
 }
 
-// ── /streams/clips ───────────────────────────────────────────────────────────
+// ── /streams/clips & /streams/vods ───────────────────────────────────────────
 
 func (a *App) handleClips(w http.ResponseWriter, r *http.Request) {
-	slug := r.PathValue("slug")
-	if !validateSlug(slug) {
-		errorJSON(w, fmt.Sprintf("Invalid channel slug: '%s'.", slug), 400)
+	slug, ok := a.slug(w, r)
+	if !ok {
 		return
 	}
-	key := "clips:/streams/clips/" + slug
-	if c, ok := a.cacheGet(key); ok {
-		writeCached(w, c)
-		return
-	}
-	raw, apiErr := kickCall(a.cbNonCritical, obs.LaneNonCritical, slug, func() (any, error) {
-		return a.kick.GetChannelClips(slug)
+	a.serveCached(w, "clips:/streams/clips/"+slug, a.ttl(a.cfg.VODCacheDurationSeconds), func() (map[string]any, *apierr.Error) {
+		raw, e := kickCall(a.cbNonCritical, obs.LaneNonCritical, slug, func() (any, error) {
+			return a.kick.GetChannelClips(slug)
+		})
+		if e != nil {
+			return nil, e
+		}
+		return envelopeMap("success", "", map[string]any{"clips": transform.NormalizeClipList(raw, slug)}), nil
 	})
-	if apiErr != nil {
-		errorJSON(w, apiErr.Message, apiErr.Status)
-		return
-	}
-	payload := envelopeMap("success", "", map[string]any{"clips": transform.NormalizeClipList(raw, slug)})
-	a.cachePut(key, payload, 200, a.ttl(a.cfg.VODCacheDurationSeconds))
-	writeCached(w, cachedResp{payload: payload, status: 200})
 }
 
-// ── /streams/vods ────────────────────────────────────────────────────────────
-
 func (a *App) handleVODs(w http.ResponseWriter, r *http.Request) {
-	slug := r.PathValue("slug")
-	if !validateSlug(slug) {
-		errorJSON(w, fmt.Sprintf("Invalid channel slug: '%s'.", slug), 400)
+	slug, ok := a.slug(w, r)
+	if !ok {
 		return
 	}
-	key := "vods:/streams/vods/" + slug
-	if c, ok := a.cacheGet(key); ok {
-		writeCached(w, c)
-		return
-	}
-	raw, apiErr := kickCall(a.cbNonCritical, obs.LaneNonCritical, slug, func() (any, error) {
-		return a.kick.GetChannelVideos(slug)
+	a.serveCached(w, "vods:/streams/vods/"+slug, a.ttl(a.cfg.VODCacheDurationSeconds), func() (map[string]any, *apierr.Error) {
+		raw, e := kickCall(a.cbNonCritical, obs.LaneNonCritical, slug, func() (any, error) {
+			return a.kick.GetChannelVideos(slug)
+		})
+		if e != nil {
+			return nil, e
+		}
+		return envelopeMap("success", "", map[string]any{"vods": transform.ProcessVODData(raw)}), nil
 	})
-	if apiErr != nil {
-		errorJSON(w, apiErr.Message, apiErr.Status)
-		return
-	}
-	payload := envelopeMap("success", "", map[string]any{"vods": transform.ProcessVODData(raw)})
-	a.cachePut(key, payload, 200, a.ttl(a.cfg.VODCacheDurationSeconds))
-	writeCached(w, cachedResp{payload: payload, status: 200})
 }
 
 func (a *App) handlePlayVOD(w http.ResponseWriter, r *http.Request) {
-	slug := r.PathValue("slug")
-	if !validateSlug(slug) {
-		errorJSON(w, fmt.Sprintf("Invalid channel slug: '%s'.", slug), 400)
+	slug, ok := a.slug(w, r)
+	if !ok {
 		return
 	}
 	vodID, err := strconv.Atoi(r.PathValue("vodID"))
@@ -394,7 +417,7 @@ func (a *App) handlePlayVOD(w http.ResponseWriter, r *http.Request) {
 		return a.kick.GetChannelVideos(slug)
 	})
 	if apiErr != nil {
-		errorJSON(w, apiErr.Message, apiErr.Status)
+		writeAPIErr(w, apiErr)
 		return
 	}
 	for _, v := range transform.ProcessVODData(raw) {
@@ -447,18 +470,9 @@ func (a *App) handleFeatured(w http.ResponseWriter, r *http.Request) {
 	staleKey := requestCacheKey("featured-livestreams", r)
 	freshKey := requestCacheKey("featured-fresh", r)
 
-	if stale, ok := a.cacheGet(staleKey); ok {
-		w.Header().Set("Cache-Control", cacheControl)
-		_, fresh := a.cache.Get(freshKey)
-		if !fresh && a.inflight.ClaimInflight(staleKey) {
-			if a.cbNonCritical.State() == breaker.StateOpen {
-				a.cache.SetTTL(freshKey, true, a.ttl(a.cfg.RefreshBackoffSeconds))
-				a.inflight.DedupSet(staleKey)
-			} else {
-				go a.refreshFeatured(staleKey, freshKey, language, page, category, subcategory, subcategories, sortParam, strict)
-			}
-		}
-		writeCached(w, stale)
+	if a.serveStale(w, staleKey, freshKey, cacheControl, a.cbNonCritical, func() {
+		a.refreshFeatured(staleKey, freshKey, language, page, category, subcategory, subcategories, sortParam, strict)
+	}) {
 		return
 	}
 
@@ -473,7 +487,7 @@ func (a *App) handleFeatured(w http.ResponseWriter, r *http.Request) {
 
 	raw, apiErr := a.fetchFeatured(language, page, category, subcategory, subcategories, sortParam, strict)
 	if apiErr != nil {
-		errorJSON(w, apiErr.Message, apiErr.Status)
+		writeAPIErr(w, apiErr)
 		return
 	}
 	body := transform.BuildFeaturedResponse(raw, page)
@@ -514,8 +528,8 @@ func (a *App) refreshFeatured(staleKey, freshKey, language string, page int, cat
 }
 
 // RunWarmup pre-populates the featured and avatar caches for every configured
-// language shortly after startup, eliminating cold-start latency spikes.
-// It runs as a background goroutine and exits when ctx is cancelled.
+// language shortly after startup, eliminating cold-start latency spikes. It
+// runs as a background goroutine and exits when ctx is cancelled.
 func (a *App) RunWarmup(ctx context.Context) {
 	select {
 	case <-time.After(2 * time.Second):
@@ -568,6 +582,7 @@ func dataList(body map[string]any) []any {
 
 // warmCachesFromFeatured pre-populates avatar (7d) and partial play (short TTL)
 // caches from a featured response — porting transformers.warm_caches_from_featured.
+// SetIfAbsent is atomic, avoiding a TOCTOU overwrite of a full entry with a partial one.
 func (a *App) warmCachesFromFeatured(streams []any) {
 	for _, s := range streams {
 		stream, ok := s.(map[string]any)
@@ -582,18 +597,12 @@ func (a *App) warmCachesFromFeatured(streams []any) {
 		user, _ := ch["user"].(map[string]any)
 		pic := user["profilepic"]
 
-		avatarKey := "avatar:/streams/avatar/" + slug
 		if pic != nil {
-			// SetIfAbsent is atomic: avoids the check-then-set TOCTOU window
-			// where a concurrent handlePlayStream could write a full entry
-			// that we'd then overwrite with a partial one.
-			a.cache.SetIfAbsent(avatarKey, cachedResp{
+			a.cache.SetIfAbsent("avatar:/streams/avatar/"+slug, cachedResp{
 				payload: envelopeMap("success", "", map[string]any{"profile_picture": pic}),
 				status:  200,
 			}, a.ttl(a.cfg.AvatarCacheDurationSeconds))
 		}
-
-		playKey := "live:/streams/play/" + slug
 		if rawURL, ok := ch["playback_url"].(string); ok && rawURL != "" {
 			a.cache.SetIfAbsent("live-url:"+slug, rawURL, a.ttl(a.cfg.LiveStaleTTLSeconds))
 		}
@@ -619,7 +628,7 @@ func (a *App) warmCachesFromFeatured(streams []any) {
 			"start_time":               stream["start_time"],
 			"_partial":                 true,
 		})
-		a.cache.SetIfAbsent(playKey, cachedResp{payload: partial, status: 200}, a.ttl(a.cfg.LiveCacheDurationSeconds))
+		a.cache.SetIfAbsent("live:/streams/play/"+slug, cachedResp{payload: partial, status: 200}, a.ttl(a.cfg.LiveCacheDurationSeconds))
 	}
 }
 
@@ -637,23 +646,15 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	key := requestCacheKey("search", r)
 	if c, ok := a.cacheGet(key); ok {
-		// Enrich on cache hits too: avatar cache has 7-day TTL while search cache
-		// has 30s, so avatars may have been populated after this entry was stored.
-		// Shallow-copy each result map before enriching — the slice inside the
-		// cached payload is shared across concurrent requests; writing to the same
-		// map from multiple goroutines is an undefined-behaviour data race in Go.
+		// Enrich on hits too: avatar cache (7d TTL) may have filled since this
+		// 30s entry was stored. Shallow-copy each result map first — the cached
+		// slice is shared across goroutines, so in-place writes would race.
 		if data, ok := c.payload["data"].([]map[string]any); ok {
 			copied := shallowCopyMaps(data)
 			a.enrichSearchAvatars(copied)
-			resp := cachedResp{
-				status: c.status,
-				payload: map[string]any{
-					"status":  c.payload["status"],
-					"message": c.payload["message"],
-					"data":    copied,
-				},
-			}
-			writeCached(w, resp)
+			writeCached(w, cachedResp{status: c.status, payload: map[string]any{
+				"status": c.payload["status"], "message": c.payload["message"], "data": copied,
+			}})
 		} else {
 			writeCached(w, c)
 		}
@@ -663,7 +664,7 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return a.kick.SearchChannelsTypesense(query)
 	})
 	if apiErr != nil {
-		errorJSON(w, apiErr.Message, apiErr.Status)
+		writeAPIErr(w, apiErr)
 		return
 	}
 	a.enrichSearchAvatars(results)
@@ -672,9 +673,8 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 	writeCached(w, cachedResp{payload: payload, status: 200})
 }
 
-// shallowCopyMaps returns a new slice where each element is a shallow copy of
-// the corresponding source map. Used before in-place enrichment so concurrent
-// requests don't race on writes to the same map stored in the cache.
+// shallowCopyMaps returns a new slice of shallow-copied maps, so concurrent
+// requests don't race on writes to a map stored in the cache.
 func shallowCopyMaps(src []map[string]any) []map[string]any {
 	out := make([]map[string]any, len(src))
 	for i, m := range src {
@@ -687,20 +687,17 @@ func shallowCopyMaps(src []map[string]any) []map[string]any {
 	return out
 }
 
-// enrichSearchAvatars fills profile_picture from the avatar cache (7-day TTL,
-// populated by featured warm-up and channel page visits). Zero-cost: each
-// lookup is a single map read under a mutex.
+// enrichSearchAvatars fills profile_picture from the avatar cache (7-day TTL).
 func (a *App) enrichSearchAvatars(results []map[string]any) {
-	for _, r := range results {
-		slug, _ := r["slug"].(string)
-		if slug == "" || r["profile_picture"] != nil {
+	for _, res := range results {
+		slug, _ := res["slug"].(string)
+		if slug == "" || res["profile_picture"] != nil {
 			continue
 		}
-		avatarKey := "avatar:/streams/avatar/" + slug
-		if cv, ok := a.cache.Get(avatarKey); ok {
+		if cv, ok := a.cache.Get("avatar:/streams/avatar/" + slug); ok {
 			if cr, ok := cv.(cachedResp); ok {
 				if dataMap, ok := cr.payload["data"].(map[string]any); ok {
-					r["profile_picture"] = dataMap["profile_picture"]
+					res["profile_picture"] = dataMap["profile_picture"]
 				}
 			}
 		}
@@ -719,29 +716,21 @@ func (a *App) handleViewers(w http.ResponseWriter, r *http.Request) {
 		errorJSON(w, "Invalid livestream ID.", 400)
 		return
 	}
-	key := requestCacheKey("viewers", r)
-	if c, ok := a.cacheGet(key); ok {
-		writeCached(w, c)
-		return
-	}
-	viewers, apiErr := kickCall(a.cbNonCritical, obs.LaneNonCritical, strconv.Itoa(id), func() (int, error) {
-		return a.kick.GetViewerCount(id)
+	a.serveCached(w, requestCacheKey("viewers", r), a.ttl(a.cfg.ViewerCacheDurationSeconds), func() (map[string]any, *apierr.Error) {
+		viewers, e := kickCall(a.cbNonCritical, obs.LaneNonCritical, strconv.Itoa(id), func() (int, error) {
+			return a.kick.GetViewerCount(id)
+		})
+		if e != nil {
+			return nil, e
+		}
+		return envelopeMap("success", "", map[string]any{"viewer_count": viewers}), nil
 	})
-	if apiErr != nil {
-		errorJSON(w, apiErr.Message, apiErr.Status)
-		return
-	}
-	payload := envelopeMap("success", "", map[string]any{"viewer_count": viewers})
-	a.cachePut(key, payload, 200, a.ttl(a.cfg.ViewerCacheDurationSeconds))
-	writeCached(w, cachedResp{payload: payload, status: 200})
 }
 
 func (a *App) handleViewersBatch(w http.ResponseWriter, r *http.Request) {
-	raw := strings.Split(r.URL.Query().Get("ids"), ",")
-	ids := make([]int, 0, len(raw))
-	for _, s := range raw {
-		s = strings.TrimSpace(s)
-		if s == "" {
+	ids := make([]int, 0)
+	for _, s := range strings.Split(r.URL.Query().Get("ids"), ",") {
+		if s = strings.TrimSpace(s); s == "" {
 			continue
 		}
 		val, err := strconv.Atoi(s)
@@ -760,31 +749,23 @@ func (a *App) handleViewersBatch(w http.ResponseWriter, r *http.Request) {
 	if len(ids) > 50 {
 		ids = ids[:50]
 	}
-
 	sortedIDs := append([]int(nil), ids...)
 	sort.Ints(sortedIDs)
 	parts := make([]string, len(sortedIDs))
 	for i, id := range sortedIDs {
 		parts[i] = strconv.Itoa(id)
 	}
-	key := "viewers-batch:" + strings.Join(parts, ",")
-	if c, ok := a.cacheGet(key); ok {
-		writeCached(w, c)
-		return
-	}
-
-	counts, apiErr := kickCall(a.cbNonCritical, obs.LaneNonCritical, "batch", func() (map[int]int, error) {
-		return a.kick.GetViewerCountsBatch(ids)
+	a.serveCached(w, "viewers-batch:"+strings.Join(parts, ","), a.ttl(a.cfg.ViewerCacheDurationSeconds), func() (map[string]any, *apierr.Error) {
+		counts, e := kickCall(a.cbNonCritical, obs.LaneNonCritical, "batch", func() (map[int]int, error) {
+			return a.kick.GetViewerCountsBatch(ids)
+		})
+		if e != nil {
+			return nil, e
+		}
+		data := make(map[string]any, len(counts))
+		for k, v := range counts {
+			data[strconv.Itoa(k)] = v
+		}
+		return envelopeMap("success", "", data), nil
 	})
-	if apiErr != nil {
-		errorJSON(w, apiErr.Message, apiErr.Status)
-		return
-	}
-	data := make(map[string]any, len(counts))
-	for k, v := range counts {
-		data[strconv.Itoa(k)] = v
-	}
-	payload := envelopeMap("success", "", data)
-	a.cachePut(key, payload, 200, a.ttl(a.cfg.ViewerCacheDurationSeconds))
-	writeCached(w, cachedResp{payload: payload, status: 200})
 }

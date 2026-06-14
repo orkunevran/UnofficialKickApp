@@ -31,7 +31,6 @@ type Config struct {
 	KickAllLivestreamsURL      string
 
 	// Cache
-	CacheDefaultTimeout          int
 	CacheMaxSize                 int
 	LiveCacheDurationSeconds     int
 	LiveStaleTTLSeconds          int
@@ -50,7 +49,6 @@ type Config struct {
 	LiveInflightWaitTimeoutSeconds float64
 
 	// Concurrency
-	NonCriticalThreadOpConcurrency         int
 	BackgroundRefreshMaxConcurrency        int
 	BackgroundRefreshAcquireTimeoutSeconds float64
 
@@ -91,7 +89,6 @@ func Load() *Config {
 		KickFeaturedLivestreamsURL: envStr("KICK_FEATURED_LIVESTREAMS_URL", "https://kick.com/stream/featured-livestreams/"),
 		KickAllLivestreamsURL:      envStr("KICK_ALL_LIVESTREAMS_URL", "https://kick.com/stream/livestreams/"),
 
-		CacheDefaultTimeout:          envInt("CACHE_DEFAULT_TIMEOUT", 300),
 		CacheMaxSize:                 envInt("CACHE_MAX_SIZE", 2000),
 		LiveCacheDurationSeconds:     envInt("LIVE_CACHE_DURATION_SECONDS", 60),
 		LiveStaleTTLSeconds:          envInt("LIVE_STALE_TTL_SECONDS", 120),
@@ -108,7 +105,6 @@ func Load() *Config {
 		FeaturedLanguages:   envLanguages("FEATURED_LANGUAGES", defaultLanguages()),
 		DefaultLanguageCode: envStr("DEFAULT_LANGUAGE_CODE", "en"),
 
-		NonCriticalThreadOpConcurrency:         envInt("NON_CRITICAL_THREAD_OP_CONCURRENCY", 4),
 		BackgroundRefreshMaxConcurrency:        envInt("BACKGROUND_REFRESH_MAX_CONCURRENCY", 4),
 		BackgroundRefreshAcquireTimeoutSeconds: envFloat("BACKGROUND_REFRESH_ACQUIRE_TIMEOUT_SECONDS", 0.05),
 

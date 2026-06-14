@@ -97,7 +97,7 @@ func New(cfg *config.Config, log *slog.Logger, assets fs.FS) (*App, error) {
 	return &App{
 		cfg:            cfg,
 		log:            log,
-		cache:          cache.New(cfg.CacheMaxSize, time.Duration(cfg.CacheDefaultTimeout)*time.Second),
+		cache:          cache.New(cfg.CacheMaxSize),
 		cbCritical:     breaker.New(cfg.CircuitBreakerCriticalFailureThreshold, time.Duration(cfg.CircuitBreakerRecoverySeconds)*time.Second),
 		cbNonCritical:  breaker.New(cfg.CircuitBreakerFailureThreshold, time.Duration(cfg.CircuitBreakerRecoverySeconds)*time.Second),
 		kick:           kickClient,
@@ -147,9 +147,6 @@ func (a *App) RunChromecastTasks(ctx context.Context) {
 func (a *App) BeginShutdown() {
 	a.shutdownOnce.Do(func() { close(a.shutdownCh) })
 }
-
-// Cache exposes the cache (used by later phases / tests).
-func (a *App) Cache() *cache.Cache { return a.cache }
 
 // Handler returns the fully wired HTTP handler (routes + middleware).
 func (a *App) Handler() http.Handler {

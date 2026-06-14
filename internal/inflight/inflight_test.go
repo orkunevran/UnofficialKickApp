@@ -8,7 +8,7 @@ import (
 )
 
 func TestDedupGetColdRegistersThenServes(t *testing.T) {
-	c := cache.New(10, time.Minute)
+	c := cache.New(10)
 	tr := New()
 
 	// Cold: caller becomes the fetcher.
@@ -20,7 +20,7 @@ func TestDedupGetColdRegistersThenServes(t *testing.T) {
 	}
 
 	// Fetcher populates cache and signals completion.
-	c.Set("k", "val")
+	c.SetTTL("k", "val", time.Minute)
 	tr.DedupSet("k")
 	if active, _ := tr.Stats(); active != 0 {
 		t.Fatalf("DedupSet should clear the marker, %d remain", active)
@@ -33,13 +33,13 @@ func TestDedupGetColdRegistersThenServes(t *testing.T) {
 }
 
 func TestDedupGetWaitsForInflight(t *testing.T) {
-	c := cache.New(10, time.Minute)
+	c := cache.New(10)
 	tr := New()
 	tr.DedupGet(c, "k", time.Second) // register as fetcher
 
 	go func() {
 		time.Sleep(20 * time.Millisecond)
-		c.Set("k", "ready")
+		c.SetTTL("k", "ready", time.Minute)
 		tr.DedupSet("k")
 	}()
 
@@ -51,7 +51,7 @@ func TestDedupGetWaitsForInflight(t *testing.T) {
 }
 
 func TestDedupGetTimeout(t *testing.T) {
-	c := cache.New(10, time.Minute)
+	c := cache.New(10)
 	tr := New()
 	tr.DedupGet(c, "k", time.Second) // register; never completed
 

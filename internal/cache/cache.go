@@ -31,30 +31,25 @@ type Stats struct {
 
 // Cache is a bounded in-memory key/value store with per-entry TTL.
 type Cache struct {
-	mu             sync.Mutex
-	store          map[string]*entry
-	order          *list.List
-	maxSize        int
-	defaultTimeout time.Duration
-	hit            int64
-	miss           int64
+	mu      sync.Mutex
+	store   map[string]*entry
+	order   *list.List
+	maxSize int
+	hit     int64
+	miss    int64
 }
 
-// New creates a cache with the given capacity and default TTL.
-func New(maxSize int, defaultTimeout time.Duration) *Cache {
+// New creates a cache with the given capacity.
+func New(maxSize int) *Cache {
 	if maxSize < 1 {
 		maxSize = 1
 	}
 	return &Cache{
-		store:          make(map[string]*entry),
-		order:          list.New(),
-		maxSize:        maxSize,
-		defaultTimeout: defaultTimeout,
+		store:   make(map[string]*entry),
+		order:   list.New(),
+		maxSize: maxSize,
 	}
 }
-
-// MaxSize returns the configured capacity.
-func (c *Cache) MaxSize() int { return c.maxSize }
 
 // expiry computes the absolute expiry instant for a TTL. A non-positive TTL
 // yields "now", so the entry is treated as already expired (matches Python's
@@ -64,11 +59,6 @@ func (c *Cache) expiry(timeout time.Duration) time.Time {
 		return time.Now()
 	}
 	return time.Now().Add(timeout)
-}
-
-// Set stores value under key using the cache's default TTL.
-func (c *Cache) Set(key string, value any) {
-	c.SetTTL(key, value, c.defaultTimeout)
 }
 
 // SetTTL stores value under key with an explicit TTL.
@@ -129,28 +119,6 @@ func (c *Cache) SetIfAbsent(key string, value any, ttl time.Duration) bool {
 		elem:      c.order.PushBack(key),
 	}
 	return true
-}
-
-// Delete removes key, reporting whether it was present.
-func (c *Cache) Delete(key string) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	e, ok := c.store[key]
-	if !ok {
-		return false
-	}
-	c.removeLocked(key, e)
-	return true
-}
-
-// Clear empties the cache and resets hit/miss counters.
-func (c *Cache) Clear() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.store = make(map[string]*entry)
-	c.order.Init()
-	c.hit = 0
-	c.miss = 0
 }
 
 // Stats returns a snapshot of size and hit/miss counters.

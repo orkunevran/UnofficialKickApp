@@ -22,7 +22,6 @@ services:
       DEFAULT_LANGUAGE_CODE: "en"
       KICK_API_BASE_URL: "https://kick.com/api/v2/channels/"
       KICK_FEATURED_LIVESTREAMS_URL: "https://kick.com/stream/featured-livestreams/"
-      CACHE_DEFAULT_TIMEOUT: "300"
       LIVE_CACHE_DURATION_SECONDS: "30"
       VOD_CACHE_DURATION_SECONDS: "300"
       SECURITY_HEADERS_ENABLED: "True"

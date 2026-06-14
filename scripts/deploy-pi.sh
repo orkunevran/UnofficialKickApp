@@ -1,107 +1,77 @@
 #!/usr/bin/env bash
-# deploy-pi.sh — cross-compile the Go server for the Pi and deploy it.
+# deploy-pi.sh — cross-compile the Go server and deploy it to the Pi's
+# systemd-managed service.
+#
+# Production runs the binary under **systemd** (not Docker): unit
+# `kick-api.service`, ExecStart=<APP_DIR>/kick-api-arm64, Restart=always, with
+# env (PORT, LOG_LEVEL, CHROMECAST_*) set in the unit. This script replaces the
+# binary in place and restarts the service. The binary embeds static/ and
+# templates/ via //go:embed, so only the binary is shipped.
 #
 # Usage:
-#   ./scripts/deploy-pi.sh            # build + deploy + restart
-#   ./scripts/deploy-pi.sh --build    # build only (skip rsync / restart)
+#   ./scripts/deploy-pi.sh            # build + deploy + restart + verify
+#   ./scripts/deploy-pi.sh --build    # cross-compile only (no deploy)
 #
-# Environment:
-#   PI_HOST  — SSH target, default pi@192.168.1.3
-#   PI_BASE  — base dir on Pi, default /home/pi/Desktop
+# Env overrides:
+#   PI_HOST  SSH target           (default pi@192.168.68.53 — DHCP-assigned, override as needed)
+#   APP_DIR  service dir on Pi    (default /home/pi/Desktop/kick-api-v5; must match the unit's ExecStart)
+#   SERVICE  systemd unit name    (default kick-api)
+#   PORT     health-check port    (default 8081)
 #
+# Assumes the SSH user can `sudo systemctl restart` (passwordless sudo on this Pi).
 set -euo pipefail
 
-PI_HOST="${PI_HOST:-pi@192.168.1.3}"
-PI_BASE="${PI_BASE:-/home/pi/Desktop}"
+PI_HOST="${PI_HOST:-pi@192.168.68.53}"
+APP_DIR="${APP_DIR:-/home/pi/Desktop/kick-api-v5}"
+SERVICE="${SERVICE:-kick-api}"
+PORT="${PORT:-8081}"
+
 BUILD_ONLY=false
+for arg in "$@"; do [[ "$arg" == "--build" ]] && BUILD_ONLY=true; done
 
-for arg in "$@"; do
-  [[ "$arg" == "--build" ]] && BUILD_ONLY=true
-done
-
-VERSION="v$(date +%Y%m%d-%H%M%S)"
-DEPLOY_DIR="$PI_BASE/kick-api-$VERSION"
 BINARY=/tmp/kick-api-arm64
+REMOTE_BIN="$APP_DIR/kick-api-arm64"
 
-# ── 1. Cross-compile ─────────────────────────────────────────────────────────
-echo "==> Building linux/arm64 binary..."
+# ── 1. Cross-compile (stripped) ───────────────────────────────────────────────
+echo "==> Building linux/arm64 binary (stripped)..."
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 \
   go build -trimpath -ldflags="-s -w" -o "$BINARY" ./cmd/server
 echo "    $(ls -lh "$BINARY" | awk '{print $5, $9}')"
 
-$BUILD_ONLY && { echo "==> Build complete (--build flag set, skipping deploy)."; exit 0; }
+$BUILD_ONLY && { echo "==> Build only (--build set); skipping deploy."; exit 0; }
 
-# ── 2. Rsync to versioned directory ─────────────────────────────────────────
-echo "==> Creating $DEPLOY_DIR on Pi..."
-ssh "$PI_HOST" "mkdir -p $DEPLOY_DIR"
+# ── 2. SSH multiplexing so password auth prompts at most once ─────────────────
+CTL="/tmp/kick-deploy-%r@%h:%p"
+SSH=(ssh -o ControlMaster=auto -o "ControlPath=$CTL" -o ControlPersist=120 -o StrictHostKeyChecking=accept-new)
+cleanup() { "${SSH[@]}" -O exit "$PI_HOST" 2>/dev/null || true; }
+trap cleanup EXIT
+echo "==> Connecting to $PI_HOST (enter password once if prompted)..."
+"${SSH[@]}" "$PI_HOST" true
 
-echo "==> Syncing files..."
-rsync -az --progress \
-  "$BINARY" \
-  static/ templates/ docker-compose.yaml docker-compose.pi.yaml \
-  "$PI_HOST:$DEPLOY_DIR/"
+# ── 3. Back up current binary, sync new one (rsync temp+rename avoids ETXTBSY) ─
+echo "==> Backing up current binary → $REMOTE_BIN.bak ..."
+"${SSH[@]}" "$PI_HOST" "cp -f '$REMOTE_BIN' '$REMOTE_BIN.bak' 2>/dev/null || true"
+echo "==> Syncing new binary to $PI_HOST:$REMOTE_BIN ..."
+rsync -az -e "ssh -o ControlPath=$CTL" "$BINARY" "$PI_HOST:$REMOTE_BIN"
+"${SSH[@]}" "$PI_HOST" "chmod +x '$REMOTE_BIN'"
 
-# Copy .env if present
-[[ -f .env ]] && rsync -az .env "$PI_HOST:$DEPLOY_DIR/.env"
+# ── 4. Restart via systemd ────────────────────────────────────────────────────
+echo "==> Restarting $SERVICE ..."
+"${SSH[@]}" "$PI_HOST" "sudo systemctl restart '$SERVICE'"
 
-ssh "$PI_HOST" "chmod +x $DEPLOY_DIR/kick-api-arm64"
-
-# ── 3. Smoke-test on an alternate port, then cut over ────────────────────────
-echo "==> Running smoke test on Pi (port 8082)..."
-ssh "$PI_HOST" bash <<REMOTE
-set -euo pipefail
-cd $DEPLOY_DIR
-
-# Start on port 8082 to avoid clashing with the running Python container.
-PORT=8082 ./kick-api-arm64 &
-NEW_PID=\$!
-trap "kill \$NEW_PID 2>/dev/null; exit 1" ERR
-
-sleep 3
-
-if PORT=8082 ./kick-api-arm64 -healthcheck 2>/dev/null; then
-  echo "  ✓ healthcheck passed"
+# ── 5. Health check (auto-rollback on failure) ────────────────────────────────
+echo "==> Verifying health on :$PORT ..."
+if "${SSH[@]}" "$PI_HOST" "curl -sf --retry 30 --retry-connrefused --retry-delay 0 --max-time 15 -o /dev/null http://127.0.0.1:$PORT/health/live"; then
+  echo "    ✓ healthy"
 else
-  echo "  ✗ healthcheck FAILED — aborting; existing service untouched"
-  kill \$NEW_PID
+  echo "    ✗ health check FAILED — rolling back to previous binary"
+  "${SSH[@]}" "$PI_HOST" "cp -f '$REMOTE_BIN.bak' '$REMOTE_BIN' && sudo systemctl restart '$SERVICE'" || true
   exit 1
 fi
-kill \$NEW_PID
-trap - ERR
-REMOTE
-
-echo "==> Smoke test passed. Cutting over..."
-ssh "$PI_HOST" bash <<REMOTE
-set -euo pipefail
-
-# Stop the existing Python container.
-OLD_DIR=\$(ls -td $PI_BASE/kick-api-v* 2>/dev/null | grep -v "$VERSION" | head -1 || echo "")
-if [[ -n "\$OLD_DIR" && -f "\$OLD_DIR/docker-compose.yaml" ]]; then
-  echo "  Stopping previous service in \$OLD_DIR"
-  cd "\$OLD_DIR"
-  docker compose down 2>/dev/null || true
-fi
-
-# Start the Go binary directly with a restart wrapper via nohup.
-cd $DEPLOY_DIR
-nohup ./kick-api-arm64 > kick-api.log 2>&1 &
-echo \$! > kick-api.pid
-sleep 3
-
-if ./kick-api-arm64 -healthcheck 2>/dev/null; then
-  echo "  ✓ Go server is up on port 8081 (PID \$(cat kick-api.pid))"
-else
-  echo "  ✗ Go server failed to start — check $DEPLOY_DIR/kick-api.log"
-  exit 1
-fi
-REMOTE
 
 echo ""
-echo "==> Deployed $VERSION"
+echo "==> Deployed and restarted $SERVICE on $PI_HOST."
+"${SSH[@]}" "$PI_HOST" "systemctl show '$SERVICE' -p ActiveState -p MainPID -p ExecMainStartTimestamp 2>/dev/null | sed 's/^/    /'"
 echo ""
-echo "  Health: curl http://192.168.1.3:8081/health/live"
-echo "  Metrics: curl http://192.168.1.3:8081/metrics"
-echo "  Logs:   ssh $PI_HOST 'tail -f $DEPLOY_DIR/kick-api.log'"
-echo ""
-echo "  Rollback (restart Python container from previous dir):"
-echo "    ssh $PI_HOST 'kill \$(cat $DEPLOY_DIR/kick-api.pid); cd <prev-dir> && docker compose up -d'"
+echo "  Logs:     ssh $PI_HOST 'journalctl -u $SERVICE -f'"
+echo "  Rollback: ssh $PI_HOST 'cp $REMOTE_BIN.bak $REMOTE_BIN && sudo systemctl restart $SERVICE'"

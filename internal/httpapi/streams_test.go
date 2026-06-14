@@ -35,15 +35,15 @@ func (f *fakeKick) GetChannelData(slug string) (map[string]any, error) {
 	}
 	return f.channel, nil
 }
-func (f *fakeKick) GetChannelVideos(string) (any, error)                  { return f.videos, nil }
-func (f *fakeKick) GetChannelClips(string) (any, error)                   { return f.clips, nil }
-func (f *fakeKick) GetFeaturedLivestreams(string, int) (any, error)       { return f.featured, nil }
+func (f *fakeKick) GetChannelVideos(string) (any, error)            { return f.videos, nil }
+func (f *fakeKick) GetChannelClips(string) (any, error)             { return f.clips, nil }
+func (f *fakeKick) GetFeaturedLivestreams(string, int) (any, error) { return f.featured, nil }
 func (f *fakeKick) GetAllLivestreams(string, int, string, string, string, string, bool) (any, error) {
 	return f.featured, nil
 }
-func (f *fakeKick) FetchPlaylist(string) ([]byte, error)             { return f.playlist, f.playlistErr }
-func (f *fakeKick) GetViewerCount(int) (int, error)                  { return f.viewers, nil }
-func (f *fakeKick) GetViewerCountsBatch([]int) (map[int]int, error)  { return f.batch, nil }
+func (f *fakeKick) FetchPlaylist(string) ([]byte, error)                     { return f.playlist, f.playlistErr }
+func (f *fakeKick) GetViewerCount(int) (int, error)                          { return f.viewers, nil }
+func (f *fakeKick) GetViewerCountsBatch([]int) (map[int]int, error)          { return f.batch, nil }
 func (f *fakeKick) SearchChannelsTypesense(string) ([]map[string]any, error) { return f.search, nil }
 
 func appWithKick(t *testing.T, fake *fakeKick) *App {

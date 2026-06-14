@@ -20,11 +20,11 @@ type fakeCaster struct {
 }
 
 func (f *fakeCaster) Load(string, int, string, bool, bool, bool) error { return f.loadErr }
-func (f *fakeCaster) Pause() error                                      { return nil }
-func (f *fakeCaster) Unpause() error                                    { return nil }
-func (f *fakeCaster) SetVolume(float32) error                           { return nil }
-func (f *fakeCaster) SeekToTime(float32) error                          { return nil }
-func (f *fakeCaster) Update() error                                     { return nil }
+func (f *fakeCaster) Pause() error                                     { return nil }
+func (f *fakeCaster) Unpause() error                                   { return nil }
+func (f *fakeCaster) SetVolume(float32) error                          { return nil }
+func (f *fakeCaster) SeekToTime(float32) error                         { return nil }
+func (f *fakeCaster) Update() error                                    { return nil }
 func (f *fakeCaster) Status() (*gccast.Application, *gccast.Media, *gccast.Volume) {
 	return nil, nil, nil
 }

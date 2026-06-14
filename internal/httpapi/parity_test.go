@@ -30,25 +30,25 @@ type fakeChromecast struct {
 	lastDevice map[string]any
 }
 
-func (f *fakeChromecast) ScanAsync(bool, []string) bool              { return false }
-func (f *fakeChromecast) IsScanning() bool                           { return false }
-func (f *fakeChromecast) GetDevices() []map[string]any               { return f.devices }
+func (f *fakeChromecast) ScanAsync(bool, []string) bool { return false }
+func (f *fakeChromecast) IsScanning() bool              { return false }
+func (f *fakeChromecast) GetDevices() []map[string]any  { return f.devices }
 func (f *fakeChromecast) SelectDevice(uuid string, _ time.Duration) (bool, string) {
 	return true, ""
 }
-func (f *fakeChromecast) CastStream(string, string) bool             { return true }
-func (f *fakeChromecast) StopCast(string) bool                       { return true }
-func (f *fakeChromecast) GetLastDevice() map[string]any              { return f.lastDevice }
-func (f *fakeChromecast) GetStatus() map[string]any { return f.status }
+func (f *fakeChromecast) CastStream(string, string) bool { return true }
+func (f *fakeChromecast) StopCast(string) bool           { return true }
+func (f *fakeChromecast) GetLastDevice() map[string]any  { return f.lastDevice }
+func (f *fakeChromecast) GetStatus() map[string]any      { return f.status }
 func (f *fakeChromecast) Subscribe() (<-chan map[string]any, func()) {
 	ch := make(chan map[string]any)
 	return ch, func() { close(ch) }
 }
-func (f *fakeChromecast) PauseMedia() bool { return true }
-func (f *fakeChromecast) PlayMedia() bool                            { return true }
-func (f *fakeChromecast) SetVolume(float64) bool                     { return true }
-func (f *fakeChromecast) SeekMedia(float64) bool                     { return true }
-func (f *fakeChromecast) Shutdown()                                  {}
+func (f *fakeChromecast) PauseMedia() bool       { return true }
+func (f *fakeChromecast) PlayMedia() bool        { return true }
+func (f *fakeChromecast) SetVolume(float64) bool { return true }
+func (f *fakeChromecast) SeekMedia(float64) bool { return true }
+func (f *fakeChromecast) Shutdown()              {}
 
 // ── sample data (mirrors tests/conftest.py sample_api_data) ──────────────
 
@@ -227,16 +227,16 @@ func mustJSON(v any) []byte {
 
 func parityExpected(path string) map[string]any {
 	channelProfile := map[string]any{
-		"channel_slug":          "live-user",
-		"username":              "live-user",
-		"profile_picture":       "https://img.example/live.png",
-		"banner_image_url":      "https://img.example/banner.png",
-		"bio":                   "Live bio",
-		"followers_count":       float64(4242),
-		"verified":              true,
-		"subscription_enabled":  true,
-		"social_links":          map[string]any{"instagram": "live_insta", "twitter": "live_twitter", "youtube": "live_youtube", "discord": "live_discord", "tiktok": "live_tiktok"},
-		"recent_categories":     []any{"Just Chatting", "Gaming"},
+		"channel_slug":         "live-user",
+		"username":             "live-user",
+		"profile_picture":      "https://img.example/live.png",
+		"banner_image_url":     "https://img.example/banner.png",
+		"bio":                  "Live bio",
+		"followers_count":      float64(4242),
+		"verified":             true,
+		"subscription_enabled": true,
+		"social_links":         map[string]any{"instagram": "live_insta", "twitter": "live_twitter", "youtube": "live_youtube", "discord": "live_discord", "tiktok": "live_tiktok"},
+		"recent_categories":    []any{"Just Chatting", "Gaming"},
 	}
 
 	switch path {
@@ -261,16 +261,16 @@ func parityExpected(path string) map[string]any {
 		return env("success", "", map[string]any{
 			"vods": []any{
 				map[string]any{
-					"vod_id":          float64(42),
-					"video_uuid":      "vod-uuid-42",
-					"title":           "VOD 42",
-					"source_url":      "https://cdn.example/vod-42.m3u8",
-					"thumbnail_url":   "https://img.example/vod-42.png",
-					"views":           float64(1337),
+					"vod_id":           float64(42),
+					"video_uuid":       "vod-uuid-42",
+					"title":            "VOD 42",
+					"source_url":       "https://cdn.example/vod-42.m3u8",
+					"thumbnail_url":    "https://img.example/vod-42.png",
+					"views":            float64(1337),
 					"duration_seconds": float64(3600),
-					"created_at":      "2026-01-01T00:00:00Z",
-					"language":        "en",
-					"is_mature":       false,
+					"created_at":       "2026-01-01T00:00:00Z",
+					"language":         "en",
+					"is_mature":        false,
 				},
 			},
 		})
@@ -292,15 +292,15 @@ func parityExpected(path string) map[string]any {
 		return env("success", "", map[string]any{
 			"clips": []any{
 				map[string]any{
-					"clip_id":       float64(7),
-					"title":         "Highlight",
-					"clip_url":      "https://cdn.example/clip-7",
-					"thumbnail_url": "https://img.example/clip-7.png",
+					"clip_id":          float64(7),
+					"title":            "Highlight",
+					"clip_url":         "https://cdn.example/clip-7",
+					"thumbnail_url":    "https://img.example/clip-7.png",
 					"duration_seconds": float64(12),
-					"views":         float64(123),
-					"category_name": "Just Chatting",
-					"created_at":    "2026-02-01T00:00:00Z",
-					"channel_slug":  "live-user",
+					"views":            float64(123),
+					"category_name":    "Just Chatting",
+					"created_at":       "2026-02-01T00:00:00Z",
+					"channel_slug":     "live-user",
 				},
 			},
 		})
@@ -321,7 +321,7 @@ func parityExpected(path string) map[string]any {
 
 	case "/api/chromecast/devices":
 		return env("success", "", map[string]any{
-			"devices": sampleDevices,
+			"devices":  sampleDevices,
 			"scanning": false,
 		})
 
@@ -452,9 +452,9 @@ func TestParityValidationErrors(t *testing.T) {
 	app := newParityApp(t)
 
 	type tc struct {
-		method  string
-		path    string
-		body    []byte
+		method     string
+		path       string
+		body       []byte
 		wantStatus int
 		wantMsg    string
 	}

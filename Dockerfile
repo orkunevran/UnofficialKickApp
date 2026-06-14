@@ -1,48 +1,35 @@
-# ── Stage 1: Build dependencies ──────────────────────────────────────────
-FROM registry.access.redhat.com/ubi9/python-311 AS builder
+# ── Stage 1: Build ────────────────────────────────────────────────────────
+FROM golang:1.24-bookworm AS builder
 
-USER 0
-RUN dnf install -y gcc-c++ make && dnf clean all && rm -rf /var/cache/dnf
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
 
-WORKDIR /build
-COPY requirements.txt .
-RUN python3 -m venv /opt/venv \
- && /opt/venv/bin/pip install --no-cache-dir -r requirements.txt \
- && /opt/venv/bin/pip install --no-cache-dir dumb-init
+COPY . .
+# TARGETOS/TARGETARCH are supplied by BuildKit/buildx (one per --platform) and
+# default to linux/amd64 for a plain `docker build`, so the image is runnable on
+# the build host (incl. CI). The Pi production binary is built separately by
+# scripts/deploy-pi.sh (arm64) and run under systemd — not from this image.
+# CGO_ENABLED=0 produces a fully static binary; assets are embedded via //go:embed.
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" -o /kick-api ./cmd/server
 
-# ── Stage 2: Runtime ─────────────────────────────────────────────────────
-FROM registry.access.redhat.com/ubi9/python-311
+# ── Stage 2: Runtime ──────────────────────────────────────────────────────
+# distroless/static has no shell, no package manager, and nothing else —
+# just the binary and its embedded assets.
+FROM gcr.io/distroless/static-debian12:nonroot
 
-LABEL org.opencontainers.image.title="Unofficial Kick App" \
-      org.opencontainers.image.description="Self-hosted FastAPI proxy for Kick.com streams" \
-      org.opencontainers.image.version="3.1.0" \
-      org.opencontainers.image.source="https://github.com/orkunevran/UnofficialKickApp"
+LABEL org.opencontainers.image.title="Unofficial Kick App (Go)" \
+      org.opencontainers.image.description="Self-hosted Go proxy for Kick.com streams" \
+      org.opencontainers.image.version="4.0.0"
 
-USER 0
-RUN dnf install -y iputils && dnf clean all && rm -rf /var/cache/dnf
-
-# Copy venv from builder (no gcc/make in runtime image)
-COPY --from=builder /opt/venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-
-ENV USER=appuser
-RUN useradd -m ${USER}
-WORKDIR /home/${USER}/app
-
-COPY --chown=${USER} . .
-
-USER ${USER}
+COPY --from=builder /kick-api /kick-api
 
 EXPOSE 8081
 
-# Use the dedicated liveness endpoint instead of a business endpoint.
-# /health/live returns 200 if the process is running — no DB or upstream
-# dependency, so it won't flap on transient Kick API failures.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8081/health/live')" || exit 1
+    CMD ["/kick-api", "-healthcheck"]
 
-# Run a single ASGI worker so the Chromecast singleton stays in-process.
-# --no-access-log: RequestContextMiddleware already logs every request with
-# correlation ID and timing; uvicorn's parallel access log is duplicate noise.
-ENTRYPOINT ["dumb-init", "--"]
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8081", "--workers", "1", "--no-access-log"]
+ENTRYPOINT ["/kick-api"]

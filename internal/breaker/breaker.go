@@ -26,10 +26,10 @@ type Breaker struct {
 	failureThreshold int
 	recoveryTimeout  time.Duration
 
-	mu               sync.Mutex
-	failureCount     int
-	state            string
-	lastFailureTime  time.Time
+	mu                sync.Mutex
+	failureCount      int
+	state             string
+	lastFailureTime   time.Time
 	halfOpenPermitted bool
 }
 

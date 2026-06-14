@@ -1,6 +1,0 @@
-services:
-  kick-proxy:
-    network_mode: "host"
-    ports: []
-    environment:
-      CHROMECAST_FALLBACK_SCAN_SUBNETS: "${CHROMECAST_FALLBACK_SCAN_SUBNETS:-192.168.68.0/24,192.168.0.0/24,192.168.1.0/24,192.168.2.0/24,10.0.0.0/24,10.0.1.0/24,10.0.2.0/24}"

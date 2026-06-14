@@ -1,9 +1,7 @@
+# Keep the build context small. NOTE: static/ and templates/ are intentionally
+# NOT ignored — they are embedded into the binary via //go:embed at build time.
 .git
 .gitignore
-venv
-__pycache__
-*.pyc
-*.pyo
 .env
 .env.*
 .DS_Store
@@ -12,11 +10,12 @@ __pycache__
 .kilocode
 .devcontainer
 .vscode
-.pytest_cache
-*.md
-!requirements.txt
-tests
-static/art
 docs
-chromecast_test.py
+*.md
 kick-api.code-workspace
+
+# Local build artifacts (the image builds the binary itself)
+kick-api-arm64
+kick-api-amd64
+/server
+*.test

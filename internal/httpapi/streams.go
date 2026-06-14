@@ -58,7 +58,7 @@ func requestCacheKey(prefix string, r *http.Request) string {
 	return key
 }
 
-func (a *App) ttl(seconds int) time.Duration      { return time.Duration(seconds) * time.Second }
+func (a *App) ttl(seconds int) time.Duration { return time.Duration(seconds) * time.Second }
 func (a *App) ttlFloat(seconds float64) time.Duration {
 	return time.Duration(seconds * float64(time.Second))
 }

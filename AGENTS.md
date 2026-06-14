@@ -10,10 +10,12 @@ This file defines the default operating rules for AI coding agents in this repos
 
 ## Project Identity
 
-- Project: **Unofficial Kick App** (`v3.1.0`)
-- Stack: **FastAPI backend + vanilla JS SPA frontend**
+- Project: **Unofficial Kick App** (`v4.0.0`)
+- Stack: **Go backend (stdlib `net/http`) + vanilla JS SPA frontend**
+- Module: `kickapi` — entrypoint `cmd/server`, packages under `internal/`
 - Primary runtime port: `8081`
-- Runs locally, in Docker, and on Raspberry Pi.
+- Runs locally, in Docker, and on Raspberry Pi (binary under systemd in production).
+- The old Python/FastAPI backend is frozen on the `legacy/python-backend` branch.
 
 ## Performance-First Agent Behavior
 
@@ -27,7 +29,7 @@ This file defines the default operating rules for AI coding agents in this repos
 
 - Keep route-layer and service-layer responsibilities separated.
 - Preserve API response envelope conventions (`status`, `message`, `data`).
-- Preserve slug validation (`_SLUG_RE`) and error mapping behavior.
+- Preserve slug validation (`slugRe` in `internal/httpapi`) and error mapping behavior.
 - Maintain cache-key and TTL intent when changing stream/search/viewer endpoints.
 - Favor backward-compatible changes unless user requests otherwise.
 
@@ -66,11 +68,11 @@ This file defines the default operating rules for AI coding agents in this repos
 
 ```bash
 # local run
-python app.py
+go run ./cmd/server
 
-# tests
-pytest tests/ -v
-pytest tests/test_fastapi_parity.py
+# tests / static analysis
+go test -race ./...
+go vet ./...
 
 # health/config quick checks
 curl http://localhost:8081/health/live
@@ -79,14 +81,15 @@ curl http://localhost:8081/config/languages
 
 ## Deployment Guardrails (Pi)
 
-- Prefer versioned deploy directories for rollback.
-- Standard cycle: `rsync` -> `docker compose down` -> `docker compose up --build -d` -> endpoint verification.
+- Production on the Pi runs the binary under systemd (`kick-api.service`, `Restart=always`), not Docker.
+- Standard cycle: `./scripts/deploy-pi.sh` (cross-compile arm64 -> rsync into the service dir -> `systemctl restart` -> health-check with auto-rollback).
+- Logs: `journalctl -u kick-api -f`.
 - Do not store credentials in repo; use external env/SSH config.
 
 ## Where To Read Extra Detail (On Demand)
 
 - Product/API deep details: `KICK_PUBLIC_API.md`
-- Historical notes: `DEVELOPMENT_DIARY.md`
+- Python→Go migration plan: `docs/MIGRATION_GO.md`
 - Human-oriented project overview: `README.md`
 
 Use these only when the task needs them.

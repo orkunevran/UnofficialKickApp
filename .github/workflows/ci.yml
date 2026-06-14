@@ -7,49 +7,35 @@ on:
     branches: [main]
 
 jobs:
-  lint:
+  build-test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+      - uses: actions/setup-go@v5
         with:
-          python-version: "3.11"
+          go-version: "1.24"
+          cache: true
 
-      - name: Install ruff
-        run: pip install ruff
+      - name: Check formatting
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"; echo "$unformatted"; exit 1
+          fi
 
-      - name: Lint with ruff
-        run: ruff check --select=E,W,F,I --ignore=E501 services/ api/ app.py config.py
+      - name: Vet
+        run: go vet ./...
 
-  test:
-    runs-on: ubuntu-latest
-    needs: lint
-    steps:
-      - uses: actions/checkout@v4
+      - name: Build
+        run: go build ./...
 
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Cache pip packages
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: ${{ runner.os }}-pip-
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Run tests
-        run: pytest tests/ -v --tb=short
+      - name: Test (race detector)
+        run: go test -race ./...
 
   docker-build:
     runs-on: ubuntu-latest
-    needs: test
+    needs: build-test
     steps:
       - uses: actions/checkout@v4
 

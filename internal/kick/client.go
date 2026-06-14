@@ -38,10 +38,10 @@ func (e *HTTPError) Error() string { return fmt.Sprintf("upstream HTTP %d", e.St
 
 // Client talks to Kick and its Typesense search cluster.
 type Client struct {
-	http               tls_client.HttpClient
-	baseURL            string
-	featuredURL        string
-	allLivestreamsURL  string
+	http              tls_client.HttpClient
+	baseURL           string
+	featuredURL       string
+	allLivestreamsURL string
 
 	// Typesense key cache (process-wide, mirrors the Python class vars).
 	tsMu        sync.Mutex

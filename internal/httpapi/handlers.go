@@ -11,15 +11,19 @@ import (
 )
 
 // handleIndex serves the pre-rendered index.html (Jinja output reproduced at
-// startup — see render.go).
+// startup — see render.go). The HTML references content-hashed (immutable)
+// asset URLs, so it must always revalidate: no-cache guarantees a deploy is
+// picked up on the next load instead of a stale page pinning old ?h= hashes.
 func (a *App) handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
 	_, _ = w.Write([]byte(a.indexHTML))
 }
 
 // handleDocs serves the embedded, self-contained API reference page.
 func (a *App) handleDocs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
 	_, _ = w.Write([]byte(a.docsHTML))
 }
 

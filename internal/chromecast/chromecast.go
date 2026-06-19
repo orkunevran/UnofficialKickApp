@@ -73,6 +73,9 @@ type Service struct {
 	known    *lru
 	lastUUID string
 	lastName string
+	// pollFailures counts consecutive status-poll Update() errors; after
+	// staleDropThreshold the unreachable connection is dropped (see GetStatus).
+	pollFailures int
 
 	scanning  bool
 	selecting bool
@@ -359,33 +362,65 @@ func (s *Service) closeApp(app caster, stopMedia bool) {
 
 // ── casting / control ──────────────────────────────────────────────────────────
 
-// CastStream loads an HLS stream URL on the selected device.
-func (s *Service) CastStream(streamURL, title string) bool {
+// reconnectSelected re-establishes the connection to the currently selected
+// device on a fresh socket, to recover from a stale connection (TV slept /
+// dropped / changed IP) before retrying a cast. No-op if nothing is selected.
+func (s *Service) reconnectSelected() bool {
 	s.mu.Lock()
-	app := s.app
+	uuid := s.selected
+	dev, ok := s.devices[uuid]
+	old := s.app
 	s.mu.Unlock()
-	if app == nil {
-		s.log.Error("no Chromecast device selected")
+	if uuid == "" || !ok {
 		return false
 	}
-	// content type matches the Python 'application/x-mpegurl'.
-	// Retry once: the TV may need a moment to launch the media receiver app
-	// (e.g. waking from standby), causing the first attempt to time out.
-	for attempt := 1; attempt <= 2; attempt++ {
+	app, err := s.newCaster(dev.Addr, dev.Port)
+	if err != nil {
+		s.log.Warn("cast reconnect failed", "device", dev.Name, "error", err)
+		return false
+	}
+	s.mu.Lock()
+	s.app = app
+	s.pollFailures = 0
+	s.mu.Unlock()
+	s.closeApp(old, false)
+	return true
+}
+
+// CastStream loads an HLS stream URL on the selected device.
+//
+// Android-TV style receivers (e.g. Xiaomi TV) are slow to cold-launch the
+// Default Media Receiver, and a cached socket can be stale after the TV sleeps
+// — both surface as "context deadline exceeded / unable to change to appID
+// CC1AD845". So we retry with a short backoff and reconnect on a fresh socket
+// between attempts (which also re-issues the receiver launch). content type
+// matches the Python 'application/x-mpegurl'.
+func (s *Service) CastStream(streamURL, title string) bool {
+	const maxAttempts = 3
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		s.mu.Lock()
+		app := s.app
+		s.mu.Unlock()
+		if app == nil {
+			s.log.Error("no Chromecast device selected")
+			return false
+		}
+
 		s.appMu.Lock()
 		err := app.Load(streamURL, 0, "application/x-mpegurl", false, false, false)
 		s.appMu.Unlock()
-		if err != nil {
-			if attempt == 2 {
-				s.log.Warn("cast load failed", "error", err)
-				return false
-			}
-			s.log.Info("cast load attempt failed, retrying", "attempt", attempt, "error", err)
-			time.Sleep(500 * time.Millisecond)
-			continue
+		if err == nil {
+			s.triggerPoll()
+			return true
 		}
-		s.triggerPoll()
-		return true
+
+		if attempt == maxAttempts {
+			s.log.Warn("cast load failed", "attempts", maxAttempts, "error", err)
+			return false
+		}
+		s.log.Info("cast load attempt failed, reconnecting then retrying", "attempt", attempt, "error", err)
+		s.reconnectSelected()
+		time.Sleep(time.Second)
 	}
 	return false
 }
@@ -449,6 +484,11 @@ func (s *Service) withApp(fn func(caster) error) bool {
 	return true
 }
 
+// staleDropThreshold is the number of consecutive status-poll failures after
+// which an unreachable device's connection is dropped, so controls (which share
+// appMu) stop stalling on it and AutoReconnect / a re-select can recover.
+const staleDropThreshold = 3
+
 // GetStatus returns the current playback status (ports get_status).
 func (s *Service) GetStatus() map[string]any {
 	s.mu.Lock()
@@ -459,9 +499,36 @@ func (s *Service) GetStatus() map[string]any {
 		return map[string]any{"status": "disconnected"}
 	}
 	s.appMu.Lock()
-	_ = app.Update()
+	updateErr := app.Update()
 	_, media, volume := app.Status()
 	s.appMu.Unlock()
+
+	if updateErr != nil {
+		// The device didn't answer. Standby/sleep is often transient, so keep
+		// reporting the last-known status for a few polls; but if it stays
+		// unreachable, drop the connection so a blocked Update() can't pin appMu
+		// and stall every control op (volume/play/seek) and the status endpoint.
+		s.mu.Lock()
+		s.pollFailures++
+		n := s.pollFailures
+		drop := n >= staleDropThreshold && s.app == app
+		if drop {
+			s.app = nil
+			s.selected = ""
+			s.pollFailures = 0
+		}
+		s.mu.Unlock()
+		if drop {
+			s.log.Warn("dropping unreachable cast connection", "device", name, "failures", n, "error", updateErr)
+			s.closeApp(app, false)
+			s.saveState()
+			return map[string]any{"status": "disconnected"}
+		}
+	} else {
+		s.mu.Lock()
+		s.pollFailures = 0
+		s.mu.Unlock()
+	}
 
 	isPlaying := media != nil && media.PlayerState == "PLAYING"
 	var volumeLevel any = 1.0

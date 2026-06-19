@@ -42,8 +42,15 @@ func (s *Service) mdnsDiscover(ctx context.Context) ([]Device, error) {
 }
 
 // newRealCaster connects a go-chromecast Application to addr:port.
+//
+// ConnectionRetries is 1 (not the library default of 3): each retry adds a 5s
+// receiver-status timeout plus a 2s sleep, so 3 retries let a single Update()
+// on an unreachable device block ~19s while holding appMu — stalling status and
+// every control op. We do our own retries at a higher level (SelectDevice's
+// connect loop and CastStream), so failing fast here is safe and far more
+// responsive.
 func newRealCaster(addr string, port int) (caster, error) {
-	app := application.NewApplication(application.WithConnectionRetries(3))
+	app := application.NewApplication(application.WithConnectionRetries(1))
 	if err := app.Start(addr, port); err != nil {
 		return nil, err
 	}

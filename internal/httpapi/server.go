@@ -45,10 +45,11 @@ type App struct {
 	shutdownCh   chan struct{}
 	shutdownOnce sync.Once
 
-	staticFS  fs.FS
-	indexHTML string
-	docsHTML  string
-	startTime time.Time
+	staticFS     fs.FS
+	staticHashes map[string]string // relative path → content MD5, for ETag revalidation
+	indexHTML    string
+	docsHTML     string
+	startTime    time.Time
 }
 
 // New constructs the App: builds the cache and circuit breakers, derives the
@@ -107,6 +108,7 @@ func New(cfg *config.Config, log *slog.Logger, assets fs.FS) (*App, error) {
 		refreshLimiter: newLimiter(cfg.BackgroundRefreshMaxConcurrency),
 		shutdownCh:     make(chan struct{}),
 		staticFS:       staticFS,
+		staticHashes:   hashes,
 		indexHTML:      renderIndex(string(tmpl), hashes),
 		docsHTML:       string(docs),
 		startTime:      time.Now(),
@@ -203,14 +205,26 @@ func (a *App) Handler() http.Handler {
 	return handler
 }
 
-// cacheControl sets long-lived caching for hash-busted assets and a modest TTL
-// otherwise, mirroring _ImmutableStaticFiles.
+// cacheControl sets caching for static assets:
+//   - ?h=<hash> URLs (style.css, script.js) are content-addressed → immutable.
+//   - ES modules and other hashed files are loaded by plain path (no ?h=), so
+//     they get an ETag (the precomputed content MD5) + no-cache: the browser
+//     revalidates each load and gets a cheap 304 when unchanged, but picks up a
+//     deploy immediately instead of serving a stale copy for the cache TTL.
+//     http.ServeContent reads this ETag to answer If-None-Match automatically.
+//   - Anything else (images, fonts not in the hash map) keeps a modest TTL.
 func (a *App) cacheControl(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.Contains(r.URL.RawQuery, "h=") {
+		switch {
+		case strings.Contains(r.URL.RawQuery, "h="):
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-		} else {
-			w.Header().Set("Cache-Control", "public, max-age=300")
+		default:
+			if h, ok := a.staticHashes[strings.TrimPrefix(r.URL.Path, "/static/")]; ok {
+				w.Header().Set("ETag", `"`+h+`"`)
+				w.Header().Set("Cache-Control", "no-cache")
+			} else {
+				w.Header().Set("Cache-Control", "public, max-age=300")
+			}
 		}
 		next.ServeHTTP(w, r)
 	})

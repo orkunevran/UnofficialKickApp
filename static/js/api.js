@@ -1,6 +1,7 @@
 // Mobile networks (3G/LTE) need more headroom: TLS handshake + DNS + server
 // response + body download can easily exceed 8s on congested connections.
 const API_TIMEOUT_MS = /Mobi|Android/i.test(navigator.userAgent) ? 15000 : 10000;
+const _inFlightJsonGetRequests = new Map();
 
 // ── Connection status tracking ──────────────────────────────────────────
 let _consecutiveFailures = 0;
@@ -47,6 +48,32 @@ function fetchWithTimeout(url, options = {}, timeoutMs = API_TIMEOUT_MS) {
         .finally(() => clearTimeout(timer));
 }
 
+function fetchJsonWithDedupe(url, timeoutMs = API_TIMEOUT_MS) {
+    const key = `${timeoutMs}:${String(url)}`;
+    const pending = _inFlightJsonGetRequests.get(key);
+    if (pending) return pending;
+
+    const request = fetchWithTimeout(url, {}, timeoutMs)
+        .then(async response => {
+            let data = null;
+            try {
+                data = await response.json();
+            } catch {}
+            return {
+                ok: response.ok,
+                status: response.status,
+                data,
+            };
+        });
+
+    _inFlightJsonGetRequests.set(key, request);
+    request.then(
+        () => _inFlightJsonGetRequests.delete(key),
+        () => _inFlightJsonGetRequests.delete(key),
+    );
+    return request;
+}
+
 export async function fetchFeaturedStreams(language = 'en', page = 1, filters = {}) {
     try {
         const {
@@ -62,11 +89,11 @@ export async function fetchFeaturedStreams(language = 'en', page = 1, filters = 
         if (subcategories) params.set('subcategories', subcategories);
         if (sort) params.set('sort', sort);
         if (strict) params.set('strict', 'true');
-        const response = await fetchWithTimeout(`/streams/featured-livestreams?${params}`);
+        const response = await fetchJsonWithDedupe(`/streams/featured-livestreams?${params}`);
         if (!response.ok) {
             throw new Error('Failed to fetch featured livestreams');
         }
-        return await response.json();
+        return response.data;
     } catch (error) {
         if (error.name === 'AbortError') {
             throw new Error('Request timed out. Please try again.');
@@ -185,12 +212,11 @@ export async function fetchViewerCount(livestreamId) {
 export async function fetchBatchViewerCounts(livestreamIds) {
     if (!livestreamIds.length) return {};
     try {
-        const response = await fetchWithTimeout(
-            `/streams/viewers/batch?ids=${livestreamIds.join(',')}`, {}, 5000
+        const response = await fetchJsonWithDedupe(
+            `/streams/viewers/batch?ids=${livestreamIds.join(',')}`, 5000
         );
         if (!response.ok) return {};
-        const d = await response.json();
-        return d?.data || {};
+        return response.data?.data || {};
     } catch {
         return {};
     }

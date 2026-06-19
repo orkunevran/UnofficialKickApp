@@ -11,6 +11,12 @@ import { throttle } from '../utils.js';
 
 const REFRESH_INTERVAL_MS = 120_000;
 const DEFAULT_PAGE_SIZE = 14;
+const RETAIN_RECENT_PAGE_COUNT = 5;
+const GRID_CARD_MIN_WIDTH = 280;
+const GRID_GAP_PX = 20;
+const GRID_CARD_FALLBACK_HEIGHT = 250;
+const LIST_ITEM_FALLBACK_HEIGHT = 92;
+const LIST_GAP_PX = 10;
 
 // Module state (persists across route changes via closure)
 let currentLanguage = null;
@@ -19,6 +25,8 @@ let pageCache = new Map();
 let pageMetaCache = new Map();
 let loadedPageCount = 0;
 let hasNextPage = true;
+let evictedStreamCount = 0;
+let pageHeightEstimate = 0;
 let refreshGeneration = 0;
 let activeGeneration = 0;
 let refreshInFlight = false;
@@ -105,10 +113,16 @@ function hasFreshCache() {
     return activeGeneration === refreshGeneration;
 }
 
+function getRenderablePageNumbers() {
+    return [...pageCache.keys()]
+        .filter(page => page >= 1 && page <= loadedPageCount)
+        .sort((a, b) => a - b);
+}
+
 function mergePagesIntoStreams() {
     const seen = new Set();
     const merged = [];
-    for (let page = 1; page <= loadedPageCount; page++) {
+    for (const page of getRenderablePageNumbers()) {
         const streams = pageCache.get(page) || [];
         streams.forEach(stream => {
             const slug = stream.channel?.slug || stream.slug || '';
@@ -120,16 +134,100 @@ function mergePagesIntoStreams() {
     return merged;
 }
 
-function syncLoadedRange() {
+function countMergedPages(pageNumbers) {
+    const seen = new Set();
     let count = 0;
-    while (pageCache.has(count + 1)) count++;
-    loadedPageCount = count;
-    if (count === 0) {
-        hasNextPage = false;
-        return;
+    pageNumbers.forEach(page => {
+        const streams = pageCache.get(page) || [];
+        streams.forEach(stream => {
+            const slug = stream.channel?.slug || stream.slug || '';
+            if (!slug || seen.has(slug)) return;
+            seen.add(slug);
+            count++;
+        });
+    });
+    return count;
+}
+
+function hiddenMiddlePageCount() {
+    if (loadedPageCount <= RETAIN_RECENT_PAGE_COUNT + 1) return 0;
+    const recentStart = Math.max(2, loadedPageCount - RETAIN_RECENT_PAGE_COUNT + 1);
+    return Math.max(0, recentStart - 2);
+}
+
+function fallbackPageHeight() {
+    if (preferences.viewMode === 'list') {
+        return (DEFAULT_PAGE_SIZE * LIST_ITEM_FALLBACK_HEIGHT) + ((DEFAULT_PAGE_SIZE - 1) * LIST_GAP_PX);
     }
-    const meta = pageMetaCache.get(count);
-    hasNextPage = Boolean(meta?.hasNext);
+    const contentWidth = document.getElementById('content-area')?.clientWidth || window.innerWidth || 1024;
+    const columns = Math.max(1, Math.floor((contentWidth + GRID_GAP_PX) / (GRID_CARD_MIN_WIDTH + GRID_GAP_PX)));
+    const rows = Math.ceil(DEFAULT_PAGE_SIZE / columns);
+    return (rows * GRID_CARD_FALLBACK_HEIGHT) + ((rows - 1) * GRID_GAP_PX);
+}
+
+function getWindowRenderOptions() {
+    const hiddenPages = hiddenMiddlePageCount();
+    if (hiddenPages === 0) return {};
+    return {
+        windowSpacerAfter: pageCache.has(1) ? countMergedPages([1]) : 0,
+        windowSpacerHeight: hiddenPages * (pageHeightEstimate || fallbackPageHeight()),
+    };
+}
+
+function updatePageHeightEstimate(contentEl) {
+    const hiddenPages = hiddenMiddlePageCount();
+    const spacer = contentEl?.querySelector('.stream-window-spacer');
+    let estimate = 0;
+
+    if (preferences.viewMode === 'list') {
+        const list = contentEl?.querySelector('.stream-list');
+        const row = list?.querySelector('.stream-list-item');
+        if (list && row) {
+            const styles = getComputedStyle(list);
+            const gap = parseFloat(styles.rowGap || styles.gap || '0') || LIST_GAP_PX;
+            const rowHeight = row.getBoundingClientRect().height || LIST_ITEM_FALLBACK_HEIGHT;
+            estimate = (DEFAULT_PAGE_SIZE * rowHeight) + ((DEFAULT_PAGE_SIZE - 1) * gap);
+        }
+    } else {
+        const grid = contentEl?.querySelector('.stream-grid');
+        const card = grid?.querySelector('.stream-card');
+        if (grid && card) {
+            const styles = getComputedStyle(grid);
+            const columns = styles.gridTemplateColumns.split(' ').filter(Boolean).length || 1;
+            const gap = parseFloat(styles.rowGap || styles.gap || '0') || GRID_GAP_PX;
+            const cardHeight = card.getBoundingClientRect().height || GRID_CARD_FALLBACK_HEIGHT;
+            const rows = Math.ceil(DEFAULT_PAGE_SIZE / columns);
+            estimate = (rows * cardHeight) + ((rows - 1) * gap);
+        }
+    }
+
+    if (estimate > 0) pageHeightEstimate = estimate;
+    if (spacer && hiddenPages > 0) {
+        spacer.style.height = `${Math.round(hiddenPages * (pageHeightEstimate || fallbackPageHeight()))}px`;
+    }
+}
+
+function prunePageWindow() {
+    const minRecentPage = Math.max(2, loadedPageCount - RETAIN_RECENT_PAGE_COUNT + 1);
+    const prefetchedNextPage = loadedPageCount + 1;
+
+    for (const page of [...pageCache.keys()]) {
+        const shouldKeep = page === 1
+            || (page >= minRecentPage && page <= loadedPageCount)
+            || page === prefetchedNextPage;
+        if (shouldKeep) continue;
+
+        if (page <= loadedPageCount) {
+            evictedStreamCount += pageCache.get(page)?.length || DEFAULT_PAGE_SIZE;
+        }
+        pageCache.delete(page);
+        pageMetaCache.delete(page);
+    }
+}
+
+function getDisplayedStreamCount() {
+    const retainedCount = appState.featuredStreams?.length || mergePagesIntoStreams().length;
+    return evictedStreamCount + retainedCount;
 }
 
 function getServerSort() {
@@ -159,7 +257,11 @@ async function fetchPageData(language, page, generation) {
 function applyPageResult(cache, metaCache, result) {
     if (!result) return;
     cache.set(result.page, result.streams);
-    metaCache.set(result.page, { hasNext: result.hasNext, perPage: result.perPage });
+    metaCache.set(result.page, {
+        hasNext: result.hasNext,
+        perPage: result.perPage,
+        streamCount: result.streams.length,
+    });
 }
 
 function rebuildAndRender(contentEl, { renderMode = 'full' } = {}) {
@@ -178,18 +280,21 @@ function rebuildAndRender(contentEl, { renderMode = 'full' } = {}) {
     // Render grid
     const gridContainer = contentEl?.querySelector('#browse-grid');
     if (gridContainer) {
+        const renderOptions = getWindowRenderOptions();
         if (renderMode === 'full') {
-            gridContainer.innerHTML = renderStreamGrid(appState.featuredStreams, preferences.viewMode);
+            gridContainer.innerHTML = renderStreamGrid(appState.featuredStreams, preferences.viewMode, renderOptions);
         } else {
-            patchStreamGrid(gridContainer, appState.featuredStreams, preferences.viewMode);
+            patchStreamGrid(gridContainer, appState.featuredStreams, preferences.viewMode, renderOptions);
         }
+        updatePageHeightEstimate(contentEl);
         observeVisibleStreamCards(gridContainer);
     }
 
     // Update count
     const countEl = contentEl?.querySelector('#stream-count');
     if (countEl) {
-        countEl.textContent = appState.featuredStreams.length > 0 ? `(${appState.featuredStreams.length})` : '';
+        const count = getDisplayedStreamCount();
+        countEl.textContent = count > 0 ? `(${count})` : '';
     }
 
     // Update sentinel
@@ -214,7 +319,7 @@ function updateSentinel(contentEl) {
         if (spinner) spinner.style.display = 'none';
         if (endMsg) {
             endMsg.style.display = 'block';
-            endMsg.textContent = `All ${appState.featuredStreams.length} streams loaded`;
+            endMsg.textContent = `All ${getDisplayedStreamCount()} streams loaded`;
         }
     }
 }
@@ -249,6 +354,9 @@ async function loadInitialPages(language, contentEl, browseView, forceClear = fa
         pageCache.clear();
         pageMetaCache.clear();
         loadedPageCount = 0;
+        hasNextPage = true;
+        evictedStreamCount = 0;
+        pageHeightEstimate = 0;
         rebuildAndRender(contentEl, { renderMode: 'full' }); // Render skeleton immediately
     }
 
@@ -268,7 +376,14 @@ async function loadInitialPages(language, contentEl, browseView, forceClear = fa
         applyPageResult(pageCache, pageMetaCache, result);
 
         activeGeneration = refreshGeneration;
-        syncLoadedRange();
+        if (loadedPageCount === 0) loadedPageCount = 1;
+        if (loadedPageCount === 1) {
+            hasNextPage = Boolean(result?.hasNext);
+        } else {
+            const meta = pageMetaCache.get(loadedPageCount);
+            if (meta) hasNextPage = Boolean(meta.hasNext);
+        }
+        prunePageWindow();
         // Patch in-place when returning to browse with cached content already on screen
         rebuildAndRender(contentEl, { renderMode: hadCachedData ? 'refresh' : 'full' });
     } catch (err) {
@@ -295,20 +410,19 @@ async function backgroundRefresh(language, contentEl) {
     const generation = ++refreshGeneration;
     refreshInFlight = true;
 
-    const inlineSpinner = contentEl?.querySelector('#featured-spinner');
-    if (inlineSpinner) inlineSpinner.classList.add('is-active');
-
+    // No spinner: the auto-refresh is silent and patches in place (with FLIP
+    // for any reordering), so it should be invisible until cards actually move.
     try {
         const result = await fetchPageData(language, 1, generation);
         if (generation !== refreshGeneration) return;
         applyPageResult(pageCache, pageMetaCache, result);
+        prunePageWindow();
         activeGeneration = refreshGeneration;
         rebuildAndRender(contentEl, { renderMode: 'refresh' });
     } catch (err) {
         console.error('Background refresh error:', err);
     } finally {
         if (generation === refreshGeneration) refreshInFlight = false;
-        if (inlineSpinner) inlineSpinner.classList.remove('is-active');
     }
     // (Previously: setTimeout(() => { refreshInFlight = false; }, 15000).
     // That unconditional clear was a latent bug — if a *newer* refresh was
@@ -345,7 +459,16 @@ async function midCycleViewerRefresh(contentEl) {
             }
         }
 
-        // Patch DOM — update viewer badges and uptime on visible cards
+        // When sorted by viewers, re-sort now so the order tracks the fresh
+        // numbers and cards glide to their new spots (FLIP), instead of staying
+        // stale until the next full refresh and then lurching. patchStreamGrid
+        // also animates the counts, so this fully replaces the in-place update.
+        if (featuredSortState.column === 'viewer_count') {
+            rebuildAndRender(contentEl, { renderMode: 'refresh' });
+            return;
+        }
+
+        // Otherwise the order is unaffected — just animate the counts in place.
         const gridEl = contentEl?.querySelector('.stream-grid');
         if (!gridEl) return;
         const slugMap = new Map(streams.map(s => [s.channel?.slug || s.slug, s]));
@@ -444,7 +567,9 @@ async function loadNextScrollPage(contentEl) {
             applyPageResult(pageCache, pageMetaCache, result);
         }
         if (generation !== refreshGeneration) return;
-        syncLoadedRange();
+        loadedPageCount = nextPage;
+        hasNextPage = Boolean(pageMetaCache.get(nextPage)?.hasNext);
+        prunePageWindow();
         rebuildAndRender(contentEl, { renderMode: 'append' });
 
         // Immediately prefetch the page after this one
@@ -520,11 +645,15 @@ export async function mount(params, contentEl) {
         featuredSortState.direction = preferences.defaultSort.direction || 'desc';
     }
 
+    const initialStreams = applyFeaturedStreamsSort(mergePagesIntoStreams(), featuredSortState);
+    const initialCount = evictedStreamCount + initialStreams.length;
+    const initialRenderOptions = getWindowRenderOptions();
+
     contentEl.innerHTML = `
         <div id="browse-view">
             <div class="browse-sticky-header">
                 <div class="section-header">
-                    <h1 class="section-title">Featured Streams <span id="stream-count" class="section-count">${pageCache.size > 0 ? `(${mergePagesIntoStreams().length})` : ''}</span></h1>
+                    <h1 class="section-title">Featured Streams <span id="stream-count" class="section-count">${initialCount > 0 ? `(${initialCount})` : ''}</span></h1>
                     <span id="featured-spinner" class="inline-spinner" aria-hidden="true"></span>
                     <button id="filter-toggle" class="filter-toggle" aria-label="Toggle filters" aria-expanded="true">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
@@ -560,7 +689,7 @@ export async function mount(params, contentEl) {
 
             <div id="browse-grid">
                 ${pageCache.size > 0
-                    ? renderStreamGrid(applyFeaturedStreamsSort(mergePagesIntoStreams(), featuredSortState), preferences.viewMode)
+                    ? renderStreamGrid(initialStreams, preferences.viewMode, initialRenderOptions)
                     : `<div class="stream-grid">${renderCardSkeleton(8)}</div>`}
             </div>
 
@@ -636,7 +765,9 @@ export async function mount(params, contentEl) {
         if (currentCategory && col === 'viewer_count') {
             void loadInitialPages(currentLanguage, contentEl, browseView, true);
         } else {
-            rebuildAndRender(contentEl);
+            // Patch + FLIP so cards glide to their new sorted positions instead
+            // of the whole grid rebuilding (which replayed the entrance cascade).
+            rebuildAndRender(contentEl, { renderMode: 'refresh' });
         }
     };
     const sortPillsEl = browseView.querySelector('.sort-pills');
@@ -672,22 +803,38 @@ export async function mount(params, contentEl) {
     // ── Hide-on-scroll (mobile only) ──────────────────────────────────────
     const scrollEl = document.getElementById('content-area');
     const mq = window.matchMedia('(max-width: 767px)');
+    // Hysteresis: accumulate distance in the current scroll direction and only
+    // toggle once it passes a threshold, resetting the opposite accumulator on
+    // each direction change. This way momentum settle and finger jitter (a few
+    // px) can't flip the header — reveal needs a deliberate upward scroll and is
+    // intentionally less eager than hide.
     let lastTop = 0;
-    const ENGAGE_AFTER = 80;
-    const HIDE_DELTA = 8;
-    const REVEAL_DELTA = 6;
+    let accUp = 0;
+    let accDown = 0;
+    const ENGAGE_AFTER = 80;   // always show near the top of the list
+    const HIDE_DELTA = 20;     // hide after a clear downward scroll
+    const REVEAL_DELTA = 50;   // reveal only after a deliberate upward scroll
 
     const onScroll = throttle(() => {
         if (!mq.matches) return;
         const top = scrollEl.scrollTop;
+        const dy = top - lastTop;
+        lastTop = top;
+
         if (top < ENGAGE_AFTER) {
             document.body.classList.remove('browse-headers-hidden');
-        } else if (top - lastTop > HIDE_DELTA) {
-            document.body.classList.add('browse-headers-hidden');
-        } else if (lastTop - top > REVEAL_DELTA) {
-            document.body.classList.remove('browse-headers-hidden');
+            accUp = accDown = 0;
+            return;
         }
-        lastTop = top;
+        if (dy > 0) {                 // scrolling down
+            accDown += dy;
+            accUp = 0;
+            if (accDown > HIDE_DELTA) document.body.classList.add('browse-headers-hidden');
+        } else if (dy < 0) {          // scrolling up
+            accUp -= dy;              // dy < 0 → adds its magnitude
+            accDown = 0;
+            if (accUp > REVEAL_DELTA) document.body.classList.remove('browse-headers-hidden');
+        }
     }, 80);
 
     scrollEl.addEventListener('scroll', onScroll, { passive: true });

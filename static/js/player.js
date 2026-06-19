@@ -42,9 +42,24 @@ const _layer = () => document.getElementById('video-layer');
 const _video = () => document.getElementById('sharedVideo');
 const _thumb = () => document.getElementById('mini-player-thumb');
 const _miniPlayer = () => document.getElementById('mini-player');
+const _theaterLayer = () => document.getElementById('theater-layer');
 
 function _isSafari() {
     return document.documentElement.classList.contains('safari');
+}
+
+// Below 768px the mini-player docks as a fixed bottom bar (styled in CSS);
+// the floating/draggable PiP geometry is desktop-only.
+function _isMobile() {
+    return window.matchMedia('(max-width: 767px)').matches;
+}
+
+// A phone in landscape (short + wide): a live stream in full mode goes into the
+// fullscreen "theater" overlay rather than the in-page slot, which would sit
+// below the fold. iOS blocks programmatic native fullscreen, so this is a
+// CSS overlay, not the Fullscreen API.
+function _isLandscapePhone() {
+    return window.matchMedia('(orientation: landscape) and (max-height: 500px)').matches;
 }
 
 function _moveVideoTo(container) {
@@ -125,6 +140,8 @@ function _cardHeightFor(width) {
 function _applyPipGeometry() {
     const card = _miniPlayer();
     if (!card) return;
+    // On mobile the bar is docked via CSS — don't impose floating coordinates.
+    if (_isMobile()) return;
     // Skip while the viewport has no layout (zero size during route
     // transitions / background tabs); applying now would clamp the window into
     // the corner. A later resize/render recomputes once dimensions are real.
@@ -327,6 +344,7 @@ export function setMode(mode, slot, opts = {}) {
     const fromRect = shouldAnimate ? video.getBoundingClientRect() : null;
 
     _clearFullSlot();
+    document.body.classList.remove('landscape-theater'); // off by default; full mode re-adds in landscape
 
     if (mode === 'hidden') {
         _mode = 'hidden';
@@ -353,9 +371,17 @@ export function setMode(mode, slot, opts = {}) {
     video.muted = false;
     _hideMiniPoster();
     _hideMiniBar();
-    _moveVideoTo(_fullSlot);
-    _styleVideoForMode('full');
-    _fullSlot.classList.add('video-active');
+    if (_isLandscapePhone()) {
+        // Phone landscape → fullscreen theater overlay (the in-page slot would
+        // be below the fold). Minimize collapses to the mini-player.
+        _moveVideoTo(_theaterLayer());
+        _styleVideoForMode('full');
+        document.body.classList.add('landscape-theater');
+    } else {
+        _moveVideoTo(_fullSlot);
+        _styleVideoForMode('full');
+        _fullSlot.classList.add('video-active');
+    }
     if (fromRect) _flipAnimate(video, fromRect);
 }
 
@@ -440,6 +466,18 @@ export function initMiniPlayerControls() {
 
     closeBtn?.addEventListener('click', stopStream);
 
+    // Theater minimize → collapse to the mini-player (keeps playing; browse the
+    // app in landscape). Tapping the mini-player re-opens the channel → theater.
+    document.getElementById('theater-exit')?.addEventListener('click', () => {
+        setMode('mini', null, { collapsePanel: true });
+    });
+
+    // Re-evaluate theater when orientation flips: a live full-mode stream toggles
+    // between the fullscreen overlay (landscape) and the in-page slot (portrait).
+    window.matchMedia('(orientation: landscape) and (max-height: 500px)').addEventListener('change', () => {
+        if (_mode === 'full' && _fullSlot) setMode('full', _fullSlot);
+    });
+
     _initPipInteractions();
     // Keep the floating window on-screen when the viewport changes.
     window.addEventListener('resize', () => { if (_mode === 'mini') _applyPipGeometry(); });
@@ -448,6 +486,14 @@ export function initMiniPlayerControls() {
 // _initPipInteractions wires drag-to-move (on the video surface) and
 // drag-to-resize (on the corner handle). A press on the video that doesn't
 // move past a small threshold is treated as a click → open the channel page.
+function _setPipInteractionLock(active) {
+    document.documentElement.classList.toggle('pip-interacting', active);
+    document.body.classList.toggle('pip-interacting', active);
+    if (!active) {
+        try { window.getSelection()?.removeAllRanges(); } catch { /* no-op */ }
+    }
+}
+
 function _initPipInteractions() {
     const card = _miniPlayer();
     const thumb = _thumb();
@@ -459,6 +505,7 @@ function _initPipInteractions() {
 
     thumb.addEventListener('pointerdown', (e) => {
         if (e.button !== 0 || e.target === handle) return;
+        e.preventDefault();
         dragging = true;
         moved = false;
         startX = e.clientX;
@@ -468,10 +515,12 @@ function _initPipInteractions() {
         baseTop = _pipTop ?? r.top;
         try { thumb.setPointerCapture(e.pointerId); } catch { /* no-op */ }
         card.classList.add('dragging');
+        _setPipInteractionLock(true);
     });
 
     thumb.addEventListener('pointermove', (e) => {
-        if (!dragging) return;
+        if (!dragging || _isMobile()) return; // docked bar — no drag-to-move on mobile
+        e.preventDefault();
         const dx = e.clientX - startX;
         const dy = e.clientY - startY;
         if (Math.abs(dx) > 4 || Math.abs(dy) > 4) moved = true;
@@ -484,6 +533,7 @@ function _initPipInteractions() {
         if (!dragging) return;
         dragging = false;
         card.classList.remove('dragging');
+        _setPipInteractionLock(false);
         try { thumb.releasePointerCapture(e.pointerId); } catch { /* no-op */ }
         if (moved) _savePipGeom();
         else _openCurrentChannel();   // tap without drag → open channel
@@ -497,16 +547,19 @@ function _initPipInteractions() {
 
     handle.addEventListener('pointerdown', (e) => {
         if (e.button !== 0) return;
+        e.preventDefault();
         e.stopPropagation();
         resizing = true;
         rStartX = e.clientX;
         rBaseW = _pipW;
         try { handle.setPointerCapture(e.pointerId); } catch { /* no-op */ }
         card.classList.add('resizing');
+        _setPipInteractionLock(true);
     });
 
     handle.addEventListener('pointermove', (e) => {
-        if (!resizing) return;
+        if (!resizing || _isMobile()) return; // docked bar — no resize on mobile
+        e.preventDefault();
         _pipW = rBaseW + (e.clientX - rStartX);
         _applyPipGeometry();
     });
@@ -515,6 +568,7 @@ function _initPipInteractions() {
         if (!resizing) return;
         resizing = false;
         card.classList.remove('resizing');
+        _setPipInteractionLock(false);
         try { handle.releasePointerCapture(e.pointerId); } catch { /* no-op */ }
         _savePipGeom();
     };

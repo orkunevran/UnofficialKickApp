@@ -181,6 +181,13 @@
         </a>
     </nav>
 
+    <!-- Landscape theater: fullscreen video overlay shown on mobile landscape
+         while watching a live stream. The shared <video> is moved in here. -->
+    <div id="theater-layer"></div>
+    <button id="theater-exit" type="button" aria-label="Minimize to mini-player" title="Minimize">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v4a1 1 0 0 1-1 1H3"/><path d="M16 3v4a1 1 0 0 0 1 1h4"/><path d="M8 21v-4a1 1 0 0 0-1-1H3"/><path d="M16 21v-4a1 1 0 0 1 1-1h4"/></svg>
+    </button>
+
     <!-- Chromecast Modal -->
     <div id="chromecast-modal" class="modal" role="dialog" aria-labelledby="chromecast-modal-title" aria-modal="true">
         <div class="modal-content">

@@ -28,6 +28,7 @@ let focusTrapHandler = null;
 let silentRefreshTimer = null;
 let isDevicePlaying = false;
 let isUserSeeking = false;
+let isAdjustingVolume = false;
 
 // ── Init ─────────────────────────────────────────────────────────────────
 
@@ -61,11 +62,18 @@ export function initializeChromecast() {
     playPauseBtn?.addEventListener('click', handlePlayPauseToggle);
 
     let volumeTimeout = null;
+    let volumeReleaseTimeout = null;
     volumeSlider?.addEventListener('input', (e) => {
+        // Block status pushes from snapping the slider back mid-drag. On iOS a
+        // range input isn't reliably document.activeElement during a touch drag,
+        // so the activeElement guard in handleStatusUpdate isn't enough — this
+        // flag is (mirrors isUserSeeking for the progress slider).
+        isAdjustingVolume = true;
+        if (volumeReleaseTimeout) { clearTimeout(volumeReleaseTimeout); volumeReleaseTimeout = null; }
         const value = parseInt(e.target.value, 10);
         const percentEl = document.getElementById('cc-volume-percent');
         if (percentEl) percentEl.textContent = `${value}%`;
-        
+
         if (volumeTimeout) clearTimeout(volumeTimeout);
         volumeTimeout = setTimeout(async () => {
             try {
@@ -74,6 +82,13 @@ export function initializeChromecast() {
                 toast('Failed to update volume', 'error');
             }
         }, 100);
+    });
+    // Resume accepting device-reported volume a short grace period after release,
+    // so an in-flight status push (still carrying the pre-change level) can't
+    // immediately snap the slider back.
+    volumeSlider?.addEventListener('change', () => {
+        if (volumeReleaseTimeout) clearTimeout(volumeReleaseTimeout);
+        volumeReleaseTimeout = setTimeout(() => { isAdjustingVolume = false; }, 600);
     });
 
     const progressSlider = document.getElementById('cc-progress-slider');
@@ -152,7 +167,7 @@ export function initializeChromecast() {
 
     window.addEventListener('beforeunload', () => {
         stopStatusPolling();
-        if (silentRefreshTimer) { clearInterval(silentRefreshTimer); silentRefreshTimer = null; }
+        stopSilentDeviceRefresh();
     });
 
     // Restore saved device
@@ -195,6 +210,13 @@ async function silentFetchDevices() {
         }
     } catch {
         // Silent — don't toast on background fetch failures
+    }
+}
+
+function stopSilentDeviceRefresh() {
+    if (silentRefreshTimer) {
+        clearInterval(silentRefreshTimer);
+        silentRefreshTimer = null;
     }
 }
 
@@ -248,6 +270,7 @@ function closeModal() {
     modal.classList.remove('visible');
     setTimeout(() => { modal.style.display = 'none'; }, 200);
     if (scanPollTimer) { clearTimeout(scanPollTimer); scanPollTimer = null; }
+    stopSilentDeviceRefresh();
     isDiscovering = false;
     setRescanState(false);
     pendingCastRequest = null;
@@ -578,7 +601,7 @@ function handleStatusUpdate(data) {
         updatePlayPauseUI(isPlaying);
 
         const volumeSlider = document.getElementById('cc-volume-slider');
-        if (volumeSlider && document.activeElement !== volumeSlider) {
+        if (volumeSlider && !isAdjustingVolume && document.activeElement !== volumeSlider) {
             const volLevel = data.data?.volume_level;
             if (typeof volLevel === 'number') {
                 const volPct = Math.round(volLevel * 100);

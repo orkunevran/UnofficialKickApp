@@ -1046,6 +1046,20 @@ body.no-cast .chromecast-disconnect-quick {
     pointer-events: none;
 }
 .mini-player.hidden { display: none; }
+html.pip-interacting,
+body.pip-interacting,
+body.pip-interacting * {
+    user-select: none !important;
+    -webkit-user-select: none !important;
+}
+body.pip-interacting #app,
+body.pip-interacting .mobile-nav {
+    pointer-events: none;
+}
+body.pip-interacting .mini-player,
+body.pip-interacting .mini-player * {
+    pointer-events: auto;
+}
 /* While dragging/resizing, kill animations and text selection for a crisp feel */
 .mini-player.dragging,
 .mini-player.resizing {
@@ -1220,6 +1234,11 @@ body.no-cast .chromecast-disconnect-quick {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
     gap: 20px;
+}
+.stream-window-spacer {
+    grid-column: 1 / -1;
+    flex: 0 0 auto;
+    pointer-events: none;
 }
 .stream-card {
     background: var(--surface-color);
@@ -1814,6 +1833,46 @@ body.no-cast .chromecast-disconnect-quick {
     width: 100%; height: 100%;
     display: block;
 }
+
+/* ── Landscape theater ─────────────────────────────────────────────────────
+   On a phone in landscape, a live stream fills the screen here (the in-page
+   slot would otherwise sit below the fold). Toggled by body.landscape-theater
+   from player.js; the shared <video> is moved into #theater-layer. */
+#theater-layer {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    background: #000;
+    display: none;
+}
+#theater-layer > video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: #000;
+}
+body.landscape-theater #theater-layer { display: block; }
+body.landscape-theater { overflow: hidden; }
+#theater-exit {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 12px);
+    right: calc(env(safe-area-inset-right, 0px) + 14px);
+    z-index: 1001;
+    width: 40px; height: 40px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    cursor: pointer;
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
+}
+body.landscape-theater #theater-exit { display: flex; }
+#theater-exit:hover { background: rgba(0, 0, 0, 0.72); }
+
 .stream-details {
     display: flex;
     flex-wrap: wrap;
@@ -2487,87 +2546,134 @@ body.no-cast .chromecast-disconnect-quick {
     contain: layout paint;
 }
 .toast {
+    --toast-accent: var(--info-color);
     box-sizing: border-box;
     display: flex;
-    align-items: flex-start;
-    gap: 10px;
-    background: rgba(18, 22, 30, 0.98);
-    -webkit-backdrop-filter: blur(10px);
-    backdrop-filter: blur(10px);
+    align-items: center;
+    gap: 12px;
+    background: var(--surface-color, rgba(20, 25, 33, 0.98));
+    -webkit-backdrop-filter: blur(12px) saturate(1.2);
+    backdrop-filter: blur(12px) saturate(1.2);
     border: 1px solid var(--border-color);
-    border-radius: var(--radius-md);
-    padding: 12px 14px;
-    box-shadow: var(--glass-shadow);
+    border-radius: 14px;
+    padding: 12px 12px 12px 14px;
+    box-shadow: 0 12px 32px -10px rgba(0, 0, 0, 0.55), 0 2px 6px -2px rgba(0, 0, 0, 0.35);
     pointer-events: auto;
     opacity: 0;
     transform: translateX(20px);
-    border-left: 3px solid transparent;
     overflow: hidden;
     position: relative;
 }
-/* Auto-dismiss countdown bar at the bottom of each toast */
+/* Per-type accent — drives the icon chip, action button, and progress bar */
+.toast-success { --toast-accent: var(--success-color); }
+.toast-error   { --toast-accent: var(--error-color); }
+.toast-info    { --toast-accent: var(--info-color); }
+.toast-warning { --toast-accent: var(--warning-color); }
+
+/* Icon chip: a tinted rounded badge carrying the type color */
+.toast-icon-chip {
+    flex-shrink: 0;
+    width: 34px; height: 34px;
+    border-radius: 10px;
+    display: grid;
+    place-items: center;
+    color: var(--toast-accent);
+    background: color-mix(in srgb, var(--toast-accent) 16%, transparent);
+}
+.toast-icon-chip svg { width: 18px; height: 18px; display: block; }
+
+.toast-body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.toast-message {
+    margin: 0;
+    font-size: 13.5px;
+    line-height: 1.4;
+    font-weight: 500;
+    color: var(--text-color);
+    overflow-wrap: anywhere;
+}
+.toast-action {
+    align-self: flex-start;
+    background: color-mix(in srgb, var(--toast-accent) 15%, transparent);
+    border: none;
+    color: var(--toast-accent);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    padding: 5px 11px;
+    border-radius: 8px;
+    font-family: inherit;
+    transition: background 0.15s ease;
+}
+.toast-action:hover { background: color-mix(in srgb, var(--toast-accent) 26%, transparent); }
+
+.toast-counter {
+    flex-shrink: 0;
+    align-self: center;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 999px;
+    font-variant-numeric: tabular-nums;
+    min-width: 22px;
+    text-align: center;
+}
+.toast-counter.hidden { display: none; }
+
+.toast-close {
+    flex-shrink: 0;
+    align-self: flex-start;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    width: 26px; height: 26px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border-radius: 8px;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+.toast-close:hover { color: var(--text-color); background: rgba(255, 255, 255, 0.08); }
+
+/* Auto-dismiss progress bar — gated by .toast-timed so it can be restarted when
+   a mobile toast is updated in place (duration set inline as --toast-duration). */
 .toast::after {
     content: '';
     position: absolute;
     bottom: 0; left: 0;
-    height: 2px;
+    height: 3px;
     width: 100%;
-    background: currentColor;
-    opacity: 0.2;
+    background: var(--toast-accent);
+    opacity: 0.5;
     transform-origin: left;
-    animation: toast-countdown var(--toast-duration, 4s) linear forwards;
     pointer-events: none;
+    display: none;
 }
-.toast-success::after { color: var(--success-color); opacity: 0.3; }
-.toast-error::after   { color: var(--error-color);   opacity: 0.3; }
-.toast-info::after    { color: var(--info-color);    opacity: 0.3; }
-.toast-warning::after { color: var(--warning-color); opacity: 0.3; }
+.toast.toast-timed::after {
+    display: block;
+    animation: toast-countdown var(--toast-duration, 4s) linear forwards;
+}
 @keyframes toast-countdown {
     from { transform: scaleX(1); }
     to   { transform: scaleX(0); }
 }
-.toast-success { border-left-color: var(--success-color); box-shadow: var(--glass-shadow), -4px 0 12px -4px rgba(83, 252, 24, 0.15); }
-.toast-error   { border-left-color: var(--error-color);   box-shadow: var(--glass-shadow), -4px 0 12px -4px rgba(255, 51, 102, 0.15); }
-.toast-info    { border-left-color: var(--info-color);    box-shadow: var(--glass-shadow), -4px 0 12px -4px rgba(51, 153, 255, 0.12); }
-.toast-warning { border-left-color: var(--warning-color); box-shadow: var(--glass-shadow), -4px 0 12px -4px rgba(255, 170, 0, 0.12); }
-.toast-enter {
-    animation: toast-in 0.3s ease forwards;
+.toast-enter { animation: toast-in 0.3s cubic-bezier(0.21, 1.02, 0.73, 1) forwards; }
+.toast-exit  { animation: toast-out 0.25s ease forwards; }
+/* Icon-chip pulse when a mobile toast updates in place (replace-latest) */
+.toast-chip-pulse { animation: toast-chip-pulse 0.34s ease; }
+@keyframes toast-chip-pulse {
+    0%   { transform: scale(1); }
+    40%  { transform: scale(1.18); }
+    100% { transform: scale(1); }
 }
-.toast-exit {
-    animation: toast-out 0.3s ease forwards;
-}
-.toast-icon { flex-shrink: 0; padding-top: 1px; }
-.toast-success .toast-icon { color: var(--success-color); }
-.toast-error .toast-icon { color: var(--error-color); }
-.toast-info .toast-icon { color: var(--info-color); }
-.toast-warning .toast-icon { color: var(--warning-color); }
-.toast-body { flex: 1; min-width: 0; }
-.toast-message { font-size: 13px; line-height: 1.4; }
-.toast-action {
-    background: none; border: none;
-    color: var(--primary-color);
-    font-size: 12px; font-weight: 600;
-    cursor: pointer; padding: 2px 0; margin-top: 4px;
-    font-family: inherit;
-}
-.toast-action:hover { text-decoration: underline; }
-.toast-close {
-    background: none; border: none; color: var(--text-secondary);
-    cursor: pointer; font-size: 18px; line-height: 1;
-    padding: 0 2px; flex-shrink: 0;
-}
-.toast-close:hover { color: var(--text-color); }
-.toast-counter {
-    flex-shrink: 0; align-self: center;
-    background: var(--bg-elevated, rgba(255,255,255,0.08));
-    color: var(--text-secondary);
-    font-size: 11px; font-weight: 600;
-    padding: 1px 6px; border-radius: 999px;
-    font-variant-numeric: tabular-nums;
-    min-width: 24px; text-align: center;
-}
-.toast-counter.hidden { display: none; }
-/* Duplicate .toast::after and @keyframes toast-countdown removed — defined above */
 
 /* ── Scroll Sentinel ───────────────────────────────────────────────────── */
 .scroll-sentinel {
@@ -3167,8 +3273,42 @@ a:focus-visible,
     .content-area {
         padding: 10px 10px calc(92px + env(safe-area-inset-bottom, 0px));
     }
-    /* The mini-player is a floating PiP (position:fixed, JS-positioned), so the
-       content area no longer needs to reserve bottom space for it. */
+    /* While a stream plays, the mini-player docks as a bar above the nav, so
+       reserve bottom space so the last cards aren't hidden behind it. */
+    body.mini-active .content-area {
+        padding-bottom: calc(var(--mini-player-mobile-content-pad) + env(safe-area-inset-bottom, 0px));
+    }
+
+    /* ── Mobile: dock the mini-player as a fixed bar above the bottom nav ──
+       On phones the floating/draggable PiP just covers content, so it docks
+       here instead. player.js skips its PiP geometry below 768px; the
+       !important position rules guarantee CSS wins over any stale inline style. */
+    .mini-player {
+        left: 10px !important;
+        right: 10px !important;
+        top: auto !important;
+        bottom: calc(var(--mini-player-mobile-bottom-gap) + env(safe-area-inset-bottom, 0px)) !important;
+        width: auto !important;
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        gap: var(--mini-player-gap);
+        padding: 8px 10px;
+        border-radius: 16px;
+        animation: miniSlideUp 0.22s ease-out;
+    }
+    .mini-player-thumb {
+        width: var(--mini-player-thumb-width);
+        flex: 0 0 auto;
+        border-radius: var(--mini-player-thumb-radius);
+        cursor: pointer;                 /* tap to open channel — drag is desktop-only */
+    }
+    .mini-player-inner {
+        flex: 1 1 auto;
+        min-width: 0;
+        padding: 0;
+    }
+    .mini-player-resize { display: none; } /* no resize handle on mobile */
     /* Hide the in-bar cast button on mobile (cast UI lives in the top bar). */
     #mini-player-cast { display: none; }
     .stream-grid {
@@ -3176,12 +3316,16 @@ a:focus-visible,
         gap: 10px;
     }
     .toast-container {
-        bottom: calc(var(--mini-player-mobile-toast-bottom) + env(safe-area-inset-bottom, 0px));
+        bottom: calc(90px + env(safe-area-inset-bottom, 0px)); /* just above the bottom nav */
         left: 50%;
         transform: translateX(-50%);
         right: auto;
         width: calc(100% - 20px);
         max-width: 380px;
+    }
+    /* When the mini-player is docked, lift toasts above it so they don't overlap */
+    body.mini-active .toast-container {
+        bottom: calc(var(--mini-player-mobile-toast-bottom) + env(safe-area-inset-bottom, 0px));
     }
     .toast {
         transform: translateY(20px);
@@ -3193,10 +3337,8 @@ a:focus-visible,
         animation: toast-out-mobile 0.3s ease forwards;
     }
     .toast-close {
-        padding: 8px 12px;
-        margin-top: -8px;
-        margin-right: -10px;
-        font-size: 22px;
+        width: 32px;
+        height: 32px;
     }
     /* ── Mobile video-first layout for live channels ────────────────── */
     .mobile-video-anchor {
@@ -3416,6 +3558,84 @@ a:focus-visible,
     background: var(--surface-hover);
 }
 
+/* ── General Rendering Performance ─────────────────────────────────────── */
+@supports (content-visibility: auto) {
+    .stream-card,
+    .vod-card {
+        content-visibility: auto;
+        contain-intrinsic-size: 0 220px;
+    }
+    .stream-list-item {
+        content-visibility: auto;
+        contain-intrinsic-size: 0 92px;
+    }
+    .history-item {
+        content-visibility: auto;
+        contain-intrinsic-size: 0 76px;
+    }
+    .search-suggestion-item {
+        content-visibility: auto;
+        contain-intrinsic-size: 0 56px;
+    }
+    .settings-group {
+        content-visibility: auto;
+        contain-intrinsic-size: 0 220px;
+    }
+    .device-item {
+        content-visibility: auto;
+        contain-intrinsic-size: 0 48px;
+    }
+}
+
+@media (max-width: 767px) {
+    .main-wrapper::before,
+    .main-wrapper::after {
+        animation: none !important;
+        will-change: auto !important;
+    }
+    .now-playing-pulse,
+    .card-live-dot,
+    .suggestion-live-dot,
+    .viewer-live-dot,
+    .profile-avatar-wrap.live-ring,
+    .suggestion-avatar-wrap.suggestion-avatar-live::after,
+    .empty-state-icon::before,
+    .section-title::before {
+        animation: none !important;
+        transition: none !important;
+    }
+}
+
+@media (max-width: 767px), (prefers-reduced-motion: reduce) {
+    .sidebar,
+    .top-bar,
+    .search-suggestions,
+    .mobile-nav,
+    .mini-player,
+    #theater-exit,
+    .modal,
+    .modal-content,
+    .toast,
+    .vod-card-duration {
+        -webkit-backdrop-filter: none !important;
+        backdrop-filter: none !important;
+    }
+}
+
+@media (min-width: 768px) {
+    .sidebar,
+    .mobile-nav,
+    .mini-player,
+    #theater-exit,
+    .modal,
+    .modal-content,
+    .toast,
+    .vod-card-duration {
+        -webkit-backdrop-filter: none !important;
+        backdrop-filter: none !important;
+    }
+}
+
 /* ── Safari Performance ────────────────────────────────────────────────── */
 /* Safari's compositor still struggles with blended overlays, repeated card
    entrance animations, and lots of tiny live indicators.  The html.safari
@@ -3563,19 +3783,31 @@ html.safari .device-item {
   will-change: transform;
 }
 @media (max-width: 767px) {
+  /* Staggered choreography (~0.13s offset). Reveal: the featured bar leads and
+     the search bar follows. Hide: mirror — the search bar tucks up first, then
+     the featured bar. transition-delay on the base rule drives the reveal; on
+     the .browse-headers-hidden rule it drives the hide. */
+  .browse-sticky-header { transition-delay: 0s; }    /* reveal: leads   */
+  .top-bar              { transition-delay: 0.13s; }  /* reveal: follows */
+
   body.browse-headers-hidden .top-bar {
     transform: translateY(-100%);
     height: 0;
+    min-height: 0;        /* override the mobile min-height:64 so the slot fully collapses */
+    margin-top: 0;        /* collapse the 10px top margin — otherwise a gray gap remains */
+    margin-bottom: 0;
     padding-top: 0;
     padding-bottom: 0;
     border-bottom-color: transparent;
     overflow: hidden;
     pointer-events: none;
+    transition-delay: 0s;        /* hide: search bar tucks away first */
   }
   body.browse-headers-hidden .browse-sticky-header {
     transform: translateY(-110%);
     opacity: 0;
     pointer-events: none;
+    transition-delay: 0.13s;     /* hide: featured bar follows */
   }
   @media (prefers-reduced-motion: reduce) {
     body.browse-headers-hidden .top-bar,
@@ -3595,6 +3827,7 @@ html.safari .video-container.video-active {
         animation-duration: 0.01ms !important;
         animation-iteration-count: 1 !important;
         transition-duration: 0.01ms !important;
+        transition-delay: 0s !important; /* no staggered header choreography under reduced motion */
     }
     .stream-card,
     .vod-card,

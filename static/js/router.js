@@ -6,6 +6,11 @@
 const routes = [];
 let currentCleanup = null;
 let currentRoute = null;
+// Monotonic token guarding against overlapping async navigations. Each resolve()
+// captures its token; after any await it bails if a newer navigation has started,
+// so a slow handler (e.g. a channel mount awaiting a fetch) can't clobber the
+// newer view's currentCleanup or write stale content into #content-area.
+let navToken = 0;
 const scrollPositions = new Map();
 
 export function route(pattern, handler) {
@@ -63,6 +68,10 @@ async function resolve() {
         return; // Prevent tearing down DOM when clicking the currently active tab
     }
 
+    // Claim this navigation. Anything that started earlier and is still awaiting
+    // will see token !== navToken after its await and abort.
+    const token = ++navToken;
+
     // Safari has partial/experimental View Transitions support that causes
     // visual glitches (blank frames, doubled content).  Only use on Chrome/Chromium.
     const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
@@ -79,6 +88,9 @@ async function resolve() {
         try { await currentCleanup(); } catch (e) { console.error('Route cleanup error:', e); }
         currentCleanup = null;
     }
+    // A newer navigation superseded us while we awaited cleanup — let it win.
+    if (token !== navToken) return;
+
     if (!matched) {
         if (path === '/browse') return; // guard against redirect loop
         navigate('/browse', { replace: true });
@@ -91,17 +103,26 @@ async function resolve() {
     updateSidebarActive(path);
 
     if (contentArea) contentArea.setAttribute('aria-busy', 'true');
-    const render = () => matched.route.handler(matched.params, contentArea);
-    if (shouldAnimate) {
-        document.startViewTransition(async () => {
-            currentCleanup = await render();
-            restoreScroll(path, contentArea);
-        });
-    } else {
-        currentCleanup = await render();
+    const render = async () => {
+        const cleanup = await matched.route.handler(matched.params, contentArea);
+        if (token !== navToken) {
+            // Superseded while the handler was awaiting (e.g. a slow fetch).
+            // Run the orphaned cleanup so its timers/listeners don't leak, and
+            // leave currentCleanup/content to the navigation that won.
+            if (typeof cleanup === 'function') {
+                try { cleanup(); } catch (e) { console.error('Stale route cleanup error:', e); }
+            }
+            return;
+        }
+        currentCleanup = cleanup;
         restoreScroll(path, contentArea);
+        if (contentArea) contentArea.setAttribute('aria-busy', 'false');
+    };
+    if (shouldAnimate) {
+        document.startViewTransition(render);
+    } else {
+        await render();
     }
-    if (contentArea) contentArea.setAttribute('aria-busy', 'false');
 }
 
 function restoreScroll(path, contentArea) {

@@ -2,7 +2,7 @@
  * UI rendering module — card-based grids instead of tables.
  */
 
-import { escapeHtml, formatDuration, formatDate, formatViewerCount, formatUptime, initialsAvatar, copyToClipboard } from './utils.js';
+import { escapeHtml, safeUrl, formatDuration, formatDate, formatViewerCount, formatUptime, initialsAvatar, copyToClipboard } from './utils.js';
 import { appState, vodsSortState, featuredSortState } from './state.js';
 import { castStream } from './chromecast_logic.js';
 import { isFavorite, toggleFavorite } from './favorites.js';
@@ -151,7 +151,22 @@ export function renderStreamListItem(stream) {
 
 // ── Stream Grid / List ────────────────────────────────────────────────────
 
-export function renderStreamGrid(streams, viewMode = 'grid') {
+function renderStreamWindowSpacer(options = {}) {
+    const height = Math.max(0, Math.round(Number(options.windowSpacerHeight) || 0));
+    if (height <= 0) return '';
+    return `<div class="stream-window-spacer" aria-hidden="true" style="height:${height}px"></div>`;
+}
+
+function interleaveStreamWindowSpacer(items, options = {}) {
+    const spacer = renderStreamWindowSpacer(options);
+    if (!spacer) return items;
+    const index = Math.max(0, Math.min(Number(options.windowSpacerAfter) || 0, items.length));
+    const withSpacer = [...items];
+    withSpacer.splice(index, 0, spacer);
+    return withSpacer;
+}
+
+export function renderStreamGrid(streams, viewMode = 'grid', options = {}) {
     if (!streams || streams.length === 0) {
         return `<div class="empty-state">
             <div class="empty-state-icon"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></div>
@@ -161,9 +176,11 @@ export function renderStreamGrid(streams, viewMode = 'grid') {
     }
 
     if (viewMode === 'list') {
-        return `<div class="stream-list">${streams.map(s => renderStreamListItem(s)).join('')}</div>`;
+        const items = interleaveStreamWindowSpacer(streams.map(s => renderStreamListItem(s)), options);
+        return `<div class="stream-list">${items.join('')}</div>`;
     }
-    return `<div class="stream-grid">${streams.map(s => renderStreamCard(s)).join('')}</div>`;
+    const cards = interleaveStreamWindowSpacer(streams.map(s => renderStreamCard(s)), options);
+    return `<div class="stream-grid">${cards.join('')}</div>`;
 }
 
 // ── VOD Card ──────────────────────────────────────────────────────────────
@@ -204,7 +221,7 @@ export function renderVodCard(vod, channelSlug) {
 
 export function renderClipCard(clip) {
     const safeTitle = escapeHtml(clip.title || 'Clip');
-    const clipUrl = escapeHtml(clip.clip_url || '#');
+    const clipUrl = escapeHtml(safeUrl(clip.clip_url));
 
     return `
         <div class="vod-card" data-play-clip="true" data-clip-url="${clipUrl}" data-clip-title="${safeTitle}" data-clip-thumb="${escapeHtml(clip.thumbnail_url || '')}" data-clip-duration="${clip.duration_seconds || ''}" data-clip-date="${escapeHtml(clip.created_at || '')}" data-clip-views="${clip.views || 0}" data-title="${escapeHtml((clip.title || '').toLowerCase())}" tabindex="0" role="button" aria-label="${safeTitle} — ${formatDate(clip.created_at)}, ${clip.views?.toLocaleString('en-US') || '0'} views">
@@ -255,7 +272,7 @@ export function renderVodPlayerContent(card) {
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 16.1A5 5 0 015.9 20M2 12.05A9 9 0 019.95 20M2 8V6a2 2 0 012-2h16a2 2 0 012 2v12a2 2 0 01-2 2h-6"/><line x1="2" y1="20" x2="2.01" y2="20"/></svg>
                 Cast
             </button>
-            <a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener noreferrer" class="btn-secondary">Open in new tab &rarr;</a>
+            <a href="${escapeHtml(safeUrl(sourceUrl))}" target="_blank" rel="noopener noreferrer" class="btn-secondary">Open in new tab &rarr;</a>
             <button type="button" class="btn-secondary vod-back-btn">Back to list</button>
         </div>`;
 }
@@ -281,7 +298,7 @@ export function renderClipPlayerContent(card) {
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 16.1A5 5 0 015.9 20M2 12.05A9 9 0 019.95 20M2 8V6a2 2 0 012-2h16a2 2 0 012 2v12a2 2 0 01-2 2h-6"/><line x1="2" y1="20" x2="2.01" y2="20"/></svg>
                 Cast
             </button>
-            <a href="${escapeHtml(clipUrl)}" target="_blank" rel="noopener noreferrer" class="btn-secondary">Open in new tab &rarr;</a>
+            <a href="${escapeHtml(safeUrl(clipUrl))}" target="_blank" rel="noopener noreferrer" class="btn-secondary">Open in new tab &rarr;</a>
             <button type="button" class="btn-secondary vod-back-btn">Back to list</button>
         </div>`;
 }
@@ -694,48 +711,123 @@ export function initButtonDelegation() {
  * Existing cards are updated (thumbnail crossfade, viewer count, title, category).
  * New cards are appended; removed cards are deleted.
  */
-export function patchStreamGrid(container, streams, viewMode) {
+export function patchStreamGrid(container, streams, viewMode, options = {}) {
     if (viewMode === 'list') {
-        container.innerHTML = renderStreamGrid(streams, viewMode);
+        container.innerHTML = renderStreamGrid(streams, viewMode, options);
         return;
     }
     const gridEl = container.querySelector('.stream-grid');
     if (!gridEl || streams.length === 0) {
-        container.innerHTML = renderStreamGrid(streams, viewMode);
+        container.innerHTML = renderStreamGrid(streams, viewMode, options);
         return;
+    }
+
+    const animateMoves = !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const cards = [...gridEl.querySelectorAll('.stream-card[data-slug]')];
+
+    // FLIP "First": snapshot current card positions before we reorder, so moved
+    // cards can glide from their old spot to the new one instead of teleporting.
+    const firstRects = animateMoves ? new Map() : null;
+    if (animateMoves) {
+        cards.forEach(card => {
+            firstRects.set(card.dataset.slug, card.getBoundingClientRect());
+        });
     }
 
     // Map existing cards by slug
     const existing = new Map();
-    gridEl.querySelectorAll('.stream-card[data-slug]').forEach(card => {
+    cards.forEach(card => {
         existing.set(card.dataset.slug, card);
     });
 
     const newSlugs = new Set(streams.map(s => s.channel?.slug || s.slug || ''));
 
     // Remove cards no longer present
-    existing.forEach((card, slug) => {
-        if (!newSlugs.has(slug)) { card.remove(); existing.delete(slug); }
+    let orderedCards = cards.filter(card => {
+        const slug = card.dataset.slug;
+        if (newSlugs.has(slug)) return true;
+        card.remove();
+        existing.delete(slug);
+        return false;
     });
 
-    // Update or insert in order
+    // Update or insert in order. Keep a local order array instead of repeatedly
+    // querying the DOM while nodes are moving.
     streams.forEach((stream, i) => {
         const slug = stream.channel?.slug || stream.slug || '';
-        const card = existing.get(slug);
+        let card = existing.get(slug);
         if (card) {
             updateCardInPlace(card, stream);
-            // Ensure correct position
-            if (gridEl.children[i] !== card) gridEl.insertBefore(card, gridEl.children[i]);
         } else {
             const tmp = document.createElement('div');
             tmp.innerHTML = renderStreamCard(stream);
-            const newCard = tmp.firstElementChild;
-            if (gridEl.children[i]) {
-                gridEl.insertBefore(newCard, gridEl.children[i]);
-            } else {
-                gridEl.appendChild(newCard);
-            }
+            card = tmp.firstElementChild;
         }
+
+        const currentIndex = orderedCards.indexOf(card);
+        if (currentIndex === i) return;
+        if (currentIndex !== -1) orderedCards.splice(currentIndex, 1);
+
+        const before = orderedCards[i] || null;
+        gridEl.insertBefore(card, before);
+        orderedCards.splice(i, 0, card);
+    });
+
+    updateStreamWindowSpacer(gridEl, streams.length, options, orderedCards);
+
+    // FLIP "Last/Invert/Play": slide reordered cards to their new positions.
+    if (animateMoves) flipReorder(gridEl, firstRects);
+}
+
+function updateStreamWindowSpacer(gridEl, streamCount, options = {}, orderedCards = null) {
+    const height = Math.max(0, Math.round(Number(options.windowSpacerHeight) || 0));
+    let spacer = gridEl.querySelector('.stream-window-spacer');
+    if (height <= 0) {
+        spacer?.remove();
+        return;
+    }
+    if (!spacer) {
+        spacer = document.createElement('div');
+        spacer.className = 'stream-window-spacer';
+        spacer.setAttribute('aria-hidden', 'true');
+    }
+    spacer.style.height = `${height}px`;
+    const after = Math.max(0, Math.min(Number(options.windowSpacerAfter) || 0, streamCount));
+    const before = orderedCards?.[after] || gridEl.querySelectorAll('.stream-card[data-slug]')[after] || null;
+    gridEl.insertBefore(spacer, before);
+}
+
+// flipReorder animates every card whose position changed: it's pinned back to
+// its previous spot with a transform, then transitioned to identity so it
+// glides into place. Freshly-inserted cards (no prior rect) keep their own
+// entrance animation. Reorders that don't move a card cost nothing.
+function flipReorder(gridEl, firstRects) {
+    const movers = [];
+    gridEl.querySelectorAll('.stream-card[data-slug]').forEach(card => {
+        const prev = firstRects.get(card.dataset.slug);
+        if (!prev) return; // newly inserted
+        const now = card.getBoundingClientRect();
+        const dx = prev.left - now.left;
+        const dy = prev.top - now.top;
+        if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+        movers.push({ card, dx, dy });
+    });
+    if (movers.length === 0) return;
+
+    // Invert: jump each mover back to where it was, with no transition.
+    movers.forEach(({ card, dx, dy }) => {
+        card.style.transition = 'none';
+        card.style.transform = `translate(${dx}px, ${dy}px)`;
+    });
+    // Play: next frame, transition the transform away → cards slide to place.
+    requestAnimationFrame(() => {
+        movers.forEach(({ card }) => {
+            card.style.transition = 'transform 0.36s cubic-bezier(0.4, 0, 0.2, 1)';
+            card.style.transform = '';
+            const cleanup = () => { card.style.transition = ''; card.style.transform = ''; };
+            card.addEventListener('transitionend', cleanup, { once: true });
+            setTimeout(cleanup, 440); // fallback if transitionend doesn't fire
+        });
     });
 }
 

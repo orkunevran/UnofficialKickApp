@@ -2,12 +2,32 @@
  * Shared utility functions.
  */
 
+const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+
+// Escapes the five HTML-significant characters. Unlike a textNode-based escape,
+// this also encodes quotes, so the result is safe in BOTH element text AND
+// quoted-attribute contexts (data-*, title, alt, src, aria-label, …). Most
+// values rendered here are third-party Kick data (stream titles, usernames,
+// bios) interpolated into attributes, so quote escaping is required to prevent
+// attribute-breakout XSS.
 export function escapeHtml(str) {
     if (str === null || str === undefined) return '';
-    const text = String(str);
-    const div = document.createElement('div');
-    div.appendChild(document.createTextNode(text));
-    return div.innerHTML;
+    return String(str).replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch]);
+}
+
+// Returns url if it is a same-origin (relative/hash) or http(s) URL, otherwise
+// the fallback. Blocks dangerous schemes (javascript:, data:, vbscript:) before
+// a third-party URL is placed into an href. Note: escapeHtml does not help here
+// — `javascript:alert(1)` contains no HTML-significant characters.
+export function safeUrl(url, fallback = '#') {
+    if (url === null || url === undefined) return fallback;
+    const trimmed = String(url).trim();
+    if (!trimmed) return fallback;
+    // Same-origin: hash, dot-relative, or absolute-path — but NOT "//host"
+    // (protocol-relative), which resolves to an external origin.
+    if (/^(?:#|\.|\/(?!\/))/.test(trimmed)) return trimmed;
+    if (/^https?:\/\//i.test(trimmed)) return trimmed; // explicit http(s)
+    return fallback;                                   // reject everything else
 }
 
 export function getNestedProperty(obj, path) {
@@ -95,7 +115,7 @@ export function formatViewerCount(n) {
 
 export function initialsAvatar(name, large = false) {
     const str = String(name || '?');
-    const letter = str[0].toUpperCase();
+    const letter = escapeHtml(str[0].toUpperCase());
     let hash = 2166136261;
     for (let i = 0; i < str.length; i++) {
         hash ^= str.charCodeAt(i);

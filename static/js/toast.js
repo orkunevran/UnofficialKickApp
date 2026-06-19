@@ -1,15 +1,26 @@
 /**
- * Toast notification system. Stacks bottom-right, auto-dismisses.
+ * Toast notification system. Auto-dismisses; accent-coded info cards.
  *
- * Resilience:
- *  - MAX_VISIBLE caps the stack so a burst of errors can't push earlier
- *    toasts off-screen out of view.
+ * Behaviour:
+ *  - Desktop: stacks bottom-right, capped at MAX_VISIBLE so a burst can't push
+ *    earlier toasts off-screen.
+ *  - Mobile (<=767px): never stacks — a single toast updates in place as new
+ *    messages arrive, so a fast sequence (e.g. a Chromecast scan/connect flow)
+ *    can't take over the screen.
  *  - Within DEDUPE_WINDOW_MS, an identical (type + message) toast bumps the
- *    existing one's counter instead of stacking a duplicate.
+ *    existing one's counter instead of restacking/replacing.
  */
 
-const MAX_VISIBLE = 4;
+const MAX_VISIBLE = 4;            // desktop stack cap
 const DEDUPE_WINDOW_MS = 3000;
+const TYPE_CLASSES = ['toast-success', 'toast-error', 'toast-info', 'toast-warning'];
+
+const ICONS = {
+    success: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>',
+    error: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
+    info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="16" x2="12" y2="11"/><line x1="12" y1="7.5" x2="12.01" y2="7.5"/></svg>',
+    warning: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+};
 
 let toastId = 0;
 const recentToasts = new Map(); // key -> { el, count, expiresAt }
@@ -18,14 +29,68 @@ function dedupeKey(type, message) {
     return `${type}::${message}`;
 }
 
+// Below this width toasts never stack — see the mobile path in toast().
+function isMobileSingle() {
+    return window.matchMedia('(max-width: 767px)').matches;
+}
+
+// Fill a toast element with content, wire its buttons, and (re)start its
+// auto-dismiss timer + progress bar. Shared by fresh toasts and the mobile
+// in-place replace. Only touches the type/timed classes so a live toast keeps
+// its entrance state (opacity/position) when updated in place.
+function populateToast(el, { id, message, type, action, duration }) {
+    el.classList.add('toast');
+    el.classList.remove(...TYPE_CLASSES);
+    el.classList.add(`toast-${type}`);
+    el.dataset.toastId = id;
+    // Errors interrupt (assertive); status/info/warning announce politely.
+    const assertive = type === 'error';
+    el.setAttribute('role', assertive ? 'alert' : 'status');
+    el.setAttribute('aria-live', assertive ? 'assertive' : 'polite');
+
+    el.innerHTML = `
+        <span class="toast-icon-chip" aria-hidden="true">${ICONS[type] || ICONS.info}</span>
+        <div class="toast-body">
+            <p class="toast-message">${escapeToast(message)}</p>
+            ${action ? `<button class="toast-action" type="button">${escapeToast(action.label)}</button>` : ''}
+        </div>
+        <span class="toast-counter hidden" aria-label="repeat count"></span>
+        <button class="toast-close" type="button" aria-label="Dismiss">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+        </button>
+    `;
+
+    el.querySelector('.toast-close').addEventListener('click', () => dismissToast(el));
+    if (action?.onClick) {
+        el.querySelector('.toast-action')?.addEventListener('click', () => {
+            action.onClick();
+            dismissToast(el);
+        });
+    }
+
+    // Auto-dismiss + countdown bar. Toggling toast-timed (with a reflow between)
+    // restarts the bar animation when a mobile toast is updated in place.
+    if (el._dismissTimer) { clearTimeout(el._dismissTimer); el._dismissTimer = null; }
+    el.classList.remove('toast-timed');
+    if (duration > 0) {
+        el.style.setProperty('--toast-duration', `${duration}ms`);
+        void el.offsetWidth; // reflow so the gated ::after animation restarts
+        el.classList.add('toast-timed');
+        el._dismissTimer = setTimeout(() => dismissToast(el), duration);
+    } else {
+        el.style.setProperty('--toast-duration', '0s');
+    }
+}
+
 export function toast(message, type = 'info', options = {}) {
     const { duration = type === 'error' ? 8000 : 4000, action = null } = options;
     const container = document.getElementById('toast-container');
     if (!container) return;
 
-    // Dedupe: identical toast within the window → bump counter, don't restack.
     const key = dedupeKey(type, message);
     const now = Date.now();
+
+    // Dedupe: identical toast within the window → bump counter, don't restack.
     const recent = recentToasts.get(key);
     if (recent && now < recent.expiresAt && document.body.contains(recent.el)) {
         recent.count++;
@@ -38,69 +103,43 @@ export function toast(message, type = 'info', options = {}) {
         return recent.el.dataset.toastId;
     }
 
-    // Stack cap: dismiss oldest if at limit.
-    const live = container.querySelectorAll('.toast:not(.toast-exit)');
-    if (live.length >= MAX_VISIBLE) {
-        dismissToast(live[0]);
-    }
-
     const id = ++toastId;
-    const el = document.createElement('div');
-    el.className = `toast toast-${type}`;
-    el.dataset.toastId = id;
-    el.setAttribute('role', 'alert');
-    el.setAttribute('aria-live', 'assertive');
 
-    const icons = {
-        success: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>',
-        error: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
-        info: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>',
-        warning: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
-    };
-
-    el.innerHTML = `
-        <div class="toast-icon">${icons[type] || icons.info}</div>
-        <div class="toast-body">
-            <span class="toast-message">${escapeToast(message)}</span>
-            ${action ? `<button class="toast-action">${escapeToast(action.label)}</button>` : ''}
-        </div>
-        <span class="toast-counter hidden" aria-label="repeat count"></span>
-        <button class="toast-close" aria-label="Dismiss">&times;</button>
-    `;
-
-    // Register in dedupe map so an identical follow-up bumps this toast's count.
-    recentToasts.set(key, { el, count: 1, expiresAt: now + DEDUPE_WINDOW_MS });
-
-    // Event handlers
-    el.querySelector('.toast-close').addEventListener('click', () => dismissToast(el));
-    if (action?.onClick) {
-        el.querySelector('.toast-action')?.addEventListener('click', () => {
-            action.onClick();
-            dismissToast(el);
-        });
-    }
-
-    container.appendChild(el);
-    // Set CSS variable for the countdown bar animation duration
-    if (duration > 0) {
-        el.style.setProperty('--toast-duration', `${duration}ms`);
+    // Mobile: reuse the single live toast, updating it in place (never stack).
+    if (isMobileSingle()) {
+        const existing = container.querySelector('.toast:not(.toast-exit)');
+        if (existing) {
+            // Re-key the dedupe map onto this element under the new message.
+            for (const [k, entry] of recentToasts) {
+                if (entry.el === existing) recentToasts.delete(k);
+            }
+            populateToast(existing, { id, message, type, action, duration });
+            recentToasts.set(key, { el: existing, count: 1, expiresAt: now + DEDUPE_WINDOW_MS });
+            // Pulse the icon chip so the in-place swap is noticeable.
+            const chip = existing.querySelector('.toast-icon-chip');
+            if (chip) { void chip.offsetWidth; chip.classList.add('toast-chip-pulse'); }
+            return id;
+        }
     } else {
-        // No auto-dismiss — hide the progress bar
-        el.style.setProperty('--toast-duration', '0s');
+        // Desktop: cap the stack, dismissing the oldest when full.
+        const live = container.querySelectorAll('.toast:not(.toast-exit)');
+        if (live.length >= MAX_VISIBLE) {
+            dismissToast(live[0]);
+        }
     }
+
+    const el = document.createElement('div');
+    populateToast(el, { id, message, type, action, duration });
+    recentToasts.set(key, { el, count: 1, expiresAt: now + DEDUPE_WINDOW_MS });
+    container.appendChild(el);
     // Trigger enter animation
     requestAnimationFrame(() => el.classList.add('toast-enter'));
-
-    // Auto dismiss
-    if (duration > 0) {
-        setTimeout(() => dismissToast(el), duration);
-    }
-
     return id;
 }
 
 function dismissToast(el) {
     if (!el || el.classList.contains('toast-exit')) return;
+    if (el._dismissTimer) { clearTimeout(el._dismissTimer); el._dismissTimer = null; }
     el.classList.add('toast-exit');
     el.addEventListener('animationend', () => el.remove(), { once: true });
     // Fallback removal

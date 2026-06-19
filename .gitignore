@@ -27,8 +27,7 @@ coverage.*
 *.swp
 *.swo
 
-# ── AI / agent tooling (local, not part of the project) ───────────────────
-.claude/
+# ── Local tooling (not part of the project) ───────────────────────────────
 .kilo/
 .kilocode/
 

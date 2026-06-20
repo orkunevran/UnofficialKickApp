@@ -1,6 +1,8 @@
 services:
-  # Go server. Production on the Pi runs the binary directly under systemd
-  # (see scripts/deploy-pi.sh); this compose file is for local / container use.
+  # Go server. This compose file is for local / macOS dev (bridge networking +
+  # port map). Production on the Pi runs via docker-compose.pi.yaml (host
+  # networking + state volume). The systemd path (scripts/deploy-pi.sh) is a
+  # disabled legacy/rollback option.
   kick-proxy:
     build:
       context: .

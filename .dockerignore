@@ -18,3 +18,7 @@ kick-api-arm64
 kick-api-amd64
 /server
 *.test
+
+# Python leftovers from the pre-Go backend, and runtime state — never built in.
+venv
+data

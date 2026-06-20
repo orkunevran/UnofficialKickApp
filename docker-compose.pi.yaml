@@ -1,0 +1,56 @@
+# Production deployment for the Raspberry Pi (replaces the systemd service).
+#
+#   docker compose -f docker-compose.pi.yaml up -d --build
+#
+# Host networking (Linux-only) is REQUIRED for Chromecast:
+#   • mDNS discovery uses multicast (224.0.0.251:5353), which does NOT cross
+#     Docker's bridge network.
+#   • the cast device must reach the HLS stream URL served on the LAN.
+# With host networking the container binds host :8081 directly, so there is no
+# `ports:` mapping. The plain docker-compose.yaml (bridge + port map) is for
+# local/macOS dev only.
+services:
+  kick-api:
+    build:
+      context: .
+      # The Dockerfile defaults TARGETARCH=amd64 for plain (non-buildx) builds.
+      # The Pi is aarch64, so force arm64 — otherwise the image won't run here.
+      args:
+        TARGETOS: linux
+        TARGETARCH: arm64
+    container_name: kick-api
+    network_mode: "host"
+    restart: always
+    # The chromecast state cache (.kick_chromecast_cache.json) is written to the
+    # process working dir. Mount a writable dir so last-device / known-hosts
+    # survive container restarts. ./data must be writable by the image's
+    # nonroot user (uid 65532) — `chown 65532:65532 ./data` on first setup.
+    working_dir: /data
+    volumes:
+      - ./data:/data
+    environment:
+      PORT: "8081"
+      LOG_LEVEL: "INFO"
+      DEFAULT_LANGUAGE_CODE: "tr"
+      SECURITY_HEADERS_ENABLED: "true"
+      CHROMECAST_SCAN_TIMEOUT: "5"
+      CHROMECAST_SELECT_MAX_RETRIES: "2"
+      CHROMECAST_SELECT_RETRY_DELAY: "2"
+      CHROMECAST_DEVICE_CACHE_SECONDS: "30"
+      CHROMECAST_FALLBACK_SCAN_SUBNETS: "192.168.68.0/24,192.168.0.0/24,192.168.1.0/24,10.0.0.0/24"
+    healthcheck:
+      test: ["CMD", "/kick-api", "-healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 128M

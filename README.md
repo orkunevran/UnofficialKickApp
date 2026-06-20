@@ -300,20 +300,17 @@ Configured via environment variables (or a `.env` file). Variable names match th
 
 ### Raspberry Pi (production)
 
-Production runs the binary directly under **systemd** (`kick-api.service`, `Restart=always`) — not Docker. Deploy with:
+Production runs as a **Docker container via Compose**, using [`docker-compose.pi.yaml`](docker-compose.pi.yaml). Host networking is required for Chromecast (see note under [Docker](#docker)); the compose file also mounts `./data` for the persisted device-state cache. From the source dir on the Pi:
 
 ```bash
-./scripts/deploy-pi.sh            # cross-compile arm64 → rsync into the service dir → systemctl restart → health-check (auto-rollback)
-./scripts/deploy-pi.sh --build    # build only
+docker compose -f docker-compose.pi.yaml up -d --build   # build arm64 image + (re)start
+docker compose -f docker-compose.pi.yaml ps              # status / health
+docker compose -f docker-compose.pi.yaml logs -f         # logs
 ```
 
-An example unit is provided at [`deploy/kick-api.service`](deploy/kick-api.service) — install it once, then the script builds, syncs, restarts, and health-checks. Override `PI_HOST`, `APP_DIR`, `SERVICE`, or `PORT` as needed:
+To update: re-sync the source to the Pi and re-run the `up -d --build` command above.
 
-```bash
-PI_HOST=pi@192.168.1.50 APP_DIR=/opt/kick-api ./scripts/deploy-pi.sh
-```
-
-Logs: `journalctl -u kick-api -f`.
+> **Rollback / legacy:** the older systemd path still exists ([`deploy/kick-api.service`](deploy/kick-api.service) + [`scripts/deploy-pi.sh`](scripts/deploy-pi.sh), which cross-compiles an arm64 binary and restarts the unit). The unit is installed but **disabled** in favour of the container. To fall back, `docker compose -f docker-compose.pi.yaml down` then `sudo systemctl enable --now kick-api`.
 
 ### Docker
 

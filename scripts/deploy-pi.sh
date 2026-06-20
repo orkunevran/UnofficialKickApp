@@ -2,11 +2,13 @@
 # deploy-pi.sh — cross-compile the Go server and deploy it to the Pi's
 # systemd-managed service.
 #
-# Production runs the binary under **systemd** (not Docker): unit
-# `kick-api.service`, ExecStart=<APP_DIR>/kick-api-arm64, Restart=always, with
-# env (PORT, LOG_LEVEL, CHROMECAST_*) set in the unit. This script replaces the
-# binary in place and restarts the service. The binary embeds static/ and
-# templates/ via //go:embed, so only the binary is shipped.
+# NOTE: production on the Pi now runs as a Docker container via
+# docker-compose.pi.yaml. This systemd path is a DISABLED legacy/rollback option
+# kept for emergencies. It deploys the binary under **systemd** (not Docker):
+# unit `kick-api.service`, ExecStart=<APP_DIR>/kick-api-arm64, Restart=always,
+# with env set in the unit. The binary embeds static/ and templates/ via
+# //go:embed, so only the binary is shipped. Re-enabling it conflicts with the
+# container on :8081 — stop the container first.
 #
 # Usage:
 #   ./scripts/deploy-pi.sh            # build + deploy + restart + verify

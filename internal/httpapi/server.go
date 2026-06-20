@@ -93,6 +93,7 @@ func New(cfg *config.Config, log *slog.Logger, assets fs.FS) (*App, error) {
 		FallbackInfoTimeout:  time.Duration(cfg.ChromecastFallbackDeviceInfoTimeout * float64(time.Second)),
 		StatePath:            ".kick_chromecast_cache.json",
 		PeriodicScanInterval: time.Duration(cfg.ChromecastPeriodicScanInterval) * time.Second,
+		StatusUpdateTimeout:  time.Duration(cfg.ChromecastStatusUpdateTimeout * float64(time.Second)),
 	}, log)
 
 	return &App{

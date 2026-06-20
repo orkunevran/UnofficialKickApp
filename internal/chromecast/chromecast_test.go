@@ -508,10 +508,10 @@ func TestSelectDevice_SwitchIsRaceFree(t *testing.T) {
 	wg.Wait()
 }
 
-// TestSelectDevice_HoldsSelectingDuringInFlightConnect guards finding #2: the
-// `selecting` guard must be held for the connect goroutine's whole lifetime, so a
-// timed-out caller can't let a second select run concurrently.
-func TestSelectDevice_HoldsSelectingDuringInFlightConnect(t *testing.T) {
+// TestSelectDevice_BusyDuringInFlightConnect guards finding #2's safety half:
+// while a connect is genuinely in flight (not yet timed out), a concurrent
+// select gets "busy" — two selects must never race on s.app simultaneously.
+func TestSelectDevice_BusyDuringInFlightConnect(t *testing.T) {
 	s := testService(defaultCfg())
 	started := make(chan struct{})
 	release := make(chan struct{})
@@ -523,13 +523,153 @@ func TestSelectDevice_HoldsSelectingDuringInFlightConnect(t *testing.T) {
 	}
 	s.setDevices([]Device{{UUID: "a", Name: "A", Addr: "a", Port: 8009}})
 
-	go func() { s.SelectDevice("a", 30*time.Millisecond) }() // times out; goroutine stays blocked in newCaster
-	<-started                                                // connect attempt is in flight
+	go func() { s.SelectDevice("a", 5*time.Second) }() // long timeout: stays in flight
+	<-started                                          // connect attempt is in flight
 
-	time.Sleep(80 * time.Millisecond) // first caller has timed out, but its goroutine still holds `selecting`
-	if ok, reason := s.SelectDevice("a", 30*time.Millisecond); ok || reason != "busy" {
+	if ok, reason := s.SelectDevice("a", 50*time.Millisecond); ok || reason != "busy" {
 		t.Fatalf("concurrent select during in-flight connect: ok=%v reason=%q; want false/busy", ok, reason)
 	}
-	close(release)                    // let the first goroutine finish and release `selecting`
+	close(release)                    // let the in-flight connect finish
 	time.Sleep(20 * time.Millisecond) // allow it to complete before the test returns
+}
+
+// TestSelectDevice_HungConnectReleasesSelecting guards the wedge fix: a connect
+// that hangs past the timeout must NOT pin `selecting` forever (which previously
+// caused a permanent 409 "busy" storm). After the timeout a later select proceeds
+// normally, and the orphaned connection is closed — never stored.
+func TestSelectDevice_HungConnectReleasesSelecting(t *testing.T) {
+	s := testService(defaultCfg())
+	release := make(chan struct{})
+	orphan := &closeSignalCaster{closed: make(chan struct{})}
+	good := &raceCaster{}
+	var mu sync.Mutex
+	var calls int
+	s.newCaster = func(addr string, port int) (caster, error) {
+		mu.Lock()
+		calls++
+		first := calls == 1
+		mu.Unlock()
+		if first {
+			<-release // first attempt hangs until released
+			return orphan, nil
+		}
+		return good, nil
+	}
+	s.setDevices([]Device{{UUID: "a", Name: "A", Addr: "a", Port: 8009}})
+
+	// First select hangs and times out; `selecting` must be released afterwards.
+	if ok, reason := s.SelectDevice("a", 50*time.Millisecond); ok || reason != "failed" {
+		t.Fatalf("hung select should return (false, failed), got (%v, %q)", ok, reason)
+	}
+	// A later select must NOT be stuck on "busy" — it should connect normally.
+	if ok, reason := s.SelectDevice("a", 2*time.Second); !ok || reason != "" {
+		t.Fatalf("select after a hung attempt should succeed, got (%v, %q)", ok, reason)
+	}
+	s.mu.Lock()
+	gotApp := s.app
+	s.mu.Unlock()
+	if gotApp != caster(good) {
+		t.Fatal("active connection should be the new one, not the orphan")
+	}
+
+	// Release the orphaned first attempt; it must be closed, never stored.
+	close(release)
+	select {
+	case <-orphan.closed:
+	case <-time.After(time.Second):
+		t.Fatal("orphaned (timed-out) connection should be closed when it finally returns")
+	}
+	s.mu.Lock()
+	stillGood := s.app
+	s.mu.Unlock()
+	if stillGood != caster(good) {
+		t.Fatal("orphan must not replace the active connection")
+	}
+}
+
+// TestGetStatus_HungUpdateDropsAndFreesLock guards the core wedge fix: when
+// Update() hangs (a vanished device's half-open socket), GetStatus must not block
+// forever — it times out, drops the connection, and breaks it off-lock so appMu
+// is freed and subsequent calls return immediately.
+func TestGetStatus_HungUpdateDropsAndFreesLock(t *testing.T) {
+	s := testService(defaultCfg())
+	s.cfg.StatusUpdateTimeout = 80 * time.Millisecond
+	hc := newHangingCaster()
+	s.mu.Lock()
+	s.app = hc
+	s.selected = "x"
+	s.lastName = "TV"
+	s.mu.Unlock()
+
+	statusDone := make(chan map[string]any, 1)
+	go func() { statusDone <- s.GetStatus() }()
+	select {
+	case st := <-statusDone:
+		if st["status"] != "disconnected" {
+			t.Fatalf("hung Update should yield disconnected, got %v", st["status"])
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("GetStatus blocked on a hung Update — timeout/appMu fix not working")
+	}
+
+	s.mu.Lock()
+	app := s.app
+	s.mu.Unlock()
+	if app != nil {
+		t.Fatal("hung connection should be dropped (s.app == nil)")
+	}
+
+	// The hung Update must have been broken via Close (which frees appMu).
+	select {
+	case <-hc.closed:
+	case <-time.After(time.Second):
+		t.Fatal("hung connection was not closed to free appMu")
+	}
+	if st := s.GetStatus(); st["status"] != "disconnected" {
+		t.Fatalf("after drop GetStatus should be disconnected, got %v", st["status"])
+	}
+}
+
+// closeSignalCaster signals via a channel when Close is called, so tests can wait
+// for an async close without racing on a bool.
+type closeSignalCaster struct {
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (c *closeSignalCaster) Load(string, int, string, bool, bool, bool) error { return nil }
+func (c *closeSignalCaster) Pause() error                                     { return nil }
+func (c *closeSignalCaster) Unpause() error                                   { return nil }
+func (c *closeSignalCaster) SetVolume(float32) error                          { return nil }
+func (c *closeSignalCaster) SeekToTime(float32) error                         { return nil }
+func (c *closeSignalCaster) Update() error                                    { return nil }
+func (c *closeSignalCaster) Status() (*gccast.Application, *gccast.Media, *gccast.Volume) {
+	return nil, nil, nil
+}
+func (c *closeSignalCaster) Close(bool) error { c.once.Do(func() { close(c.closed) }); return nil }
+
+// hangingCaster blocks in Update() until Close() is called — modelling a vanished
+// device whose wedged call only unblocks when the socket is closed.
+type hangingCaster struct {
+	unblock chan struct{}
+	closed  chan struct{}
+	once    sync.Once
+}
+
+func newHangingCaster() *hangingCaster {
+	return &hangingCaster{unblock: make(chan struct{}), closed: make(chan struct{})}
+}
+
+func (c *hangingCaster) Load(string, int, string, bool, bool, bool) error { return nil }
+func (c *hangingCaster) Pause() error                                     { return nil }
+func (c *hangingCaster) Unpause() error                                   { return nil }
+func (c *hangingCaster) SetVolume(float32) error                          { return nil }
+func (c *hangingCaster) SeekToTime(float32) error                         { return nil }
+func (c *hangingCaster) Update() error                                    { <-c.unblock; return errors.New("connection closed") }
+func (c *hangingCaster) Status() (*gccast.Application, *gccast.Media, *gccast.Volume) {
+	return nil, nil, nil
+}
+func (c *hangingCaster) Close(bool) error {
+	c.once.Do(func() { close(c.unblock); close(c.closed) })
+	return nil
 }

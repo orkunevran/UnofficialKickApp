@@ -88,6 +88,10 @@ func (a *App) handleCCSelect(w http.ResponseWriter, r *http.Request) {
 		errorJSON(w, "Device scan in progress. Please wait and try again.", 409)
 	case reason == "busy":
 		errorJSON(w, "Another device selection is in progress.", 409)
+	case reason == "cooldown":
+		// Recently failed to connect — benched briefly so we don't hammer a flaky
+		// device. 503 (not 409) so the client backs off instead of fast-retrying.
+		errorJSON(w, "Device is temporarily unavailable after a failed connection. Please wait a few seconds and retry.", 503)
 	default:
 		errorJSON(w, "Device "+body.UUID+" not found or connection failed.", 404)
 	}

@@ -73,6 +73,7 @@ type Config struct {
 	StatePath            string
 	PeriodicScanInterval time.Duration // 0 disables the periodic background scan
 	StatusUpdateTimeout  time.Duration // bound on a status poll's Update(); 0 → defaultStatusUpdateTimeout
+	ConnectCooldown      time.Duration // min gap between (re)connect attempts to a device after a failure; 0 disables
 }
 
 // Service manages discovery, selection, and control of Cast devices.
@@ -91,6 +92,14 @@ type Service struct {
 	// pollFailures counts consecutive status-poll Update() errors; after
 	// staleDropThreshold the unreachable connection is dropped (see GetStatus).
 	pollFailures int
+
+	// connectCooldownUntil rate-limits (re)connect attempts per device uuid. A
+	// flaky box accepts TCP but won't complete the Cast handshake, so a connect
+	// can take ~15s and fail; without a cooldown the UI's retries hammer the box
+	// with a new TLS+handshake every few seconds, which wedges its Cast receiver.
+	// After a failed/dropped connect the device is benched until this time; a
+	// select during the window fails fast ("cooldown") without touching the box.
+	connectCooldownUntil map[string]time.Time
 
 	scanning  bool
 	selecting bool
@@ -136,14 +145,15 @@ func New(cfg Config, log *slog.Logger) *Service {
 	closed := make(chan struct{})
 	close(closed) // pre-closed: waitScan returns immediately when idle
 	s := &Service{
-		cfg:        cfg,
-		log:        log,
-		devices:    make(map[string]Device),
-		known:      newLRU(knownHostsLimit),
-		scanDone:   closed,
-		subs:       make(map[chan map[string]any]struct{}),
-		pollNow:    make(chan struct{}, 1),
-		infoClient: newInfoClient(cfg.FallbackInfoTimeout),
+		cfg:                  cfg,
+		log:                  log,
+		devices:              make(map[string]Device),
+		known:                newLRU(knownHostsLimit),
+		scanDone:             closed,
+		subs:                 make(map[chan map[string]any]struct{}),
+		pollNow:              make(chan struct{}, 1),
+		infoClient:           newInfoClient(cfg.FallbackInfoTimeout),
+		connectCooldownUntil: make(map[string]time.Time),
 	}
 	if s.cfg.StatusUpdateTimeout <= 0 {
 		s.cfg.StatusUpdateTimeout = defaultStatusUpdateTimeout
@@ -310,6 +320,12 @@ func (s *Service) SelectDevice(uuid string, timeout time.Duration) (bool, string
 		s.mu.Unlock()
 		return false, "failed"
 	}
+	if s.cfg.ConnectCooldown > 0 {
+		if until, cooling := s.connectCooldownUntil[uuid]; cooling && time.Now().Before(until) {
+			s.mu.Unlock()
+			return false, "cooldown"
+		}
+	}
 	s.selecting = true
 	s.mu.Unlock()
 
@@ -353,6 +369,7 @@ func (s *Service) SelectDevice(uuid string, timeout time.Duration) (bool, string
 	select {
 	case r := <-done:
 		if r.err != nil || r.app == nil {
+			s.noteConnectCooldown(uuid)
 			return false, "failed"
 		}
 		s.mu.Lock()
@@ -361,6 +378,7 @@ func (s *Service) SelectDevice(uuid string, timeout time.Duration) (bool, string
 		s.selected = uuid
 		s.lastUUID = uuid
 		s.lastName = dev.Name
+		delete(s.connectCooldownUntil, uuid) // recovered — clear any bench
 		s.mu.Unlock()
 		// Close the previous connection OUTSIDE s.mu and UNDER appMu, so it cannot
 		// race the status poller's Update() on that same caster.
@@ -372,7 +390,9 @@ func (s *Service) SelectDevice(uuid string, timeout time.Duration) (bool, string
 		// The connect is hung. Abandon it: `selecting` is released by the defer so
 		// later selects can proceed, and when the orphaned attempt eventually
 		// returns we close any connection it produced so it can neither leak nor
-		// mutate s.app behind a newer selection.
+		// mutate s.app behind a newer selection. Bench the device so the UI's
+		// retries don't immediately re-hammer it.
+		s.noteConnectCooldown(uuid)
 		go func() {
 			if r := <-done; r.app != nil {
 				s.closeApp(r.app, false)
@@ -381,6 +401,18 @@ func (s *Service) SelectDevice(uuid string, timeout time.Duration) (bool, string
 		s.log.Error("select timed out", "device", dev.Name, "timeout", timeout)
 		return false, "failed"
 	}
+}
+
+// noteConnectCooldown benches a device after a failed/dropped connect so the UI's
+// retries don't hammer it with a fresh TLS+handshake every few seconds (which can
+// wedge a flaky Cast receiver). No-op when cooldown is disabled.
+func (s *Service) noteConnectCooldown(uuid string) {
+	if s.cfg.ConnectCooldown <= 0 || uuid == "" {
+		return
+	}
+	s.mu.Lock()
+	s.connectCooldownUntil[uuid] = time.Now().Add(s.cfg.ConnectCooldown)
+	s.mu.Unlock()
 }
 
 // closeApp disconnects a caster under appMu (never under s.mu) so it cannot race
@@ -587,6 +619,7 @@ func (s *Service) GetStatus() map[string]any {
 		s.pollFailures++
 		n := s.pollFailures
 		drop := (timedOut || n >= staleDropThreshold) && s.app == app
+		droppedUUID := s.selected
 		if drop {
 			s.app = nil
 			s.selected = ""
@@ -600,6 +633,7 @@ func (s *Service) GetStatus() map[string]any {
 			} else {
 				s.closeApp(app, false)
 			}
+			s.noteConnectCooldown(droppedUUID) // bench so the UI's reconnect doesn't re-hammer
 			s.saveState()
 			return map[string]any{"status": "disconnected"}
 		}

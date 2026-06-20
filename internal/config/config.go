@@ -70,6 +70,7 @@ type Config struct {
 	ChromecastFallbackScanProbeTimeout  float64
 	ChromecastFallbackDeviceInfoTimeout float64
 	ChromecastStatusUpdateTimeout       float64
+	ChromecastConnectCooldown           float64
 
 	// HTTP / security
 	CORSOrigins            string
@@ -125,6 +126,7 @@ func Load() *Config {
 		ChromecastFallbackScanProbeTimeout:  envFloat("CHROMECAST_FALLBACK_SCAN_PROBE_TIMEOUT", 1.5),
 		ChromecastFallbackDeviceInfoTimeout: envFloat("CHROMECAST_FALLBACK_DEVICE_INFO_TIMEOUT", 3.0),
 		ChromecastStatusUpdateTimeout:       envFloat("CHROMECAST_STATUS_UPDATE_TIMEOUT", 8.0),
+		ChromecastConnectCooldown:           envFloat("CHROMECAST_CONNECT_COOLDOWN", 20.0),
 
 		CORSOrigins:            envStr("CORS_ORIGINS", ""),
 		CORSAllowCredentials:   envBool("CORS_ALLOW_CREDENTIALS", false),

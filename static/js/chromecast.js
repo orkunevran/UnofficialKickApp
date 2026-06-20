@@ -21,6 +21,9 @@ let isDiscovering = false;
 let scanPollTimer = null;
 let isScanActive = false;
 let isSelecting = false;
+let selectRetryCount = 0; // consecutive auto-retries for the current select (capped + backed off)
+const MAX_SELECT_RETRIES = 4;
+const SELECT_RETRY_BASE_MS = 3000;
 let discoveredDevices = [];
 let pendingCastRequest = null;
 let chromecastListenersBound = false;
@@ -446,10 +449,11 @@ function setDeviceListDisabled(disabled, exceptEl) {
 
 // ── Device selection ─────────────────────────────────────────────────────
 
-async function selectDevice(device) {
+async function selectDevice(device, isRetry = false) {
     if (isScanActive) { toast('Please wait for scan to finish.', 'info'); return; }
     if (isSelecting) return;
 
+    if (!isRetry) selectRetryCount = 0; // fresh, user-initiated attempt
     isSelecting = true;
     const deviceName = String(device?.name || 'Chromecast');
 
@@ -478,6 +482,7 @@ async function selectDevice(device) {
             updateRemoteControlVisibility();
 
             // Show inline success briefly, then close
+            selectRetryCount = 0;
             updateDeviceStatus(deviceEl, 'Connected', 'success');
             toast(`Connected to ${deviceName}`, 'success');
             const pending = pendingCastRequest;
@@ -491,14 +496,33 @@ async function selectDevice(device) {
                 }
             }, 600);
         } else if (status === 409) {
-            updateDeviceStatus(deviceEl, 'Waiting...', 'connecting');
-            toast('Scan in progress, retrying...', 'info');
-            setTimeout(() => {
-                setDeviceListDisabled(false);
-                isSelecting = false;
-                selectDevice(device);
-            }, 3000);
-            return;
+            // Scan or another selection in progress — transient. Retry with capped
+            // exponential backoff; never retry forever (that hammers a flaky Cast
+            // device into wedging). After the cap, stop and offer a manual retry.
+            if (selectRetryCount < MAX_SELECT_RETRIES) {
+                const delay = SELECT_RETRY_BASE_MS * Math.pow(2, selectRetryCount); // 3s,6s,12s,24s
+                selectRetryCount++;
+                updateDeviceStatus(deviceEl, 'Waiting...', 'connecting');
+                setTimeout(() => {
+                    setDeviceListDisabled(false);
+                    isSelecting = false;
+                    selectDevice(device, true);
+                }, delay);
+                return;
+            }
+            updateDeviceStatus(deviceEl, 'Busy', 'failed');
+            setDeviceListDisabled(false);
+            toast(`${deviceName} is busy. Try again in a moment.`, 'error', {
+                action: { label: 'Retry', onClick: () => selectDevice(device) },
+            });
+        } else if (status === 503) {
+            // Device benched after a failed connection (server cooldown). Don't
+            // auto-retry — let it recover; offer a manual retry.
+            updateDeviceStatus(deviceEl, 'Unavailable', 'failed');
+            setDeviceListDisabled(false);
+            toast(`${deviceName} isn't responding. Make sure it's on, then retry.`, 'error', {
+                action: { label: 'Retry', onClick: () => selectDevice(device) },
+            });
         } else {
             updateDeviceStatus(deviceEl, 'Failed', 'failed');
             setDeviceListDisabled(false);

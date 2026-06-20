@@ -630,6 +630,81 @@ func TestGetStatus_HungUpdateDropsAndFreesLock(t *testing.T) {
 	}
 }
 
+// TestSelectDevice_CooldownAfterFailure guards the anti-hammer fix: after a
+// connect fails, the device is benched for ConnectCooldown, so the UI's retries
+// fail fast ("cooldown") WITHOUT opening another connection to the (flaky) box.
+func TestSelectDevice_CooldownAfterFailure(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.ConnectCooldown = time.Minute
+	s := testService(cfg)
+	var mu sync.Mutex
+	var calls int
+	s.newCaster = func(addr string, port int) (caster, error) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		return nil, errors.New("unreachable")
+	}
+	s.setDevices([]Device{{UUID: "a", Name: "A", Addr: "a", Port: 8009}})
+
+	// First select fails and benches the device.
+	if ok, reason := s.SelectDevice("a", time.Second); ok || reason != "failed" {
+		t.Fatalf("first select: got (%v,%q), want (false,failed)", ok, reason)
+	}
+	// A select within the cooldown fails fast without touching the device again.
+	if ok, reason := s.SelectDevice("a", time.Second); ok || reason != "cooldown" {
+		t.Fatalf("second select: got (%v,%q), want (false,cooldown)", ok, reason)
+	}
+	mu.Lock()
+	n := calls
+	mu.Unlock()
+	if n != 1 {
+		t.Fatalf("newCaster called %d times; cooldown should have blocked the 2nd connect", n)
+	}
+}
+
+// TestSelectDevice_CooldownClearedOnSuccess: a successful connect un-benches the
+// device so a later legitimate re-select isn't blocked.
+func TestSelectDevice_CooldownClearedOnSuccess(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.ConnectCooldown = time.Minute
+	s := testService(cfg)
+	fail := true
+	var mu sync.Mutex
+	s.newCaster = func(addr string, port int) (caster, error) {
+		mu.Lock()
+		f := fail
+		mu.Unlock()
+		if f {
+			return nil, errors.New("unreachable")
+		}
+		return &raceCaster{}, nil
+	}
+	s.setDevices([]Device{{UUID: "a", Name: "A", Addr: "a", Port: 8009}})
+
+	s.SelectDevice("a", time.Second) // fails -> benched
+	mu.Lock()
+	fail = false
+	mu.Unlock()
+	// Still benched -> cooldown, even though the device would now connect.
+	if ok, reason := s.SelectDevice("a", time.Second); ok || reason != "cooldown" {
+		t.Fatalf("benched select: got (%v,%q), want (false,cooldown)", ok, reason)
+	}
+	// Clear the bench (as a recovered device or expiry would) and reconnect.
+	s.mu.Lock()
+	delete(s.connectCooldownUntil, "a")
+	s.mu.Unlock()
+	if ok, reason := s.SelectDevice("a", time.Second); !ok || reason != "" {
+		t.Fatalf("post-cooldown select: got (%v,%q), want success", ok, reason)
+	}
+	s.mu.Lock()
+	_, stillBenched := s.connectCooldownUntil["a"]
+	s.mu.Unlock()
+	if stillBenched {
+		t.Fatal("a successful connect must clear the cooldown bench")
+	}
+}
+
 // closeSignalCaster signals via a channel when Close is called, so tests can wait
 // for an async close without racing on a bool.
 type closeSignalCaster struct {

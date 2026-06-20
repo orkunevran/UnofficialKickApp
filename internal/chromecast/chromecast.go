@@ -12,6 +12,7 @@ package chromecast
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -22,6 +23,19 @@ import (
 )
 
 const knownHostsLimit = 128
+
+// errCastTimeout marks a Cast-protocol call that exceeded its time bound — i.e.
+// the connection is hung, typically a half-open socket whose Write never returns
+// because the device vanished without closing the TCP connection (go-chromecast's
+// Send sets no write deadline). It is distinct from a *returned* protocol error,
+// which may just be a transient standby/sleep blip worth tolerating for a poll.
+var errCastTimeout = errors.New("cast operation timed out")
+
+// defaultStatusUpdateTimeout bounds a single status poll's Update()+Status(). It
+// must exceed go-chromecast's internal 5s sendAndWait response timeout so a
+// merely-slow device surfaces as a normal (tolerated) error, while a true write
+// hang is caught here and the connection dropped.
+const defaultStatusUpdateTimeout = 8 * time.Second
 
 // Device is a discovered Cast device.
 type Device struct {
@@ -58,6 +72,7 @@ type Config struct {
 	FallbackInfoTimeout  time.Duration
 	StatePath            string
 	PeriodicScanInterval time.Duration // 0 disables the periodic background scan
+	StatusUpdateTimeout  time.Duration // bound on a status poll's Update(); 0 → defaultStatusUpdateTimeout
 }
 
 // Service manages discovery, selection, and control of Cast devices.
@@ -89,8 +104,11 @@ type Service struct {
 	// (Load, Update, Pause, Close, …). It is separate from mu so that state
 	// reads/writes never block behind network I/O, and Cast I/O never races
 	// between the status poller goroutine and HTTP-handler goroutines.
-	// A slow/unreachable device only causes a bounded stall here — go-chromecast
-	// applies context deadlines to its calls — not a deadlock.
+	// go-chromecast's Send sets NO write deadline, so a vanished device (half-open
+	// socket) can wedge a call indefinitely and pin appMu. The status poller bounds
+	// its Update() via runUpdate and, on timeout, drops + closes the connection
+	// off-lock (closeHungApp) to free appMu — so a dead device self-heals instead
+	// of deadlocking every control op and the status endpoint.
 	appMu sync.Mutex
 
 	// saveMu serialises state-cache writes (saveState) so concurrent savers
@@ -126,6 +144,9 @@ func New(cfg Config, log *slog.Logger) *Service {
 		subs:       make(map[chan map[string]any]struct{}),
 		pollNow:    make(chan struct{}, 1),
 		infoClient: newInfoClient(cfg.FallbackInfoTimeout),
+	}
+	if s.cfg.StatusUpdateTimeout <= 0 {
+		s.cfg.StatusUpdateTimeout = defaultStatusUpdateTimeout
 	}
 	s.discover = s.mdnsDiscover
 	s.newCaster = newRealCaster
@@ -292,56 +313,71 @@ func (s *Service) SelectDevice(uuid string, timeout time.Duration) (bool, string
 	s.selecting = true
 	s.mu.Unlock()
 
+	// `selecting` is held only for the bounded duration of THIS call and released
+	// on every return path (incl. timeout) by this defer. That is what stops a
+	// hung connect from pinning `selecting` forever and 409-storming every later
+	// select. Race-safety against a late-returning connect mutating s.app is
+	// preserved not by holding `selecting` but by abandoning the orphan below
+	// (closing it, never storing it). A concurrent select while this attempt is
+	// still in flight (not yet timed out) still correctly gets "busy".
+	defer func() {
+		s.mu.Lock()
+		s.selecting = false
+		s.mu.Unlock()
+	}()
+
 	type result struct {
-		ok     bool
-		reason string
+		app caster
+		err error
 	}
 	done := make(chan result, 1)
 	go func() {
-		// `selecting` is held for this goroutine's whole lifetime — NOT just until
-		// SelectDevice returns. Otherwise a timed-out caller would clear it while
-		// we are still connecting, letting a second select run concurrently and
-		// race on s.app. A concurrent select during this window correctly gets "busy".
-		defer func() {
-			s.mu.Lock()
-			s.selecting = false
-			s.mu.Unlock()
-		}()
-
 		retries := s.cfg.SelectMaxRetries
 		if retries < 1 {
 			retries = 1
 		}
+		var app caster
+		var err error
 		for attempt := 1; attempt <= retries; attempt++ {
-			app, err := s.newCaster(dev.Addr, dev.Port)
-			if err == nil {
-				s.mu.Lock()
-				old := s.app
-				s.app = app
-				s.selected = uuid
-				s.lastUUID = uuid
-				s.lastName = dev.Name
-				s.mu.Unlock()
-				// Close the previous connection OUTSIDE s.mu and UNDER appMu, so it
-				// cannot race the status poller's Update() on that same caster.
-				s.closeApp(old, false)
-				s.saveState()
-				s.triggerPoll()
-				done <- result{true, ""}
-				return
+			if app, err = s.newCaster(dev.Addr, dev.Port); err == nil {
+				break
 			}
 			s.log.Error("connect attempt failed", "device", dev.Name, "attempt", attempt, "error", err)
 			if attempt < retries {
 				time.Sleep(s.cfg.SelectRetryDelay)
 			}
 		}
-		done <- result{false, "failed"}
+		done <- result{app, err}
 	}()
 
 	select {
 	case r := <-done:
-		return r.ok, r.reason
+		if r.err != nil || r.app == nil {
+			return false, "failed"
+		}
+		s.mu.Lock()
+		old := s.app
+		s.app = r.app
+		s.selected = uuid
+		s.lastUUID = uuid
+		s.lastName = dev.Name
+		s.mu.Unlock()
+		// Close the previous connection OUTSIDE s.mu and UNDER appMu, so it cannot
+		// race the status poller's Update() on that same caster.
+		s.closeApp(old, false)
+		s.saveState()
+		s.triggerPoll()
+		return true, ""
 	case <-time.After(timeout):
+		// The connect is hung. Abandon it: `selecting` is released by the defer so
+		// later selects can proceed, and when the orphaned attempt eventually
+		// returns we close any connection it produced so it can neither leak nor
+		// mutate s.app behind a newer selection.
+		go func() {
+			if r := <-done; r.app != nil {
+				s.closeApp(r.app, false)
+			}
+		}()
 		s.log.Error("select timed out", "device", dev.Name, "timeout", timeout)
 		return false, "failed"
 	}
@@ -489,6 +525,46 @@ func (s *Service) withApp(fn func(caster) error) bool {
 // appMu) stop stalling on it and AutoReconnect / a re-select can recover.
 const staleDropThreshold = 3
 
+// runUpdate runs app.Update()+Status() under appMu, bounded by timeout. A
+// returned error means the device answered with an error (or the call completed
+// with one); errCastTimeout means the call is HUNG — the spawned goroutine is
+// still blocked holding appMu, so the caller MUST drop the connection and break
+// it via closeHungApp (closeApp would deadlock waiting for the same appMu).
+func (s *Service) runUpdate(app caster, timeout time.Duration) (media *gccast.Media, volume *gccast.Volume, err error) {
+	type res struct {
+		media  *gccast.Media
+		volume *gccast.Volume
+		err    error
+	}
+	done := make(chan res, 1) // buffered so the goroutine never blocks on send after a timeout
+	go func() {
+		s.appMu.Lock()
+		e := app.Update()
+		_, m, v := app.Status()
+		s.appMu.Unlock()
+		done <- res{m, v, e}
+	}()
+	select {
+	case r := <-done:
+		return r.media, r.volume, r.err
+	case <-time.After(timeout):
+		return nil, nil, errCastTimeout
+	}
+}
+
+// closeHungApp breaks a connection whose Update() is wedged (and thus still
+// holding appMu) by closing the underlying socket directly, WITHOUT appMu —
+// which unblocks the stuck call so it can release appMu. Detached because the
+// close itself can briefly block. Safe because the caller has already cleared
+// s.app, so no other goroutine will start a new call on this caster.
+func (s *Service) closeHungApp(app caster) {
+	go func() {
+		if err := app.Close(false); err != nil {
+			s.log.Warn("error closing hung cast connection", "error", err)
+		}
+	}()
+}
+
 // GetStatus returns the current playback status (ports get_status).
 func (s *Service) GetStatus() map[string]any {
 	s.mu.Lock()
@@ -498,20 +574,19 @@ func (s *Service) GetStatus() map[string]any {
 	if app == nil {
 		return map[string]any{"status": "disconnected"}
 	}
-	s.appMu.Lock()
-	updateErr := app.Update()
-	_, media, volume := app.Status()
-	s.appMu.Unlock()
+	media, volume, updateErr := s.runUpdate(app, s.cfg.StatusUpdateTimeout)
 
 	if updateErr != nil {
-		// The device didn't answer. Standby/sleep is often transient, so keep
-		// reporting the last-known status for a few polls; but if it stays
-		// unreachable, drop the connection so a blocked Update() can't pin appMu
-		// and stall every control op (volume/play/seek) and the status endpoint.
+		// The device didn't answer. A *returned* error during standby/sleep is
+		// often transient, so keep reporting the last-known status for a few polls.
+		// But a *timeout* means Update() is hung and pinning appMu — every control
+		// op (volume/play/seek) and the status endpoint would stall behind it — so
+		// drop immediately rather than tolerating it.
+		timedOut := errors.Is(updateErr, errCastTimeout)
 		s.mu.Lock()
 		s.pollFailures++
 		n := s.pollFailures
-		drop := n >= staleDropThreshold && s.app == app
+		drop := (timedOut || n >= staleDropThreshold) && s.app == app
 		if drop {
 			s.app = nil
 			s.selected = ""
@@ -519,8 +594,12 @@ func (s *Service) GetStatus() map[string]any {
 		}
 		s.mu.Unlock()
 		if drop {
-			s.log.Warn("dropping unreachable cast connection", "device", name, "failures", n, "error", updateErr)
-			s.closeApp(app, false)
+			s.log.Warn("dropping unreachable cast connection", "device", name, "failures", n, "timedOut", timedOut, "error", updateErr)
+			if timedOut {
+				s.closeHungApp(app) // Update() still holds appMu; break it off-lock
+			} else {
+				s.closeApp(app, false)
+			}
 			s.saveState()
 			return map[string]any{"status": "disconnected"}
 		}

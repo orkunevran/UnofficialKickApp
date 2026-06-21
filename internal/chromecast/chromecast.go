@@ -37,6 +37,11 @@ var errCastTimeout = errors.New("cast operation timed out")
 // hang is caught here and the connection dropped.
 const defaultStatusUpdateTimeout = 8 * time.Second
 
+// castLoadTimeout bounds a single app.Load() so a wedged Send (no write deadline)
+// can't pin appMu forever; it exceeds go-chromecast's internal deadlines so a
+// normally-slow receiver launch still completes before it trips.
+const castLoadTimeout = 12 * time.Second
+
 // Device is a discovered Cast device.
 type Device struct {
 	UUID string
@@ -92,6 +97,12 @@ type Service struct {
 	// pollFailures counts consecutive status-poll Update() errors; after
 	// staleDropThreshold the unreachable connection is dropped (see GetStatus).
 	pollFailures int
+
+	// castInFlight > 0 while a CastStream is loading media. The status poller
+	// skips its Update()/drop during this window so it can't yank the connection
+	// out from under a cast (which slow Android-TV receivers need several seconds
+	// + retries to accept) and leave it "no device selected".
+	castInFlight int
 
 	// connectCooldownUntil rate-limits (re)connect attempts per device uuid. A
 	// flaky box accepts TCP but won't complete the Cast handshake, so a connect
@@ -464,6 +475,18 @@ func (s *Service) reconnectSelected() bool {
 // between attempts (which also re-issues the receiver launch). content type
 // matches the Python 'application/x-mpegurl'.
 func (s *Service) CastStream(streamURL, title string) bool {
+	// Mark a cast in flight so the status poller leaves the connection alone while
+	// we (re)load — otherwise its Update() timeout would drop the connection mid-
+	// cast and the next attempt would see "no device selected".
+	s.mu.Lock()
+	s.castInFlight++
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.castInFlight--
+		s.mu.Unlock()
+	}()
+
 	const maxAttempts = 3
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		s.mu.Lock()
@@ -474,9 +497,7 @@ func (s *Service) CastStream(streamURL, title string) bool {
 			return false
 		}
 
-		s.appMu.Lock()
-		err := app.Load(streamURL, 0, "application/x-mpegurl", false, false, false)
-		s.appMu.Unlock()
+		err := s.loadWithTimeout(app, streamURL, castLoadTimeout)
 		if err == nil {
 			s.triggerPoll()
 			return true
@@ -491,6 +512,26 @@ func (s *Service) CastStream(streamURL, title string) bool {
 		time.Sleep(time.Second)
 	}
 	return false
+}
+
+// loadWithTimeout runs app.Load under appMu, bounded by timeout. On timeout the
+// connection is hung (Send sets no write deadline) — break it off-lock with
+// closeHungApp so it can't pin appMu, and report failure so CastStream reconnects.
+func (s *Service) loadWithTimeout(app caster, streamURL string, timeout time.Duration) error {
+	done := make(chan error, 1)
+	go func() {
+		s.appMu.Lock()
+		e := app.Load(streamURL, 0, "application/x-mpegurl", false, false, false)
+		s.appMu.Unlock()
+		done <- e
+	}()
+	select {
+	case e := <-done:
+		return e
+	case <-time.After(timeout):
+		s.closeHungApp(app)
+		return errCastTimeout
+	}
 }
 
 // StopCast stops playback and disconnects the selected (or specified) device.
@@ -602,9 +643,15 @@ func (s *Service) GetStatus() map[string]any {
 	s.mu.Lock()
 	app := s.app
 	name := s.lastName
+	casting := s.castInFlight > 0
 	s.mu.Unlock()
 	if app == nil {
 		return map[string]any{"status": "disconnected"}
+	}
+	if casting {
+		// A cast is loading and owns the connection; don't poll/drop it. Report
+		// connected and let CastStream finish — the next poll gets full status.
+		return map[string]any{"status": "connected", "device_name": name}
 	}
 	media, volume, updateErr := s.runUpdate(app, s.cfg.StatusUpdateTimeout)
 

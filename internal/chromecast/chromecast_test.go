@@ -705,6 +705,32 @@ func TestSelectDevice_CooldownClearedOnSuccess(t *testing.T) {
 	}
 }
 
+// TestGetStatus_SkipsPollWhileCasting guards the cast/poller fix: while a cast is
+// in flight the poller must NOT run Update() and drop the connection out from
+// under it (which left casts failing with "no device selected").
+func TestGetStatus_SkipsPollWhileCasting(t *testing.T) {
+	s := testService(defaultCfg())
+	s.cfg.StatusUpdateTimeout = 50 * time.Millisecond
+	hc := newHangingCaster() // if Update ran, it would hang -> drop the connection
+	s.mu.Lock()
+	s.app = hc
+	s.selected = "x"
+	s.lastName = "TV"
+	s.castInFlight = 1 // a cast is loading
+	s.mu.Unlock()
+
+	st := s.GetStatus()
+	if st["status"] != "connected" {
+		t.Fatalf("during a cast GetStatus should report connected, got %v", st["status"])
+	}
+	s.mu.Lock()
+	app := s.app
+	s.mu.Unlock()
+	if app == nil {
+		t.Fatal("connection must NOT be dropped while a cast is in flight")
+	}
+}
+
 // closeSignalCaster signals via a channel when Close is called, so tests can wait
 // for an async close without racing on a bool.
 type closeSignalCaster struct {

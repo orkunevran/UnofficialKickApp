@@ -10,17 +10,30 @@ let isCasting = false;
 async function _resolveMediaUrl(url) {
     if (!url || url.startsWith('http://') || url.startsWith('https://')) return url;
 
-    // Relative path — follow the redirect and read the final URL.
+    // Relative path — follow the redirect and read the final URL. This MUST be
+    // bounded: without a timeout a stalled backend leaves the await pending
+    // forever, which leaves isCasting stuck true and silently kills the cast
+    // button for the whole session. On timeout/error we fall through to the
+    // original URL (the backend resolves the redirect itself when it loads it).
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
     try {
-        const resp = await fetch(url, { method: 'GET', redirect: 'follow' });
+        const resp = await fetch(url, { method: 'GET', redirect: 'follow', signal: controller.signal });
         if (resp.url && resp.url !== url && resp.url.startsWith('http')) return resp.url;
-    } catch { /* fall through */ }
+    } catch { /* fall through */ } finally {
+        clearTimeout(timer);
+    }
 
     return url;
 }
 
 export async function castStream(streamUrl, title) {
     if (isCasting) return;
+
+    if (!streamUrl || typeof streamUrl !== 'string') {
+        toast('No stream URL available to cast.', 'error');
+        return;
+    }
 
     if (!localStorage.getItem('selectedChromecast')) {
         document.dispatchEvent(new CustomEvent('chromecast:request-device', {

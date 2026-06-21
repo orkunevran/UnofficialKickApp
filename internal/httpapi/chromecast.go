@@ -163,13 +163,24 @@ func (a *App) handleCCStatusStream(w http.ResponseWriter, r *http.Request) {
 	defer unsub()
 
 	ctx := r.Context()
-	write := func(status map[string]any) {
+	rc := http.NewResponseController(w)
+	// write returns an error if the client is gone or slow. A per-write deadline
+	// is essential: without it a stalled/dead client blocks w.Write indefinitely
+	// (no server WriteTimeout, by design for SSE), which both leaks this handler
+	// and blocks graceful shutdown past its deadline → "fatal: graceful shutdown".
+	write := func(status map[string]any) error {
 		payload := envelopeMap("success", "", status)
 		b, _ := json.Marshal(payload)
-		_, _ = w.Write([]byte("data: " + string(b) + "\n\n"))
+		_ = rc.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		if _, err := w.Write([]byte("data: " + string(b) + "\n\n")); err != nil {
+			return err
+		}
 		flusher.Flush()
+		return nil
 	}
-	write(a.chromecast.GetStatus()) // initial push before first poller tick
+	if write(a.chromecast.GetStatus()) != nil { // initial push before first poller tick
+		return
+	}
 	for {
 		select {
 		case <-ctx.Done(): // client disconnected
@@ -177,7 +188,9 @@ func (a *App) handleCCStatusStream(w http.ResponseWriter, r *http.Request) {
 		case <-a.shutdownCh: // server shutting down — return so Shutdown can drain
 			return
 		case status := <-ch:
-			write(status)
+			if write(status) != nil { // client gone/slow — drop it (browser will reconnect)
+				return
+			}
 		}
 	}
 }

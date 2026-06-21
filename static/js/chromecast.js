@@ -24,6 +24,10 @@ let isSelecting = false;
 let selectRetryCount = 0; // consecutive auto-retries for the current select (capped + backed off)
 const MAX_SELECT_RETRIES = 4;
 const SELECT_RETRY_BASE_MS = 3000;
+let selectRetryTimer = null;          // pending 409 auto-retry; cleared on modal close / disconnect
+let statusPollFailures = 0;           // consecutive status-poll failures (caps the fallback loop)
+const MAX_STATUS_POLL_FAILURES = 5;
+let isSeekInFlight = false;           // guards seek POSTs so rapid taps don't stack
 let discoveredDevices = [];
 let pendingCastRequest = null;
 let chromecastListenersBound = false;
@@ -78,13 +82,15 @@ export function initializeChromecast() {
         if (percentEl) percentEl.textContent = `${value}%`;
 
         if (volumeTimeout) clearTimeout(volumeTimeout);
+        // 300ms debounce: a slider drag fires `input` continuously; at 100ms a slow
+        // drag pushed 10-20 POSTs to a rate-limited backend. 300ms still feels live.
         volumeTimeout = setTimeout(async () => {
             try {
                 await postChromecastVolume(value / 100.0);
             } catch {
                 toast('Failed to update volume', 'error');
             }
-        }, 100);
+        }, 300);
     });
     // Resume accepting device-reported volume a short grace period after release,
     // so an in-flight status push (still carrying the pre-change level) can't
@@ -105,13 +111,23 @@ export function initializeChromecast() {
         if (currentEl) currentEl.textContent = formatTime(value);
     });
 
-    progressSlider?.addEventListener('change', async (e) => {
-        const value = parseFloat(e.target.value);
+    // Guarded seek: rapid taps on rewind/forward (or scrubbing) must not stack
+    // concurrent POSTs against the rate-limited backend. The slider updates locally
+    // for instant feedback; only one seek is in flight at a time.
+    const sendSeek = async (pos, errMsg) => {
+        if (isSeekInFlight) return;
+        isSeekInFlight = true;
         try {
-            await postChromecastSeek(value);
+            await postChromecastSeek(pos);
         } catch {
-            toast('Failed to seek', 'error');
+            toast(errMsg, 'error');
+        } finally {
+            isSeekInFlight = false;
         }
+    };
+
+    progressSlider?.addEventListener('change', async (e) => {
+        await sendSeek(parseFloat(e.target.value), 'Failed to seek');
         isUserSeeking = false;
     });
 
@@ -122,11 +138,7 @@ export function initializeChromecast() {
         slider.value = newPos;
         const currentEl = document.getElementById('cc-current-time');
         if (currentEl) currentEl.textContent = formatTime(newPos);
-        try {
-            await postChromecastSeek(newPos);
-        } catch {
-            toast('Failed to rewind', 'error');
-        }
+        await sendSeek(newPos, 'Failed to rewind');
     });
 
     forwardBtn?.addEventListener('click', async () => {
@@ -137,11 +149,7 @@ export function initializeChromecast() {
         slider.value = newPos;
         const currentEl = document.getElementById('cc-current-time');
         if (currentEl) currentEl.textContent = formatTime(newPos);
-        try {
-            await postChromecastSeek(newPos);
-        } catch {
-            toast('Failed to fast forward', 'error');
-        }
+        await sendSeek(newPos, 'Failed to fast forward');
     });
 
     // Device list click delegation
@@ -273,6 +281,9 @@ function closeModal() {
     modal.classList.remove('visible');
     setTimeout(() => { modal.style.display = 'none'; }, 200);
     if (scanPollTimer) { clearTimeout(scanPollTimer); scanPollTimer = null; }
+    // Cancel any pending 409 auto-retry so it doesn't keep hitting /select after
+    // the user has closed the modal (abandoned the selection).
+    if (selectRetryTimer) { clearTimeout(selectRetryTimer); selectRetryTimer = null; isSelecting = false; }
     stopSilentDeviceRefresh();
     isDiscovering = false;
     setRescanState(false);
@@ -503,7 +514,8 @@ async function selectDevice(device, isRetry = false) {
                 const delay = SELECT_RETRY_BASE_MS * Math.pow(2, selectRetryCount); // 3s,6s,12s,24s
                 selectRetryCount++;
                 updateDeviceStatus(deviceEl, 'Waiting...', 'connecting');
-                setTimeout(() => {
+                selectRetryTimer = setTimeout(() => {
+                    selectRetryTimer = null;
                     setDeviceListDisabled(false);
                     isSelecting = false;
                     selectDevice(device, true);
@@ -543,6 +555,8 @@ async function selectDevice(device, isRetry = false) {
 // ── Disconnect ───────────────────────────────────────────────────────────
 
 async function disconnectDevice() {
+    // Cancel any pending auto-retry first so it can't re-select after we disconnect.
+    if (selectRetryTimer) { clearTimeout(selectRetryTimer); selectRetryTimer = null; isSelecting = false; }
     if (selectedDevice) {
         try {
             const data = await postChromecastStop(selectedDevice.uuid);
@@ -579,6 +593,7 @@ let statusEventSource = null;
 
 function startStatusPolling() {
     stopStatusPolling();
+    statusPollFailures = 0;
 
     // Try SSE first — single persistent connection instead of polling
     if (typeof EventSource !== 'undefined') {
@@ -591,9 +606,18 @@ function startStatusPolling() {
                 } catch { /* ignore malformed SSE data */ }
             };
             statusEventSource.onerror = () => {
-                // SSE failed — fall back to polling
-                stopStatusPolling();
-                scheduleStatusPoll(10000);
+                // EventSource fires onerror on every transient blip and the browser
+                // AUTO-RECONNECTS while readyState === CONNECTING. Falling back to
+                // polling then would stack a poll loop on top of the native retry —
+                // a client-side reconnect storm against an already-struggling backend.
+                // Only fall back once the connection is permanently CLOSED, and only
+                // if a device is still selected.
+                const es = statusEventSource;
+                if (!es || es.readyState === EventSource.CONNECTING) return; // browser retrying
+                if (es.readyState === EventSource.CLOSED && selectedDevice) {
+                    stopStatusPolling();
+                    scheduleStatusPoll(10000);
+                }
             };
             return; // SSE connected, no need for polling
         } catch {
@@ -608,6 +632,7 @@ function handleStatusUpdate(data) {
     if (data?.status !== 'success') return;
     const castStatus = data.data?.status;
     if (castStatus === 'disconnected') {
+        if (!selectedDevice) return; // already torn down — avoid duplicate toast/teardown
         selectedDevice = null;
         localStorage.removeItem('selectedChromecast');
         updateIcon('inactive');
@@ -674,15 +699,25 @@ function scheduleStatusPoll(delay) {
             const data = await fetchChromecastStatus();
             handleStatusUpdate(data);
             if (data?.status === 'success') {
+                statusPollFailures = 0;
                 const castStatus = data.data?.status;
                 if (castStatus === 'disconnected') return; // stop polling
                 const nextDelay = castStatus === 'playing' ? 10000 : 30000;
                 scheduleStatusPoll(nextDelay);
-            } else {
+            } else if (++statusPollFailures < MAX_STATUS_POLL_FAILURES) {
                 scheduleStatusPoll(15000);
+            } else {
+                // Backend persistently unreachable/erroring — stop polling rather
+                // than hammering a wedged /status forever with no user feedback.
+                stopStatusPolling();
+                toast('Lost connection to the cast device.', 'info');
             }
         } catch {
-            scheduleStatusPoll(15000);
+            if (++statusPollFailures < MAX_STATUS_POLL_FAILURES) {
+                scheduleStatusPoll(15000);
+            } else {
+                stopStatusPolling();
+            }
         }
     }, delay);
 }

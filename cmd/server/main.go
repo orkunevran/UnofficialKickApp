@@ -89,7 +89,11 @@ func run() error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
-			return fmt.Errorf("graceful shutdown: %w", err)
+			// A connection wouldn't drain in time (e.g. a wedged SSE write). Force
+			// it closed and exit cleanly rather than crashing with a non-zero status
+			// ("fatal: graceful shutdown") — a clean restart is what we want.
+			log.Warn("graceful shutdown exceeded deadline; forcing close", "error", err)
+			_ = srv.Close()
 		}
 		log.Info("shutdown complete")
 		return nil

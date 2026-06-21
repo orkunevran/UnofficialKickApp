@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync/atomic"
 	"testing"
 
 	"kickapi/internal/config"
@@ -17,7 +18,7 @@ import (
 type fakeKick struct {
 	channel     map[string]any
 	channelErr  error
-	calls       int
+	calls       atomic.Int64
 	clips       any
 	videos      any
 	featured    any
@@ -29,7 +30,7 @@ type fakeKick struct {
 }
 
 func (f *fakeKick) GetChannelData(slug string) (map[string]any, error) {
-	f.calls++
+	f.calls.Add(1)
 	if f.channelErr != nil {
 		return nil, f.channelErr
 	}
@@ -93,8 +94,8 @@ func TestPlayStreamLive(t *testing.T) {
 
 	// Second request must be served from cache (no extra upstream call).
 	getJSON(t, app, "/streams/play/alice")
-	if fake.calls != 1 {
-		t.Fatalf("expected 1 upstream call (cache hit on 2nd), got %d", fake.calls)
+	if fake.calls.Load() != 1 {
+		t.Fatalf("expected 1 upstream call (cache hit on 2nd), got %d", fake.calls.Load())
 	}
 }
 
@@ -168,8 +169,8 @@ func TestNegativeCache404Replays(t *testing.T) {
 	if body["status"] != "error" {
 		t.Fatalf("negative-cached body should be an error envelope: %v", body)
 	}
-	if fake.calls != 1 {
-		t.Fatalf("expected 1 upstream call (404 negative-cached), got %d", fake.calls)
+	if fake.calls.Load() != 1 {
+		t.Fatalf("expected 1 upstream call (404 negative-cached), got %d", fake.calls.Load())
 	}
 }
 

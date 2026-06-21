@@ -517,11 +517,20 @@ func (s *Service) CastStream(streamURL, title string) bool {
 // loadWithTimeout runs app.Load under appMu, bounded by timeout. On timeout the
 // connection is hung (Send sets no write deadline) — break it off-lock with
 // closeHungApp so it can't pin appMu, and report failure so CastStream reconnects.
+//
+// detach=true is essential: go-chromecast's play() otherwise calls MediaWait(),
+// which blocks until the media "finishes" (an IDLE/FINISHED or app-change event).
+// For a live/long stream that never fires, and when SWITCHING streams on an
+// already-running receiver the finish-signal never comes at all — so Load() would
+// hang (only the first cast, which triggers an app-launch transition, returns).
+// Detaching makes Load fire the LOAD command and return immediately, so a second
+// stream can replace the first. The stream is always an external http(s) URL, so
+// detach is honoured (see go-chromecast play()).
 func (s *Service) loadWithTimeout(app caster, streamURL string, timeout time.Duration) error {
 	done := make(chan error, 1)
 	go func() {
 		s.appMu.Lock()
-		e := app.Load(streamURL, 0, "application/x-mpegurl", false, false, false)
+		e := app.Load(streamURL, 0, "application/x-mpegurl", false, true, false)
 		s.appMu.Unlock()
 		done <- e
 	}()

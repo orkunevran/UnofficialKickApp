@@ -507,6 +507,15 @@ func (s *Service) CastStream(streamURL, title string) bool {
 			s.log.Warn("cast load failed", "attempts", maxAttempts, "error", err)
 			return false
 		}
+		// On a hung load, loadWithTimeout already closed the connection off-lock;
+		// clear s.app so reconnectSelected doesn't close the same dead caster again.
+		if errors.Is(err, errCastTimeout) {
+			s.mu.Lock()
+			if s.app == app {
+				s.app = nil
+			}
+			s.mu.Unlock()
+		}
 		s.log.Info("cast load attempt failed, reconnecting then retrying", "attempt", attempt, "error", err)
 		s.reconnectSelected()
 		time.Sleep(time.Second)
@@ -514,23 +523,21 @@ func (s *Service) CastStream(streamURL, title string) bool {
 	return false
 }
 
-// loadWithTimeout runs app.Load under appMu, bounded by timeout. On timeout the
-// connection is hung (Send sets no write deadline) — break it off-lock with
-// closeHungApp so it can't pin appMu, and report failure so CastStream reconnects.
-//
-// detach=true is essential: go-chromecast's play() otherwise calls MediaWait(),
-// which blocks until the media "finishes" (an IDLE/FINISHED or app-change event).
-// For a live/long stream that never fires, and when SWITCHING streams on an
-// already-running receiver the finish-signal never comes at all — so Load() would
-// hang (only the first cast, which triggers an app-launch transition, returns).
-// Detaching makes Load fire the LOAD command and return immediately, so a second
-// stream can replace the first. The stream is always an external http(s) URL, so
-// detach is honoured (see go-chromecast play()).
-func (s *Service) loadWithTimeout(app caster, streamURL string, timeout time.Duration) error {
-	done := make(chan error, 1)
+// callCaster runs a single Cast-protocol call (fn) on app under appMu, bounded by
+// timeout. go-chromecast's Send sets no write deadline, so a vanished device can
+// wedge any call indefinitely and pin appMu; on timeout this breaks the socket
+// off-lock (closeHungApp) so the stuck call returns and releases appMu, and
+// reports errCastTimeout. The spawned goroutine owns appMu until fn returns — the
+// caller must treat an errCastTimeout connection as dead (drop s.app). fn must
+// return ONLY an error: any data it needs must be captured under the same appMu
+// hold and is valid only on the non-timeout path (it races the goroutine on
+// timeout) — for calls that return data (Update→Status), use the dedicated path
+// in runUpdate, which hands the data back over a channel.
+func (s *Service) callCaster(app caster, timeout time.Duration, fn func(caster) error) error {
+	done := make(chan error, 1) // buffered: goroutine never blocks on send after a timeout
 	go func() {
 		s.appMu.Lock()
-		e := app.Load(streamURL, 0, "application/x-mpegurl", false, true, false)
+		e := fn(app)
 		s.appMu.Unlock()
 		done <- e
 	}()
@@ -541,6 +548,22 @@ func (s *Service) loadWithTimeout(app caster, streamURL string, timeout time.Dur
 		s.closeHungApp(app)
 		return errCastTimeout
 	}
+}
+
+// loadWithTimeout loads streamURL on app, bounded by timeout (see callCaster).
+//
+// detach=true is essential: go-chromecast's play() otherwise calls MediaWait(),
+// which blocks until the media "finishes" (an IDLE/FINISHED or app-change event).
+// For a live/long stream that never fires, and when SWITCHING streams on an
+// already-running receiver the finish-signal never comes at all — so Load() would
+// hang (only the first cast, which triggers an app-launch transition, returns).
+// Detaching makes Load fire the LOAD command and return immediately, so a second
+// stream can replace the first. The stream is always an external http(s) URL, so
+// detach is honoured (see go-chromecast play()).
+func (s *Service) loadWithTimeout(app caster, streamURL string, timeout time.Duration) error {
+	return s.callCaster(app, timeout, func(a caster) error {
+		return a.Load(streamURL, 0, "application/x-mpegurl", false, true, false)
+	})
 }
 
 // StopCast stops playback and disconnects the selected (or specified) device.
@@ -591,10 +614,21 @@ func (s *Service) withApp(fn func(caster) error) bool {
 	if app == nil {
 		return false
 	}
-	s.appMu.Lock()
-	err := fn(app)
-	s.appMu.Unlock()
+	// Bound the control op (Pause/Unpause/SetVolume/Seek) like the poller and cast
+	// paths: a vanished device must not pin appMu — that would stall every other
+	// control op and the status poller until (and unless) the poller dropped it.
+	err := s.callCaster(app, s.cfg.StatusUpdateTimeout, fn)
 	if err != nil {
+		if errors.Is(err, errCastTimeout) {
+			// callCaster broke the wedged socket off-lock; drop the dead connection
+			// so it isn't reused (mirrors GetStatus's timeout drop).
+			s.mu.Lock()
+			if s.app == app {
+				s.app = nil
+				s.selected = ""
+			}
+			s.mu.Unlock()
+		}
 		s.log.Error("chromecast control failed", "error", err)
 		return false
 	}
@@ -855,6 +889,9 @@ type persistedState struct {
 	KnownChromecastHosts []string `json:"known_chromecast_hosts"`
 }
 
+// loadState reads the persisted cache into s.lastUUID/lastName/known. It runs
+// WITHOUT mu — safe only because it is called once from New, before the Service
+// is shared with any goroutine. Do not call it after startup.
 func (s *Service) loadState() {
 	if s.cfg.StatePath == "" {
 		return

@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -729,6 +730,100 @@ func TestGetStatus_SkipsPollWhileCasting(t *testing.T) {
 	if app == nil {
 		t.Fatal("connection must NOT be dropped while a cast is in flight")
 	}
+}
+
+// stressCaster is a fully thread-safe caster (guards its own state) so the race
+// detector only flags races in the Service, not the test double. Update errors
+// 1-in-4 to exercise GetStatus's failure/drop path; other calls succeed fast.
+type stressCaster struct {
+	mu     sync.Mutex
+	closed bool
+	calls  int
+}
+
+func (c *stressCaster) tick() int                                        { c.mu.Lock(); defer c.mu.Unlock(); c.calls++; return c.calls }
+func (c *stressCaster) Load(string, int, string, bool, bool, bool) error { c.tick(); return nil }
+func (c *stressCaster) Pause() error                                     { c.tick(); return nil }
+func (c *stressCaster) Unpause() error                                   { c.tick(); return nil }
+func (c *stressCaster) SetVolume(float32) error                          { c.tick(); return nil }
+func (c *stressCaster) SeekToTime(float32) error                         { c.tick(); return nil }
+func (c *stressCaster) Update() error {
+	if c.tick()%4 == 0 {
+		return errors.New("transient")
+	}
+	return nil
+}
+func (c *stressCaster) Status() (*gccast.Application, *gccast.Media, *gccast.Volume) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return nil, nil, nil
+}
+func (c *stressCaster) Close(bool) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.closed = true
+	return nil
+}
+
+// TestService_ConcurrencyStress hammers every public operation from many
+// goroutines at once. Its value is under `go test -race`: it surfaces any
+// unsynchronised access to Service state (app, selected, devices, pollFailures,
+// castInFlight, connectCooldownUntil, scanning, …) across select/cast/control/
+// status/stop/scan running concurrently. Fast casters keep it from blocking on
+// the real timeouts (covered by the dedicated hang tests).
+func TestService_ConcurrencyStress(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.StatusUpdateTimeout = 20 * time.Millisecond
+	cfg.ConnectCooldown = 5 * time.Millisecond
+	s := testService(cfg)
+	var ncalls atomic.Int64
+	s.newCaster = func(addr string, port int) (caster, error) {
+		if ncalls.Add(1)%3 == 0 { // 1-in-3 connect failures → select-fail + cooldown + reconnect-fail paths
+			return nil, errors.New("connect failed")
+		}
+		return &stressCaster{}, nil
+	}
+	s.discover = func(ctx context.Context) ([]Device, error) {
+		return []Device{{UUID: "a", Name: "A", Addr: "a", Port: 8009}, {UUID: "b", Name: "B", Addr: "b", Port: 8009}}, nil
+	}
+	s.setDevices([]Device{{UUID: "a", Name: "A", Addr: "a", Port: 8009}, {UUID: "b", Name: "B", Addr: "b", Port: 8009}})
+
+	const workers, iters = 8, 40
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			for i := 0; i < iters; i++ {
+				switch (w + i) % 9 {
+				case 0:
+					s.SelectDevice("a", 40*time.Millisecond)
+				case 1:
+					s.SelectDevice("b", 40*time.Millisecond)
+				case 2:
+					s.CastStream("http://x/s.m3u8", "t")
+				case 3:
+					s.PauseMedia()
+					s.PlayMedia()
+				case 4:
+					s.SetVolume(0.5)
+					s.SeekMedia(10)
+				case 5:
+					s.GetStatus()
+				case 6:
+					s.GetDevices()
+					s.GetLastDevice()
+					s.IsScanning()
+				case 7:
+					s.StopCast("")
+				case 8:
+					s.ScanAsync(true, nil)
+				}
+			}
+		}(w)
+	}
+	wg.Wait()
+	time.Sleep(50 * time.Millisecond) // let any detached connect/close goroutines finish
 }
 
 // closeSignalCaster signals via a channel when Close is called, so tests can wait

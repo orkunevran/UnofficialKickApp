@@ -826,6 +826,56 @@ func TestService_ConcurrencyStress(t *testing.T) {
 	time.Sleep(50 * time.Millisecond) // let any detached connect/close goroutines finish
 }
 
+// panicCaster panics in every method — models a go-chromecast bug / malformed
+// network data. The service must recover (no process crash) and never leak appMu.
+type panicCaster struct{}
+
+func (panicCaster) Load(string, int, string, bool, bool, bool) error { panic("load boom") }
+func (panicCaster) Pause() error                                     { panic("pause boom") }
+func (panicCaster) Unpause() error                                   { panic("unpause boom") }
+func (panicCaster) SetVolume(float32) error                          { panic("volume boom") }
+func (panicCaster) SeekToTime(float32) error                         { panic("seek boom") }
+func (panicCaster) Update() error                                    { panic("update boom") }
+func (panicCaster) Status() (*gccast.Application, *gccast.Media, *gccast.Volume) {
+	panic("status boom")
+}
+func (panicCaster) Close(bool) error { panic("close boom") }
+
+// TestService_PanicInCasterIsContained proves a panic in a caster call (e.g. a
+// library parse bug) is recovered — the process doesn't crash — AND that appMu is
+// not left locked (which would deadlock every future Cast call + the poller).
+func TestService_PanicInCasterIsContained(t *testing.T) {
+	s := testService(defaultCfg())
+	s.cfg.StatusUpdateTimeout = time.Second
+	s.mu.Lock()
+	s.app = panicCaster{}
+	s.selected = "x"
+	s.lastName = "TV"
+	s.mu.Unlock()
+
+	// Panic in Update() (status poller goroutine) and in a control op (callCaster).
+	// If recovery were missing, the runUpdate/callCaster goroutine panic would
+	// crash the whole test binary.
+	_ = s.GetStatus()
+	_ = s.PauseMedia()
+
+	// Prove appMu was released on both panics: a bounded call on a healthy app must
+	// complete rather than block forever on a leaked appMu.
+	s.mu.Lock()
+	s.app = &fakeCaster{}
+	s.mu.Unlock()
+	done := make(chan bool, 1)
+	go func() { done <- s.PlayMedia() }()
+	select {
+	case ok := <-done:
+		if !ok {
+			t.Fatal("control op failed after panic recovery")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("appMu leaked after a panic in a caster call — control op deadlocked")
+	}
+}
+
 // closeSignalCaster signals via a channel when Close is called, so tests can wait
 // for an async close without racing on a bool.
 type closeSignalCaster struct {

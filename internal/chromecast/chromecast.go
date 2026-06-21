@@ -13,9 +13,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -175,6 +177,30 @@ func New(cfg Config, log *slog.Logger) *Service {
 	return s
 }
 
+// ── panic safety ───────────────────────────────────────────────────────────────
+//
+// An unrecovered panic in ANY goroutine crashes the whole process. This service
+// drives go-chromecast, which parses untrusted data off the network — a malformed
+// message or a library bug must degrade to a logged error, never take the server
+// down. Every goroutine in this package runs through safeGo / a recover, and the
+// long-lived loops recover per-iteration so one bad tick can't kill the loop.
+
+// recoverPanic logs and swallows a panic. Use as `defer s.recoverPanic("where")`.
+func (s *Service) recoverPanic(where string) {
+	if r := recover(); r != nil {
+		s.log.Error("recovered panic in chromecast goroutine", "where", where, "panic", r, "stack", string(debug.Stack()))
+	}
+}
+
+// safeGo runs fn in a goroutine with panic recovery. Use for fire-and-forget
+// goroutines that don't need to report a result.
+func (s *Service) safeGo(where string, fn func()) {
+	go func() {
+		defer s.recoverPanic(where)
+		fn()
+	}()
+}
+
 // ── discovery ────────────────────────────────────────────────────────────────
 
 // ScanAsync triggers a background scan unless one is in flight or the cached
@@ -196,7 +222,7 @@ func (s *Service) ScanAsync(force bool, knownHosts []string) bool {
 	for _, h := range knownHosts {
 		s.rememberHost(h)
 	}
-	go s.doScan()
+	s.safeGo("device scan", s.doScan)
 	return true
 }
 
@@ -359,6 +385,14 @@ func (s *Service) SelectDevice(uuid string, timeout time.Duration) (bool, string
 	}
 	done := make(chan result, 1)
 	go func() {
+		// Recover any panic in the library's connect path into a result so the
+		// parent never blocks waiting on `done` and the process never crashes.
+		defer func() {
+			if r := recover(); r != nil {
+				s.log.Error("recovered panic in connect", "device", dev.Name, "panic", r, "stack", string(debug.Stack()))
+				done <- result{nil, fmt.Errorf("connect panicked: %v", r)}
+			}
+		}()
 		retries := s.cfg.SelectMaxRetries
 		if retries < 1 {
 			retries = 1
@@ -404,11 +438,11 @@ func (s *Service) SelectDevice(uuid string, timeout time.Duration) (bool, string
 		// mutate s.app behind a newer selection. Bench the device so the UI's
 		// retries don't immediately re-hammer it.
 		s.noteConnectCooldown(uuid)
-		go func() {
+		s.safeGo("abandoned connect closer", func() {
 			if r := <-done; r.app != nil {
 				s.closeApp(r.app, false)
 			}
-		}()
+		})
 		s.log.Error("select timed out", "device", dev.Name, "timeout", timeout)
 		return false, "failed"
 	}
@@ -426,16 +460,35 @@ func (s *Service) noteConnectCooldown(uuid string) {
 	s.mu.Unlock()
 }
 
+// castCloseTimeout bounds how long closeApp will hold appMu waiting for a Close
+// to complete. A vanished device's Close can block (tls closeNotify on a
+// half-open socket) — past this we release appMu and let it finish detached so a
+// stuck Close can't stall the poller and every control op.
+const castCloseTimeout = 5 * time.Second
+
 // closeApp disconnects a caster under appMu (never under s.mu) so it cannot race
-// the status poller's Update() on the same connection. nil-safe.
+// an in-flight Update() on the same connection. The Close runs in a recovered
+// goroutine bounded by castCloseTimeout: on a wedged Close we stop holding appMu
+// (the goroutine finishes on its own — the caller has already removed this caster
+// from s.app, so nothing else will touch it). nil-safe.
 func (s *Service) closeApp(app caster, stopMedia bool) {
 	if app == nil {
 		return
 	}
 	s.appMu.Lock()
-	defer s.appMu.Unlock()
-	if err := app.Close(stopMedia); err != nil {
-		s.log.Warn("error closing cast connection", "error", err)
+	done := make(chan struct{})
+	s.safeGo("close caster", func() {
+		defer close(done)
+		if err := app.Close(stopMedia); err != nil {
+			s.log.Warn("error closing cast connection", "error", err)
+		}
+	})
+	select {
+	case <-done:
+		s.appMu.Unlock()
+	case <-time.After(castCloseTimeout):
+		s.appMu.Unlock()
+		s.log.Warn("cast close exceeded timeout; released appMu, leaving close to finish", "stopMedia", stopMedia)
 	}
 }
 
@@ -535,12 +588,7 @@ func (s *Service) CastStream(streamURL, title string) bool {
 // in runUpdate, which hands the data back over a channel.
 func (s *Service) callCaster(app caster, timeout time.Duration, fn func(caster) error) error {
 	done := make(chan error, 1) // buffered: goroutine never blocks on send after a timeout
-	go func() {
-		s.appMu.Lock()
-		e := fn(app)
-		s.appMu.Unlock()
-		done <- e
-	}()
+	go func() { done <- s.guardedCasterCall(app, fn) }()
 	select {
 	case e := <-done:
 		return e
@@ -548,6 +596,21 @@ func (s *Service) callCaster(app caster, timeout time.Duration, fn func(caster) 
 		s.closeHungApp(app)
 		return errCastTimeout
 	}
+}
+
+// guardedCasterCall runs fn under appMu, releasing appMu via defer and converting
+// any panic into an error. The deferred unlock is critical: a panic that left
+// appMu locked would deadlock every future Cast call and the status poller.
+func (s *Service) guardedCasterCall(app caster, fn func(caster) error) (err error) {
+	s.appMu.Lock()
+	defer s.appMu.Unlock()
+	defer func() {
+		if r := recover(); r != nil {
+			s.log.Error("recovered panic in cast call", "panic", r, "stack", string(debug.Stack()))
+			err = fmt.Errorf("cast call panicked: %v", r)
+		}
+	}()
+	return fn(app)
 }
 
 // loadWithTimeout loads streamURL on app, bounded by timeout (see callCaster).
@@ -654,11 +717,24 @@ func (s *Service) runUpdate(app caster, timeout time.Duration) (media *gccast.Me
 	}
 	done := make(chan res, 1) // buffered so the goroutine never blocks on send after a timeout
 	go func() {
-		s.appMu.Lock()
-		e := app.Update()
-		_, m, v := app.Status()
-		s.appMu.Unlock()
-		done <- res{m, v, e}
+		// appMu released via defer + panic recovered to an error: a panic in the
+		// library's Update/Status (it parses untrusted network data) must not leak
+		// appMu (→ deadlock) or crash the process.
+		var r res
+		func() {
+			s.appMu.Lock()
+			defer s.appMu.Unlock()
+			defer func() {
+				if rec := recover(); rec != nil {
+					s.log.Error("recovered panic in status update", "panic", rec, "stack", string(debug.Stack()))
+					r = res{err: fmt.Errorf("status update panicked: %v", rec)}
+				}
+			}()
+			e := app.Update()
+			_, m, v := app.Status()
+			r = res{m, v, e}
+		}()
+		done <- r
 	}()
 	select {
 	case r := <-done:
@@ -674,11 +750,11 @@ func (s *Service) runUpdate(app caster, timeout time.Duration) (media *gccast.Me
 // close itself can briefly block. Safe because the caller has already cleared
 // s.app, so no other goroutine will start a new call on this caster.
 func (s *Service) closeHungApp(app caster) {
-	go func() {
+	s.safeGo("close hung caster", func() {
 		if err := app.Close(false); err != nil {
 			s.log.Warn("error closing hung cast connection", "error", err)
 		}
-	}()
+	})
 }
 
 // GetStatus returns the current playback status (ports get_status).
@@ -802,6 +878,7 @@ func (s *Service) triggerPoll() {
 // connections do not each poll the Cast device. Control operations send on
 // pollNow to request an out-of-cycle push. Exits when ctx is cancelled.
 func (s *Service) RunStatusPoller(ctx context.Context) {
+	defer s.recoverPanic("status poller loop") // backstop; pollTick recovers per-tick
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -809,17 +886,25 @@ func (s *Service) RunStatusPoller(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			s.broadcast(s.GetStatus())
+			s.pollTick()
 		case <-s.pollNow:
-			s.broadcast(s.GetStatus())
+			s.pollTick()
 		}
 	}
+}
+
+// pollTick performs one status poll + broadcast, recovering any panic so a single
+// bad tick (e.g. a library parse panic) never kills the poller goroutine.
+func (s *Service) pollTick() {
+	defer s.recoverPanic("status poll")
+	s.broadcast(s.GetStatus())
 }
 
 // RunPeriodicScan triggers a device re-scan at the configured interval so the
 // device list stays fresh without requiring an explicit /devices?force=true
 // request. Exits when ctx is cancelled or interval is zero (feature disabled).
 func (s *Service) RunPeriodicScan(ctx context.Context) {
+	defer s.recoverPanic("periodic scan loop")
 	if s.cfg.PeriodicScanInterval <= 0 {
 		return
 	}
@@ -839,6 +924,7 @@ func (s *Service) RunPeriodicScan(ctx context.Context) {
 // Chromecast works immediately after a server restart without the user having
 // to re-select. It triggers a scan, waits for it, then selects the device.
 func (s *Service) AutoReconnect(ctx context.Context) {
+	defer s.recoverPanic("auto-reconnect")
 	s.mu.Lock()
 	uuid := s.lastUUID
 	name := s.lastName

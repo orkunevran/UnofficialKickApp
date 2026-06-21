@@ -83,6 +83,7 @@ func (s *Service) fallbackScan() []Device {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer s.recoverPanic("fallback scan worker")
 			for h := range jobs {
 				if !probeHost(h, s.cfg.FallbackProbeTimeout) {
 					continue

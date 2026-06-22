@@ -149,10 +149,15 @@ function countMergedPages(pageNumbers) {
     return count;
 }
 
+// Page windowing is disabled. It evicted middle pages from the cache and
+// reserved their height with a spacer, but nothing re-fetched/re-rendered them
+// on scroll-back — so the spacer became a permanent empty void mid-grid (the
+// reported "strange gap"). At this scale (≤~130 cards) a full DOM is fine, so
+// every loaded page stays rendered and no spacer is inserted. Returning 0 makes
+// getWindowRenderOptions() yield {} (no spacer) and updateStreamWindowSpacer()
+// remove any stale spacer (its height<=0 path).
 function hiddenMiddlePageCount() {
-    if (loadedPageCount <= RETAIN_RECENT_PAGE_COUNT + 1) return 0;
-    const recentStart = Math.max(2, loadedPageCount - RETAIN_RECENT_PAGE_COUNT + 1);
-    return Math.max(0, recentStart - 2);
+    return 0;
 }
 
 function fallbackPageHeight() {
@@ -208,21 +213,9 @@ function updatePageHeightEstimate(contentEl) {
 }
 
 function prunePageWindow() {
-    const minRecentPage = Math.max(2, loadedPageCount - RETAIN_RECENT_PAGE_COUNT + 1);
-    const prefetchedNextPage = loadedPageCount + 1;
-
-    for (const page of [...pageCache.keys()]) {
-        const shouldKeep = page === 1
-            || (page >= minRecentPage && page <= loadedPageCount)
-            || page === prefetchedNextPage;
-        if (shouldKeep) continue;
-
-        if (page <= loadedPageCount) {
-            evictedStreamCount += pageCache.get(page)?.length || DEFAULT_PAGE_SIZE;
-        }
-        pageCache.delete(page);
-        pageMetaCache.delete(page);
-    }
+    // No-op: windowing disabled (see hiddenMiddlePageCount). Keeping every loaded
+    // page in the cache means they all render contiguously — no eviction, no
+    // spacer, no void. Eviction without scroll-back re-fetch was the bug.
 }
 
 function getDisplayedStreamCount() {

@@ -12,6 +12,7 @@ import { initMiniPlayerControls } from './js/player.js';
 import { getFavoriteCount } from './js/favorites.js';
 import { fetchSearchResults, fetchChannelSearch, fetchChannelAvatar } from './js/api.js';
 import { initialsAvatar } from './js/utils.js';
+import { toast } from './js/toast.js';
 
 // Safari perf: add class so CSS can swap expensive effects for lightweight alternatives
 const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
@@ -43,9 +44,20 @@ route('/settings', mountSettings);
 
 // ── DOMContentLoaded ──────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-    // Handle unhandled rejections
+    // Global error boundary: surface unexpected failures instead of failing
+    // silently. The toast system dedupes, so a repeated error bumps a counter
+    // rather than stacking. Expected/benign cases are filtered out.
     window.addEventListener('unhandledrejection', (e) => {
         console.error('Unhandled promise rejection:', e.reason);
+        if (e?.reason?.name === 'AbortError') return; // cancelled fetch on navigation — expected
+        toast('Something went wrong. Please try again.', 'error');
+    });
+    window.addEventListener('error', (e) => {
+        // Only script errors carry e.error; resource load failures (a broken
+        // <img>) don't and shouldn't toast.
+        if (!e?.error) return;
+        console.error('Uncaught error:', e.error);
+        toast('Something went wrong. Please try again.', 'error');
     });
 
     // Load preferences

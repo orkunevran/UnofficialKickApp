@@ -7,7 +7,7 @@
  */
 
 import { fetchChannelData, fetchLiveStatus, fetchViewerCount } from '../api.js';
-import { renderChannelProfile, renderStreamTabContent, renderProfileSkeleton, renderVodGrid, renderClipGrid, renderVodPlayerContent, renderClipPlayerContent } from '../ui.js';
+import { renderChannelProfile, renderStreamTabContent, renderProfileSkeleton, renderVodGrid, renderClipGrid, renderVodPlayerContent, renderClipPlayerContent, renderVodSkeleton } from '../ui.js';
 import { appState, preferences } from '../state.js';
 import { addToHistory } from '../history.js';
 import { toast } from '../toast.js';
@@ -172,7 +172,7 @@ function renderTabContent(tab, liveData, vodsData, clipsData, channelSlug) {
         }
     } else if (tab === 'vods') {
         if (!vodsData) {
-            tabContent.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;padding:40px;color:var(--text-muted)"><span class="inline-spinner is-active" style="margin-right:8px"></span>Loading VODs…</div>';
+            tabContent.innerHTML = renderVodSkeleton();
             return;
         }
         const vods = vodsData?.data?.vods || [];
@@ -244,7 +244,7 @@ function renderTabContent(tab, liveData, vodsData, clipsData, channelSlug) {
 
     } else if (tab === 'clips') {
         if (!clipsData) {
-            tabContent.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;padding:40px;color:var(--text-muted)"><span class="inline-spinner is-active" style="margin-right:8px"></span>Loading clips…</div>';
+            tabContent.innerHTML = renderVodSkeleton();
             return;
         }
         const clips = clipsData?.data?.clips || [];

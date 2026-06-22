@@ -3,6 +3,8 @@
  * Routes: #/browse, #/channel/:slug, #/favorites, #/history, #/settings
  */
 
+import { renderErrorState } from './ui.js';
+
 const routes = [];
 let currentCleanup = null;
 let currentRoute = null;
@@ -72,11 +74,6 @@ async function resolve() {
     // will see token !== navToken after its await and abort.
     const token = ++navToken;
 
-    // Safari has partial/experimental View Transitions support that causes
-    // visual glitches (blank frames, doubled content).  Only use on Chrome/Chromium.
-    const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
-    const shouldAnimate = Boolean(document.startViewTransition && currentRoute && !isSafari);
-
     // Save scroll position for current route
     const contentArea = document.getElementById('content-area');
     if (currentRoute && contentArea) {
@@ -103,7 +100,7 @@ async function resolve() {
     updateSidebarActive(path);
 
     if (contentArea) contentArea.setAttribute('aria-busy', 'true');
-    const render = async () => {
+    try {
         const cleanup = await matched.route.handler(matched.params, contentArea);
         if (token !== navToken) {
             // Superseded while the handler was awaiting (e.g. a slow fetch).
@@ -116,13 +113,33 @@ async function resolve() {
         }
         currentCleanup = cleanup;
         restoreScroll(path, contentArea);
-        if (contentArea) contentArea.setAttribute('aria-busy', 'false');
-    };
-    if (shouldAnimate) {
-        document.startViewTransition(render);
-    } else {
-        await render();
+        playRouteEnter(contentArea);
+    } catch (err) {
+        // Error boundary: a throwing mount must not leave a blank screen.
+        if (token !== navToken) return; // superseded — let the winner own the screen
+        console.error('Route render error:', err);
+        currentCleanup = null;
+        if (contentArea) {
+            contentArea.innerHTML = renderErrorState('Something went wrong', 'This page failed to load.');
+            contentArea.querySelector('[data-error-retry]')?.addEventListener('click', () => {
+                currentRoute = null; // bypass the same-path guard so the route re-runs
+                resolve();
+            });
+            playRouteEnter(contentArea);
+        }
+    } finally {
+        if (token === navToken && contentArea) contentArea.setAttribute('aria-busy', 'false');
     }
+}
+
+// Custom view-enter animation. Replaces the Chrome-only View Transitions API
+// (which left Safari/Firefox with abrupt cuts) with a fade+slide that runs on
+// every browser. Honors prefers-reduced-motion.
+function playRouteEnter(el) {
+    if (!el || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    el.classList.remove('route-enter');
+    void el.offsetWidth; // restart the animation if it's mid-flight
+    el.classList.add('route-enter');
 }
 
 function restoreScroll(path, contentArea) {

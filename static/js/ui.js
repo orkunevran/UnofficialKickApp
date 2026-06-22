@@ -53,6 +53,35 @@ export function renderProfileSkeleton() {
         </div>`;
 }
 
+// Skeleton grid for the VOD / Clip tabs while their data loads — reuses the
+// stream-card skeleton (shimmer is transform-based, Safari-safe).
+export function renderVodSkeleton(count = 6) {
+    let html = '';
+    for (let i = 0; i < count; i++) {
+        html += `
+            <div class="skeleton-card" style="animation-delay:${i * 0.05}s">
+                <div class="skeleton-thumb"></div>
+                <div style="padding:12px">
+                    <div class="skeleton-bar skeleton-bar--wide" style="margin-bottom:8px"></div>
+                    <div class="skeleton-bar skeleton-bar--short"></div>
+                </div>
+            </div>`;
+    }
+    return `<div class="vod-grid">${html}</div>`;
+}
+
+// Reusable error state — used by the router error boundary and per-view
+// failures. The retry button is found via [data-error-retry] by the caller.
+export function renderErrorState(title = 'Something went wrong', message = '', { retry = true } = {}) {
+    return `
+        <div class="empty-state error-state">
+            <div class="empty-state-icon"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>
+            <div class="empty-state-title">${escapeHtml(title)}</div>
+            ${message ? `<div class="empty-state-text">${escapeHtml(message)}</div>` : ''}
+            ${retry ? `<button type="button" class="btn-primary" data-error-retry style="margin-top:16px">Try again</button>` : ''}
+        </div>`;
+}
+
 // ── Stream Card ───────────────────────────────────────────────────────────
 
 export function renderStreamCard(stream, { showActions = true } = {}) {

@@ -2722,6 +2722,23 @@ body.landscape-theater #theater-exit { display: flex; }
     0%, 100% { transform: scale(1); opacity: 1; }
     50% { transform: scale(1.15); opacity: 0.6; }
 }
+/* Error state — same layout as empty-state, error-tinted icon/glow. */
+.error-state .empty-state-icon svg { opacity: 0.65; color: var(--error-color); }
+.error-state .empty-state-icon::before {
+    background: radial-gradient(circle, rgba(255, 51, 102, 0.1) 0%, transparent 70%);
+}
+
+/* ── Route transitions ──────────────────────────────────────────────────────
+   Custom fade+slide on each view render — replaces the Chrome-only View
+   Transitions API so Safari/Firefox get the same feel. Set by router.js. */
+@keyframes route-enter {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+.route-enter { animation: route-enter 0.26s cubic-bezier(0.22, 1, 0.36, 1); }
+@media (prefers-reduced-motion: reduce) {
+    .route-enter { animation: none; }
+}
 .empty-state-title {
     font-family: var(--font-display);
     font-size: 18px;

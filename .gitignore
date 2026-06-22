@@ -45,6 +45,7 @@ node_modules/
 # ── Local Python leftovers (the backend is Go; these may linger on dev machines) ──
 venv/
 .venv/
+venv_capture/
 __pycache__/
 *.pyc
 .pytest_cache/

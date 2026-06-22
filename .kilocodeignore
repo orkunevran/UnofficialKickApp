@@ -1,0 +1,10 @@
+# Local environment and generated tooling.
+venv/
+.venv/
+venv_capture/
+.kilo/node_modules/
+
+# Local secrets.
+.env
+.env.*
+!.env.example

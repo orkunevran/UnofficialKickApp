@@ -9,12 +9,12 @@
 </p>
 
 <p align="center">
-  <code>v4.0.0</code>&ensp;·&ensp;Go 1.24+&ensp;·&ensp;stdlib net/http&ensp;·&ensp;Vanilla JS SPA&ensp;·&ensp;Docker
+  <code>v4.0.0</code>&ensp;·&ensp;Go 1.25+&ensp;·&ensp;stdlib net/http&ensp;·&ensp;Vanilla JS SPA&ensp;·&ensp;Docker
 </p>
 
 <p align="center">
   <a href="https://github.com/orkunevran/UnofficialKickApp/actions/workflows/ci.yml"><img src="https://github.com/orkunevran/UnofficialKickApp/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
-  <img src="https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go&logoColor=white" alt="Go 1.24+" />
+  <img src="https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go&logoColor=white" alt="Go 1.25+" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License" /></a>
   <img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs welcome" />
 </p>
@@ -22,6 +22,8 @@
 ---
 
 Unofficial Kick App provides a web UI plus a REST API for Kick.com live streams, VODs, clips, featured streams, search, and Chromecast playback. It runs locally, in Docker, or on a small home server such as a Raspberry Pi.
+
+> **Disclaimer:** This independent project is not affiliated with, endorsed by, or sponsored by Kick. Kick names, logos, and trademarks belong to their respective owners. The app relies on unofficial endpoints that may change without notice.
 
 > **Backend:** this app was originally a Python/FastAPI service and was rewritten in **Go** (single static binary, no runtime deps). The HTTP API and frontend are unchanged. The migration plan is in [`docs/MIGRATION_GO.md`](docs/MIGRATION_GO.md); the old Python backend is preserved on the [`legacy/python-backend`](../../tree/legacy/python-backend) branch.
 
@@ -123,7 +125,7 @@ The app will be available at `http://localhost:8081`.
 
 ## Local Development
 
-Requires Go 1.24+.
+Requires Go 1.25+. Production and CI pin Go 1.26.5 or newer for current standard-library security fixes.
 
 ```bash
 go run ./cmd/server
@@ -179,6 +181,9 @@ The Go suite covers the framework-independent logic and the HTTP contract:
 
 ### Chromecast Routes
 
+Discovery and state-changing routes require the production `CONTROL_TOKEN`.
+The SPA prompts once and exchanges it for an HttpOnly, SameSite session cookie.
+
 | Method | Endpoint | Description |
 | --- | --- | --- |
 | `GET` | `/api/chromecast/devices` | Discover available Chromecast devices |
@@ -196,6 +201,8 @@ The Go suite covers the framework-independent logic and the HTTP contract:
 | --- | --- | --- |
 | `GET` | `/health` | Component-level health check (cache, circuit breakers); 200 or 503 |
 | `GET` | `/health/live` | Minimal liveness probe (always 200) |
+| `GET` | `/health/ready` | Local initialization/readiness plus running build identity |
+| `GET` | `/version` | Version, commit SHA, and build timestamp |
 | `GET` | `/metrics` | Cache stats, circuit breaker state, upstream call count, in-flight stats, uptime |
 | `GET` | `/docs` | Static API documentation page |
 
@@ -258,7 +265,7 @@ WCAG AA: skip-to-content link, `aria-label` on nav landmarks, full combobox ARIA
 
 ## Configuration
 
-Configured via environment variables (or a `.env` file). Variable names match the original app; see [`.env.example`](.env.example).
+Configured via environment variables. [`.env.example`](.env.example) is a reference; the Go binary does not load dotenv files itself. The systemd deployment reads `/etc/kick-api/kick-api.env`.
 
 | Variable | Default | Description |
 | --- | --- | --- |
@@ -266,10 +273,16 @@ Configured via environment variables (or a `.env` file). Variable names match th
 | `PORT` | `8081` | Application port |
 | `LOG_LEVEL` | `INFO` | Logging level |
 | `LOG_FORMAT_JSON` | `False` | Structured JSON logging for production |
-| `DEFAULT_LANGUAGE_CODE` | `tr` | Default featured-stream language |
+| `DEFAULT_LANGUAGE_CODE` | `en` | Default featured-stream language |
+| `CONTROL_TOKEN` | `""` | Chromecast control secret; required by the Pi deployment |
+| `MAX_JSON_BODY_BYTES` | `16384` | Maximum control request body |
+| `RATE_LIMIT_REQUESTS_PER_SECOND` | `50` | Per-client request refill rate |
+| `RATE_LIMIT_BURST` | `100` | Per-client burst capacity |
 | `KICK_API_BASE_URL` | `https://kick.com/api/v2/channels/` | Kick channel API base URL |
 | `KICK_FEATURED_LIVESTREAMS_URL` | `https://kick.com/stream/featured-livestreams/` | Featured livestreams URL |
 | `KICK_ALL_LIVESTREAMS_URL` | `https://kick.com/stream/livestreams/` | Public livestream discovery URL |
+| `KICK_MAX_RESPONSE_BYTES` | `4194304` | Maximum upstream response body |
+| `KICK_MAX_PLAYLIST_BYTES` | `1048576` | Maximum HLS master playlist body |
 | `CACHE_MAX_SIZE` | `2000` | Maximum cache entries before LRU eviction |
 | `LIVE_CACHE_DURATION_SECONDS` | `60` | Fresh TTL for live stream data |
 | `VOD_CACHE_DURATION_SECONDS` | `300` | Cache duration for VOD and clip data |
@@ -290,6 +303,7 @@ Configured via environment variables (or a `.env` file). Variable names match th
 | `CHROMECAST_SELECT_RETRY_DELAY` | `2` | Delay between connection retries |
 | `CHROMECAST_DEVICE_CACHE_SECONDS` | `30` | Chromecast device cache lifetime |
 | `CHROMECAST_PERIODIC_SCAN_INTERVAL` | `90` | Background scan interval (s) |
+| `CHROMECAST_STATE_PATH` | `.kick_chromecast_cache.json` | Persisted Chromecast state path |
 | `CHROMECAST_FALLBACK_SCAN_ENABLED` | `True` | Enable subnet probing when mDNS fails |
 | `CHROMECAST_FALLBACK_SCAN_SUBNETS` | _(private ranges)_ | Subnets for fallback scanning |
 | `CHROMECAST_FALLBACK_SCAN_WORKERS` | `96` | Max concurrent fallback scan workers |
@@ -300,17 +314,21 @@ Configured via environment variables (or a `.env` file). Variable names match th
 
 ### Raspberry Pi (production)
 
-Production runs as a **Docker container via Compose**, using [`docker-compose.pi.yaml`](docker-compose.pi.yaml). Host networking is required for Chromecast (see note under [Docker](#docker)); the compose file also mounts `./data` for the persisted device-state cache. From the source dir on the Pi:
+Production runs as a hardened **systemd service**. The deployment script tests and cross-compiles locally, uploads a versioned ARM64 binary, updates the unit, switches an atomic `current` symlink, verifies readiness/assets/configuration/build identity, and rolls back automatically on failure:
 
 ```bash
-docker compose -f docker-compose.pi.yaml up -d --build   # build arm64 image + (re)start
-docker compose -f docker-compose.pi.yaml ps              # status / health
-docker compose -f docker-compose.pi.yaml logs -f         # logs
+make deploy
 ```
 
-To update: re-sync the source to the Pi and re-run the `up -d --build` command above.
+Defaults target `pi@raspberrypi.local`; override the host with `PI_HOST` and the smoke-check port with `PORT`. Production paths and the unit name are intentionally fixed. The first deployment creates a dedicated `kick-api` user, persistent state under `/var/lib/kick-api`, and a root-owned `/etc/kick-api/kick-api.env` containing the Chromecast control token.
 
-> **Rollback / legacy:** the older systemd path still exists ([`deploy/kick-api.service`](deploy/kick-api.service) + [`scripts/deploy-pi.sh`](scripts/deploy-pi.sh), which cross-compiles an arm64 binary and restarts the unit). The unit is installed but **disabled** in favour of the container. To fall back, `docker compose -f docker-compose.pi.yaml down` then `sudo systemctl enable --now kick-api`.
+Retrieve the token when a browser prompts for it:
+
+```bash
+ssh pi@raspberrypi.local "sudo sed -n 's/^CONTROL_TOKEN=//p' /etc/kick-api/kick-api.env"
+```
+
+[`docker-compose.pi.yaml`](docker-compose.pi.yaml) is retained only as a legacy container example. Do not run it alongside systemd because both bind port 8081.
 
 ### Docker
 
@@ -327,6 +345,7 @@ The multi-stage build compiles a static binary (stage 1) and ships it on `distro
 - [`docs/MIGRATION_GO.md`](docs/MIGRATION_GO.md) — the Python→Go migration plan and rationale.
 - [`docs/KICK_PUBLIC_API.md`](docs/KICK_PUBLIC_API.md) — reverse-engineering memo of Kick's public API surface (confirmed endpoints, search infrastructure, Typesense key extraction, realtime config). The authoritative reference for the upstream endpoints this app depends on.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — how to build, test, and submit changes.
+- [`SECURITY.md`](SECURITY.md) — supported versions, private vulnerability reporting, and deployment guidance.
 
 ## Troubleshooting
 

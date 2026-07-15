@@ -1,18 +1,22 @@
+# syntax=docker/dockerfile:1
+
 # ── Stage 1: Build ────────────────────────────────────────────────────────
-FROM golang:1.24-bookworm AS builder
+# Run the compiler on the build host architecture and cross-compile for the
+# requested target platform. Docker/BuildKit supplies these values for plain
+# builds and for --platform/buildx builds.
+FROM --platform=$BUILDPLATFORM golang:1.26.5-bookworm AS builder
 
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-# TARGETOS/TARGETARCH are supplied by BuildKit/buildx (one per --platform) and
-# default to linux/amd64 for a plain `docker build`, so the image is runnable on
-# the build host (incl. CI). The Pi production binary is built separately by
-# scripts/deploy-pi.sh (arm64) and run under systemd — not from this image.
+# TARGETOS/TARGETARCH are supplied by BuildKit/buildx. A plain build targets the
+# current Docker platform; --platform selects another target. Pi production is
+# still deployed as a systemd binary via scripts/deploy-pi.sh.
 # CGO_ENABLED=0 produces a fully static binary; assets are embedded via //go:embed.
-ARG TARGETOS=linux
-ARG TARGETARCH=amd64
+ARG TARGETOS
+ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w" -o /kick-api ./cmd/server
 

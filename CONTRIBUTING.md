@@ -12,7 +12,7 @@ cd UnofficialKickApp
 make run            # or: go run ./cmd/server  →  http://localhost:8081
 ```
 
-Requires **Go 1.24+**. Copy `.env.example` to `.env` to override defaults.
+Requires **Go 1.25+**. Production and CI use Go 1.26.5. Copy `.env.example` to `.env` to document overrides (the Go binary reads process environment variables directly).
 
 ## Before you open a PR
 

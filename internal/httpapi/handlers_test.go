@@ -79,6 +79,18 @@ func TestLivenessEndpoint(t *testing.T) {
 	}
 }
 
+func TestReadinessAndVersionEndpoints(t *testing.T) {
+	app := newTestApp(t)
+	ready := doGet(t, app, "/health/ready")
+	if ready.Code != http.StatusOK || !strings.Contains(ready.Body.String(), `"status":"ready"`) {
+		t.Fatalf("readiness = %d %s", ready.Code, ready.Body.String())
+	}
+	version := doGet(t, app, "/version")
+	if version.Code != http.StatusOK || !strings.Contains(version.Body.String(), `"version":"dev"`) {
+		t.Fatalf("version = %d %s", version.Code, version.Body.String())
+	}
+}
+
 func TestMetricsEndpoint(t *testing.T) {
 	// obs counters are process-global; reset so the call_count assertion is
 	// hermetic regardless of what other tests ran first.

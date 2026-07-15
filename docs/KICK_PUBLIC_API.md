@@ -100,6 +100,11 @@ Observed live example:
 - `NEXT_PUBLIC_TYPESENSE_API_KEY = nXIMW0iEN6sMujFYjFuhdrSwVow3pDQu`
 - `NEXT_PUBLIC_TYPESENSE_URL = https://search.kick.com`
 
+The key above is deliberately published by Kick as browser-side
+`NEXT_PUBLIC_*` configuration and is limited to public search. It is not a
+private application credential. The repository's secret scanner narrowly
+allowlists only this exact documented client key.
+
 Evidence:
 - `Observed Live In Container`: `_get_typesense_key(force_refresh=True)` returned `nXIMW0iEN6sMujFYjFuhdrSwVow3pDQu`
 - `Observed In Live Bundle`: the same value was found in chunk `428-8648c361edd7b568.js`

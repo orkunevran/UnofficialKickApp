@@ -1,11 +1,15 @@
 package httpapi
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
+	"mime"
 	"net/http"
+	"net/url"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -28,6 +32,7 @@ type chromecastService interface {
 }
 
 const selectTimeout = 15 * time.Second
+const controlCookieName = "kick_control"
 
 var hostRe = regexp.MustCompile(`^[a-zA-Z0-9._:-]{1,255}$`)
 
@@ -50,13 +55,116 @@ func parseKnownHosts(raw string) []string {
 
 var subnetSepHTTP = regexp.MustCompile(`[,\s]+`)
 
-func decodeBody(r *http.Request, v any) error {
+func (a *App) decodeBody(w http.ResponseWriter, r *http.Request, v any) error {
 	defer r.Body.Close()
-	err := json.NewDecoder(r.Body).Decode(v)
+	r.Body = http.MaxBytesReader(w, r.Body, int64(a.cfg.MaxJSONBodyBytes))
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	err := dec.Decode(v)
 	if errors.Is(err, io.EOF) {
 		return nil // empty body is allowed for optional payloads
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	if err := dec.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("request body must contain one JSON object")
+		}
+		return err
+	}
+	return nil
+}
+
+func writeBodyError(w http.ResponseWriter, err error) {
+	var maxErr *http.MaxBytesError
+	if errors.As(err, &maxErr) {
+		errorJSON(w, "Request body too large.", http.StatusRequestEntityTooLarge)
+		return
+	}
+	errorJSON(w, "Invalid request body.", http.StatusBadRequest)
+}
+
+// requireControl protects Chromecast discovery and every state-changing
+// operation with a per-install bearer token. It also rejects cross-origin
+// browser requests and non-JSON POSTs. Read-only status/SSE routes stay public
+// so EventSource works without putting secrets in URLs.
+func (a *App) requireControl(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if origin := r.Header.Get("Origin"); origin != "" && !sameOrigin(origin, r.Host) {
+			errorJSON(w, "Cross-origin Chromecast control is not allowed.", http.StatusForbidden)
+			return
+		}
+		if token := a.cfg.ControlToken; token != "" {
+			provided := ""
+			if cookie, err := r.Cookie(controlCookieName); err == nil {
+				provided = cookie.Value
+			}
+			if provided == "" {
+				provided = strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+			}
+			if provided == "" {
+				provided = r.Header.Get("X-Control-Token")
+			}
+			if subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
+				w.Header().Set("WWW-Authenticate", "Bearer")
+				errorJSON(w, "Chromecast control token required.", http.StatusUnauthorized)
+				return
+			}
+		}
+		if r.Method == http.MethodPost {
+			mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+			if err != nil || mediaType != "application/json" {
+				errorJSON(w, "Content-Type must be application/json.", http.StatusUnsupportedMediaType)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// handleControlSession exchanges the per-install token for an HttpOnly,
+// SameSite cookie. The token never needs to be persisted in browser storage.
+func (a *App) handleControlSession(w http.ResponseWriter, r *http.Request) {
+	if origin := r.Header.Get("Origin"); origin != "" && !sameOrigin(origin, r.Host) {
+		errorJSON(w, "Cross-origin Chromecast control is not allowed.", http.StatusForbidden)
+		return
+	}
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		errorJSON(w, "Content-Type must be application/json.", http.StatusUnsupportedMediaType)
+		return
+	}
+	var body struct {
+		Token string `json:"token"`
+	}
+	if err := a.decodeBody(w, r, &body); err != nil {
+		writeBodyError(w, err)
+		return
+	}
+	if a.cfg.ControlToken == "" || subtle.ConstantTimeCompare([]byte(body.Token), []byte(a.cfg.ControlToken)) != 1 {
+		w.Header().Set("WWW-Authenticate", "Bearer")
+		errorJSON(w, "Invalid Chromecast control token.", http.StatusUnauthorized)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     controlCookieName,
+		Value:    a.cfg.ControlToken,
+		Path:     "/api/chromecast",
+		MaxAge:   30 * 24 * 60 * 60,
+		HttpOnly: true,
+		Secure:   r.TLS != nil,
+		SameSite: http.SameSiteStrictMode,
+	})
+	successJSON(w, nil, "Chromecast control unlocked.", http.StatusOK)
+}
+
+func sameOrigin(rawOrigin, host string) bool {
+	u, err := url.Parse(rawOrigin)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+		return false
+	}
+	return strings.EqualFold(u.Host, host)
 }
 
 // GET /api/chromecast/devices
@@ -76,7 +184,11 @@ func (a *App) handleCCSelect(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		UUID string `json:"uuid"`
 	}
-	if err := decodeBody(r, &body); err != nil || body.UUID == "" {
+	if err := a.decodeBody(w, r, &body); err != nil {
+		writeBodyError(w, err)
+		return
+	}
+	if body.UUID == "" {
 		errorJSON(w, "Device UUID is required.", 400)
 		return
 	}
@@ -103,7 +215,11 @@ func (a *App) handleCCCast(w http.ResponseWriter, r *http.Request) {
 		StreamURL string `json:"stream_url"`
 		Title     string `json:"title"`
 	}
-	if err := decodeBody(r, &body); err != nil || body.StreamURL == "" {
+	if err := a.decodeBody(w, r, &body); err != nil {
+		writeBodyError(w, err)
+		return
+	}
+	if body.StreamURL == "" {
 		errorJSON(w, "Stream URL is required.", 400)
 		return
 	}
@@ -123,8 +239,8 @@ func (a *App) handleCCStop(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		UUID string `json:"uuid"`
 	}
-	if err := decodeBody(r, &body); err != nil {
-		errorJSON(w, "Invalid request body.", 400)
+	if err := a.decodeBody(w, r, &body); err != nil {
+		writeBodyError(w, err)
 		return
 	}
 	if a.chromecast.StopCast(body.UUID) {
@@ -218,7 +334,11 @@ func (a *App) handleCCVolume(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Level *float64 `json:"level"`
 	}
-	if err := decodeBody(r, &body); err != nil || body.Level == nil || *body.Level < 0 || *body.Level > 1 {
+	if err := a.decodeBody(w, r, &body); err != nil {
+		writeBodyError(w, err)
+		return
+	}
+	if body.Level == nil || *body.Level < 0 || *body.Level > 1 {
 		errorJSON(w, "Invalid volume level (must be between 0.0 and 1.0).", 400)
 		return
 	}
@@ -234,7 +354,11 @@ func (a *App) handleCCSeek(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Position *float64 `json:"position"`
 	}
-	if err := decodeBody(r, &body); err != nil || body.Position == nil || *body.Position < 0 {
+	if err := a.decodeBody(w, r, &body); err != nil {
+		writeBodyError(w, err)
+		return
+	}
+	if body.Position == nil || *body.Position < 0 {
 		errorJSON(w, "Invalid seek position.", 400)
 		return
 	}

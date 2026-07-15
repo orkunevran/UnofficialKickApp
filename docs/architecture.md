@@ -54,7 +54,8 @@ internal/
                           /featured (SWR), /search, /viewers, /viewers/batch;
                           kickCall (per-lane breaker integration), validateSlug
     chromecast.go         /api/chromecast/* endpoints + SSE status stream
-    handlers.go           /health, /health/live, /metrics, /config/languages
+    handlers.go           /health, /health/live, /health/ready, /version,
+                          /metrics, /config/languages
     render.go             index.html hash-busting; docs page
   kick/                   Kick HTTP client (bogdanfinn/tls-client, Chrome
                           fingerprint) + Typesense search w/ JS-bundle key scrape
@@ -144,6 +145,12 @@ The browse view uses three render modes for performance:
   SSE subscribers, so N browser connections don't each poll the device.
 - **Graceful shutdown:** `BeginShutdown` signals long-lived SSE handlers to
   return so `http.Server.Shutdown` drains promptly (no restart hang).
+- **Protected control plane:** Chromecast discovery and mutations require the
+  production control token, same-origin browser requests, JSON content types,
+  and bounded request bodies; the SPA exchanges the token for an HttpOnly
+  SameSite cookie.
+- **Production bounds:** semantic cache keys, per-client token-bucket limiting,
+  bounded upstream bodies, and systemd resource limits protect the Pi.
 
 ## Testing layout
 

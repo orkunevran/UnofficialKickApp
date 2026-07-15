@@ -63,13 +63,26 @@ func envelopeMap(status, message string, data any) map[string]any {
 	return map[string]any{"status": status, "message": message, "data": data}
 }
 
-// requestCacheKey mirrors api/cache.py request_cache_key (prefix:path?sorted-query).
-func requestCacheKey(prefix string, r *http.Request) string {
-	key := prefix + ":" + r.URL.Path
-	if q := r.URL.Query().Encode(); q != "" {
-		return key + "?" + q
+func featuredCacheKey(prefix, language string, page int, category, subcategory, subcategories, sortParam string, strict bool) string {
+	v := url.Values{}
+	v.Set("language", language)
+	v.Set("page", strconv.Itoa(page))
+	if category != "" {
+		v.Set("category", category)
 	}
-	return key
+	if subcategory != "" {
+		v.Set("subcategory", subcategory)
+	}
+	if subcategories != "" {
+		v.Set("subcategories", subcategories)
+	}
+	if sortParam != "" {
+		v.Set("sort", sortParam)
+	}
+	if strict {
+		v.Set("strict", "true")
+	}
+	return prefix + ":/streams/featured-livestreams?" + v.Encode()
 }
 
 func (a *App) ttl(seconds int) time.Duration { return time.Duration(seconds) * time.Second }
@@ -446,6 +459,9 @@ func (a *App) handleFeatured(w http.ResponseWriter, r *http.Request) {
 	if p, err := strconv.Atoi(q.Get("page")); err == nil && p > 1 {
 		page = p
 	}
+	if page > 1000 {
+		page = 1000
+	}
 	category := strings.TrimSpace(q.Get("category"))
 	subcategory := strings.TrimSpace(q.Get("subcategory"))
 	subcategories := strings.TrimSpace(q.Get("subcategories"))
@@ -467,8 +483,8 @@ func (a *App) handleFeatured(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cacheControl := fmt.Sprintf("public, max-age=%d", a.cfg.FeaturedCacheDurationSeconds)
-	staleKey := requestCacheKey("featured-livestreams", r)
-	freshKey := requestCacheKey("featured-fresh", r)
+	staleKey := featuredCacheKey("featured-livestreams", language, page, category, subcategory, subcategories, sortParam, strict)
+	freshKey := featuredCacheKey("featured-fresh", language, page, category, subcategory, subcategories, sortParam, strict)
 
 	if a.serveStale(w, staleKey, freshKey, cacheControl, a.cbNonCritical, func() {
 		a.refreshFeatured(staleKey, freshKey, language, page, category, subcategory, subcategories, sortParam, strict)
@@ -552,11 +568,7 @@ func (a *App) RunWarmup(ctx context.Context) {
 			return
 		default:
 		}
-		v := url.Values{}
-		v.Set("language", lang.Code)
-		v.Set("page", "1")
-		query := v.Encode()
-		staleKey := "featured-livestreams:/streams/featured-livestreams?" + query
+		staleKey := featuredCacheKey("featured-livestreams", lang.Code, 1, "", "", "", "", false)
 		if _, ok := a.cacheGet(staleKey); ok {
 			continue
 		}
@@ -569,7 +581,7 @@ func (a *App) RunWarmup(ctx context.Context) {
 			continue
 		}
 		body := transform.BuildFeaturedResponse(raw, 1)
-		freshKey := "featured-fresh:/streams/featured-livestreams?" + query
+		freshKey := featuredCacheKey("featured-fresh", lang.Code, 1, "", "", "", "", false)
 		a.cachePut(staleKey, body, 200, a.ttl(a.cfg.FeaturedStaleTTLSeconds))
 		a.cache.SetTTL(freshKey, true, a.ttl(a.cfg.FeaturedCacheDurationSeconds))
 		a.warmCachesFromFeatured(dataList(body))
@@ -658,7 +670,7 @@ func (a *App) handleSearch(w http.ResponseWriter, r *http.Request) {
 		errorJSON(w, "Query too long.", 400)
 		return
 	}
-	key := requestCacheKey("search", r)
+	key := "search:" + strings.ToLower(query)
 	if c, ok := a.cacheGet(key); ok {
 		// Enrich on hits too: avatar cache (7d TTL) may have filled since this
 		// 30s entry was stored. Shallow-copy each result map first — the cached
@@ -730,7 +742,7 @@ func (a *App) handleViewers(w http.ResponseWriter, r *http.Request) {
 		errorJSON(w, "Invalid livestream ID.", 400)
 		return
 	}
-	a.serveCached(w, requestCacheKey("viewers", r), a.ttl(a.cfg.ViewerCacheDurationSeconds), func() (map[string]any, *apierr.Error) {
+	a.serveCached(w, "viewers:"+strconv.Itoa(id), a.ttl(a.cfg.ViewerCacheDurationSeconds), func() (map[string]any, *apierr.Error) {
 		viewers, e := kickCall(a.cbNonCritical, obs.LaneNonCritical, strconv.Itoa(id), func() (int, error) {
 			return a.kick.GetViewerCount(id)
 		})
@@ -743,6 +755,7 @@ func (a *App) handleViewers(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) handleViewersBatch(w http.ResponseWriter, r *http.Request) {
 	ids := make([]int, 0)
+	seen := make(map[int]struct{})
 	for _, s := range strings.Split(r.URL.Query().Get("ids"), ",") {
 		if s = strings.TrimSpace(s); s == "" {
 			continue
@@ -753,6 +766,10 @@ func (a *App) handleViewersBatch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if val > 0 {
+			if _, duplicate := seen[val]; duplicate {
+				continue
+			}
+			seen[val] = struct{}{}
 			ids = append(ids, val)
 		}
 	}

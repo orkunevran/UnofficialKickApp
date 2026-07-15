@@ -42,6 +42,8 @@ type Client struct {
 	baseURL           string
 	featuredURL       string
 	allLivestreamsURL string
+	maxResponseBytes  int64
+	maxPlaylistBytes  int64
 
 	// Typesense key cache (process-wide, mirrors the Python class vars).
 	tsMu        sync.Mutex
@@ -54,6 +56,8 @@ type Config struct {
 	BaseURL           string
 	FeaturedURL       string
 	AllLivestreamsURL string
+	MaxResponseBytes  int64
+	MaxPlaylistBytes  int64
 }
 
 // New constructs a Client with a Chrome-impersonating TLS client.
@@ -70,6 +74,8 @@ func New(cfg Config) (*Client, error) {
 		baseURL:           cfg.BaseURL,
 		featuredURL:       cfg.FeaturedURL,
 		allLivestreamsURL: cfg.AllLivestreamsURL,
+		maxResponseBytes:  cfg.MaxResponseBytes,
+		maxPlaylistBytes:  cfg.MaxPlaylistBytes,
 	}, nil
 }
 
@@ -80,6 +86,10 @@ func New(cfg Config) (*Client, error) {
 // that need it; do itself returns the raw status so tolerant callers (viewer
 // counts) can inspect it.
 func (c *Client) do(method, rawURL string, body io.Reader, headers map[string]string) (int, []byte, error) {
+	return c.doLimited(method, rawURL, body, headers, c.maxResponseBytes)
+}
+
+func (c *Client) doLimited(method, rawURL string, body io.Reader, headers map[string]string, limit int64) (int, []byte, error) {
 	req, err := fhttp.NewRequest(method, rawURL, body)
 	if err != nil {
 		return 0, nil, err
@@ -96,11 +106,28 @@ func (c *Client) do(method, rawURL string, body io.Reader, headers map[string]st
 		return 0, nil, err
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(resp.Body)
+	if limit < 1 {
+		limit = 4 * 1024 * 1024
+	}
+	data, err := readResponseBody(resp.Body, limit)
 	if err != nil {
 		return resp.StatusCode, nil, err
 	}
 	return resp.StatusCode, data, nil
+}
+
+func readResponseBody(r io.Reader, limit int64) ([]byte, error) {
+	if limit < 1 {
+		limit = 4 * 1024 * 1024
+	}
+	data, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("upstream response exceeds %d bytes", limit)
+	}
+	return data, nil
 }
 
 // getJSON GETs a URL and decodes JSON, returning *HTTPError on a non-2xx status
@@ -173,7 +200,7 @@ func (c *Client) GetAllLivestreams(language string, page int, category, subcateg
 
 // FetchPlaylist fetches the HLS master playlist bytes (for the m3u8 proxy).
 func (c *Client) FetchPlaylist(playbackURL string) ([]byte, error) {
-	status, body, err := c.do(fhttp.MethodGet, playbackURL, nil, map[string]string{"Origin": "https://kick.com"})
+	status, body, err := c.doLimited(fhttp.MethodGet, playbackURL, nil, map[string]string{"Origin": "https://kick.com"}, c.maxPlaylistBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -285,7 +312,10 @@ func parseBatchViewers(body []byte) map[int]int {
 // ── Typesense search ─────────────────────────────────────────────────────────
 
 const (
-	typesenseURL         = "https://search.kick.com"
+	typesenseURL = "https://search.kick.com"
+	// Kick publishes this search-only client key in its NEXT_PUBLIC browser
+	// bundle. It is not a private server credential; scraping the current bundle
+	// remains the primary path and this value is only an outage fallback.
 	typesenseKeyFallback = "nXIMW0iEN6sMujFYjFuhdrSwVow3pDQu"
 	typesenseKeyTTL      = 24 * time.Hour
 )

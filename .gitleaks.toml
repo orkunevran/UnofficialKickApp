@@ -1,0 +1,6 @@
+[allowlist]
+description = "Kick public browser Typesense search key documented and used as an emergency fallback"
+regexTarget = "secret"
+regexes = [
+  '''^nXIMW0iEN6sMujFYjFuhdrSwVow3pDQu$''',
+]

@@ -1,6 +1,19 @@
 package kick
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
+
+func TestReadResponseBodyLimit(t *testing.T) {
+	got, err := readResponseBody(strings.NewReader("1234"), 4)
+	if err != nil || string(got) != "1234" {
+		t.Fatalf("bounded read = %q, %v", got, err)
+	}
+	if _, err := readResponseBody(strings.NewReader("12345"), 4); err == nil {
+		t.Fatal("oversized upstream response should fail")
+	}
+}
 
 func TestParseViewerCount(t *testing.T) {
 	cases := []struct {

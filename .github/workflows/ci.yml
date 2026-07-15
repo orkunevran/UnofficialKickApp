@@ -6,15 +6,25 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
+          go-version: "1.26.5"
           cache: true
 
       - name: Check formatting
@@ -27,14 +37,28 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      - name: Build
-        run: go build ./...
+      - name: Verify modules
+        run: go mod verify
+
+      - name: Scan full history for secrets
+        run: go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --no-banner --redact .
+
+      - name: Vulnerability scan
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+      - name: Build ARM64 production binary
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: arm64
+        run: go build -trimpath -ldflags="-s -w" -o /tmp/kick-api-arm64 ./cmd/server
 
       - name: Test (race detector)
         run: go test -race ./...
 
   docker-build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: build-test
     steps:
       - uses: actions/checkout@v4

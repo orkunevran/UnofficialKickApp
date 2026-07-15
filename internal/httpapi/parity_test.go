@@ -162,7 +162,10 @@ var (
 
 func newParityApp(t *testing.T) *App {
 	t.Helper()
-	app, err := New(config.Load(), slog.New(slog.NewTextHandler(io.Discard, nil)), os.DirFS("../.."))
+	cfg := config.Load()
+	cfg.RateLimitRequestsPerSecond = 1_000_000
+	cfg.RateLimitBurst = 1_000_000
+	app, err := New(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), os.DirFS("../.."))
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

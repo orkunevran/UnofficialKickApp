@@ -1,13 +1,13 @@
 # Backend Migration Plan: Python (FastAPI) → Go
 
-> Status: **Proposal / not started.** This document is the agreed plan for porting the
-> backend from FastAPI to Go. The frontend (`static/`, `templates/`) is unaffected —
-> the Go service serves the same static assets and exposes the same HTTP contract.
+> Status: **Complete.** This document preserves the implementation plan and migration
+> record for the completed FastAPI-to-Go port. The frontend (`static/`, `templates/`)
+> remains a vanilla-JS SPA served by the Go binary.
 
 ## 1. Why migrate
 
-This service is a stateless streaming proxy that runs on a Raspberry Pi (see
-`project_deployment`: `192.168.1.3:8081`). Go is a strong fit for that target:
+This service is a stateless streaming proxy designed to run on a Raspberry Pi.
+Go is a strong fit for that target:
 
 - **Single static binary**, cross-compiled to `linux/arm64` — no venv, no `pip`, no
   Python runtime on the Pi.
@@ -182,7 +182,7 @@ external risks (TLS, Chromecast) are isolated so a blocker can't strand the whol
   **Exit met (from this Mac):** Cloudflare bypass confirmed — `featured` returned 14 live
   items; `play`/`avatar`/`search`/`viewers`/`clips`/`vods`/`m3u8` all returned real data;
   404→"channel not found" and invalid-slug→400 mapping correct; `/metrics` upstream
-  counter incremented. ⚠️ **Still must be re-confirmed from the Pi (192.168.1.3)** —
+  counter incremented. It was subsequently re-confirmed from the Pi —
   Cloudflare behavior can differ by source IP.
   **Deferred to Phase 2:** SWR (stale+fresh keys), in-flight dedup, negative caching, and
   the background-refresh limiter — Phase 1 uses simple single-key TTL caching per endpoint.
@@ -253,20 +253,17 @@ external risks (TLS, Chromecast) are isolated so a blocker can't strand the whol
     dir on Pi, smoke-tests on port 8082 (no clash with running Python container),
     then cuts over via nohup with PID file. Rollback = kill PID + restart Python container.
 
-  **Pi cutover complete (2026-06-13, Pi at 192.168.68.53):**
-  - Cloudflare bypass confirmed from Pi IP: 14 live streams returned, viewer counts live
-  - Smoke test on port 8082 passed before cutover
-  - Python container (kick-api-v4-kick-proxy-1) stopped; Go binary started on port 8081
-  - Handed to systemd (`kick-api.service`, enabled for reboot survival)
-  - Memory at 34s uptime: **10 MB** (vs Python container's 512 MB limit)
-  - All endpoints verified: 200 health/live/config/featured/play/search/avatar/chromecast,
-    307 redirect (go/{slug}), 404 unknown route, 400 bad slug
-  - Metrics: 4 upstream calls, 93 cache entries, 9 hits / 64 misses, both breakers closed,
-    0 inflight, 0 rejections/failures
-  - Binary at `/home/pi/Desktop/kick-api-v5/kick-api-arm64` (13 MB, statically linked)
-  - Rollback: `sudo systemctl stop kick-api && cd /home/pi/Desktop/kick-api-v4 && docker compose up -d`
+  **Pi cutover completed and verified:**
+  - Cloudflare bypass and live stream/viewer requests were confirmed from the Pi
+  - ARM64 smoke tests passed before switching production traffic
+  - The Go binary was handed to `kick-api.service` for reboot survival
+  - Health, configuration, stream, search, avatar, redirect, validation, metrics, and
+    Chromecast contracts were verified
+  - Production now uses the versioned, atomic, auto-rollback flow in
+    `scripts/deploy-pi.sh`; host-specific addresses, paths, and secrets remain outside
+    the public repository
 
-  ✅ **Migration complete. Python app left in place at kick-api-v4 for rollback only.**
+  ✅ **Migration complete. The old Python backend is frozen on `legacy/python-backend`.**
 
 ## 8. Testing & parity strategy
 

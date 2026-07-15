@@ -39,6 +39,7 @@ type App struct {
 	chromecastSvc  *chromecast.Service // concrete type for lifecycle methods
 	inflight       *inflight.Tracker
 	refreshLimiter *limiter
+	rateLimiter    *ipRateLimiter
 
 	// shutdownCh is closed by BeginShutdown to signal long-lived handlers (the
 	// SSE status stream) to return, so http.Server.Shutdown can drain promptly.
@@ -55,6 +56,9 @@ type App struct {
 // New constructs the App: builds the cache and circuit breakers, derives the
 // static sub-filesystem, computes asset hashes, and pre-renders index.html.
 func New(cfg *config.Config, log *slog.Logger, assets fs.FS) (*App, error) {
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
 	staticFS, err := fs.Sub(assets, "static")
 	if err != nil {
 		return nil, err
@@ -76,6 +80,8 @@ func New(cfg *config.Config, log *slog.Logger, assets fs.FS) (*App, error) {
 		BaseURL:           cfg.KickAPIBaseURL,
 		FeaturedURL:       cfg.KickFeaturedLivestreamsURL,
 		AllLivestreamsURL: cfg.KickAllLivestreamsURL,
+		MaxResponseBytes:  int64(cfg.KickMaxResponseBytes),
+		MaxPlaylistBytes:  int64(cfg.KickMaxPlaylistBytes),
 	})
 	if err != nil {
 		return nil, err
@@ -91,7 +97,7 @@ func New(cfg *config.Config, log *slog.Logger, assets fs.FS) (*App, error) {
 		FallbackScanWorkers:  cfg.ChromecastFallbackScanWorkers,
 		FallbackProbeTimeout: time.Duration(cfg.ChromecastFallbackScanProbeTimeout * float64(time.Second)),
 		FallbackInfoTimeout:  time.Duration(cfg.ChromecastFallbackDeviceInfoTimeout * float64(time.Second)),
-		StatePath:            ".kick_chromecast_cache.json",
+		StatePath:            cfg.ChromecastStatePath,
 		PeriodicScanInterval: time.Duration(cfg.ChromecastPeriodicScanInterval) * time.Second,
 		StatusUpdateTimeout:  time.Duration(cfg.ChromecastStatusUpdateTimeout * float64(time.Second)),
 		ConnectCooldown:      time.Duration(cfg.ChromecastConnectCooldown * float64(time.Second)),
@@ -108,6 +114,7 @@ func New(cfg *config.Config, log *slog.Logger, assets fs.FS) (*App, error) {
 		chromecastSvc:  cc,
 		inflight:       inflight.New(),
 		refreshLimiter: newLimiter(cfg.BackgroundRefreshMaxConcurrency),
+		rateLimiter:    newIPRateLimiter(cfg.RateLimitRequestsPerSecond, cfg.RateLimitBurst),
 		shutdownCh:     make(chan struct{}),
 		staticFS:       staticFS,
 		staticHashes:   hashes,
@@ -163,6 +170,8 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /config/languages", a.handleLanguages)
 	mux.HandleFunc("GET /health", a.handleHealth)
 	mux.HandleFunc("GET /health/live", a.handleLiveness)
+	mux.HandleFunc("GET /health/ready", a.handleReadiness)
+	mux.HandleFunc("GET /version", a.handleVersion)
 	mux.HandleFunc("GET /metrics", a.handleMetrics)
 
 	// Stream / discovery endpoints (read-only; SWR + inflight dedup land in Phase 2).
@@ -179,21 +188,23 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /streams/viewers/batch", a.handleViewersBatch)
 
 	// Chromecast control endpoints.
-	mux.HandleFunc("GET /api/chromecast/devices", a.handleCCDevices)
-	mux.HandleFunc("POST /api/chromecast/select", a.handleCCSelect)
-	mux.HandleFunc("POST /api/chromecast/cast", a.handleCCCast)
-	mux.HandleFunc("POST /api/chromecast/stop", a.handleCCStop)
+	mux.HandleFunc("POST /api/control/session", a.handleControlSession)
+	mux.Handle("GET /api/chromecast/devices", a.requireControl(http.HandlerFunc(a.handleCCDevices)))
+	mux.Handle("POST /api/chromecast/select", a.requireControl(http.HandlerFunc(a.handleCCSelect)))
+	mux.Handle("POST /api/chromecast/cast", a.requireControl(http.HandlerFunc(a.handleCCCast)))
+	mux.Handle("POST /api/chromecast/stop", a.requireControl(http.HandlerFunc(a.handleCCStop)))
 	mux.HandleFunc("GET /api/chromecast/last-device", a.handleCCLastDevice)
 	mux.HandleFunc("GET /api/chromecast/status", a.handleCCStatus)
 	mux.HandleFunc("GET /api/chromecast/status/stream", a.handleCCStatusStream)
-	mux.HandleFunc("POST /api/chromecast/pause", a.handleCCPause)
-	mux.HandleFunc("POST /api/chromecast/play", a.handleCCPlay)
-	mux.HandleFunc("POST /api/chromecast/volume", a.handleCCVolume)
-	mux.HandleFunc("POST /api/chromecast/seek", a.handleCCSeek)
+	mux.Handle("POST /api/chromecast/pause", a.requireControl(http.HandlerFunc(a.handleCCPause)))
+	mux.Handle("POST /api/chromecast/play", a.requireControl(http.HandlerFunc(a.handleCCPlay)))
+	mux.Handle("POST /api/chromecast/volume", a.requireControl(http.HandlerFunc(a.handleCCVolume)))
+	mux.Handle("POST /api/chromecast/seek", a.requireControl(http.HandlerFunc(a.handleCCSeek)))
 
 	mux.Handle("GET /static/", a.cacheControl(http.StripPrefix("/static/", http.FileServerFS(a.staticFS))))
 
 	var handler http.Handler = mux
+	handler = a.rateLimit(handler)
 	if a.cfg.CORSOrigins != "" {
 		handler = a.cors(handler)
 	}

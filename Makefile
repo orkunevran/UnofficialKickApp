@@ -31,7 +31,7 @@ lint: vet ## CI gate: gofmt check + go vet
 docker: ## Build the Docker image
 	docker build -t $(BINARY):latest .
 
-deploy: ## Cross-compile + deploy via scripts/deploy-pi.sh (override PI_HOST/APP_DIR)
+deploy: ## Test, cross-compile, and atomically deploy to the Pi (override PI_HOST)
 	./scripts/deploy-pi.sh
 
 clean: ## Remove local build artifacts

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"kickapi"
+	"kickapi/internal/buildinfo"
 	"kickapi/internal/config"
 	"kickapi/internal/httpapi"
 	"kickapi/internal/logging"
@@ -43,6 +44,7 @@ func main() {
 func run() error {
 	cfg := config.Load()
 	log := logging.Setup(cfg.LogLevel, cfg.LogFormatJSON)
+	log.Info("starting server", "version", buildinfo.Version, "commit", buildinfo.Commit, "built_at", buildinfo.BuiltAt)
 
 	app, err := httpapi.New(cfg, log, kickapi.Assets)
 	if err != nil {
@@ -55,6 +57,7 @@ func run() error {
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    32 * 1024,
 		// WriteTimeout is intentionally unset: the SSE status stream is a
 		// long-lived response and a global write deadline would terminate it.
 	}

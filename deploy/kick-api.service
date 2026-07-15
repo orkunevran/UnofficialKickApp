@@ -1,8 +1,7 @@
-# Example systemd unit for the Kick API Go server.
+# Production systemd unit for the Kick API Go server.
 #
 # Install (adjust User and paths to your host):
 #   sudo cp deploy/kick-api.service /etc/systemd/system/kick-api.service
-#   sudo mkdir -p /opt/kick-api
 #   sudo systemctl daemon-reload && sudo systemctl enable --now kick-api
 #
 # Then deploy/update the binary with:  ./scripts/deploy-pi.sh
@@ -15,19 +14,51 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=pi
-WorkingDirectory=/opt/kick-api
-ExecStart=/opt/kick-api/kick-api-arm64
+User=kick-api
+Group=kick-api
+WorkingDirectory=/var/lib/kick-api
+ExecStart=/opt/kick-api/current
 Restart=always
 RestartSec=5
+TimeoutStopSec=15
 
-# Configuration — override as needed (see .env.example for the full set).
+# Safe production defaults. Local overrides and CONTROL_TOKEN live in the
+# root-owned EnvironmentFile and are never committed to the repository.
 Environment=PORT=8081
 Environment=LOG_LEVEL=INFO
+Environment=LOG_FORMAT_JSON=true
 Environment=DEFAULT_LANGUAGE_CODE=en
 Environment=SECURITY_HEADERS_ENABLED=true
+Environment=MAX_JSON_BODY_BYTES=16384
+Environment=KICK_MAX_RESPONSE_BYTES=4194304
+Environment=KICK_MAX_PLAYLIST_BYTES=1048576
+Environment=RATE_LIMIT_REQUESTS_PER_SECOND=20
+Environment=RATE_LIMIT_BURST=60
+Environment=CHROMECAST_STATE_PATH=/var/lib/kick-api/chromecast-state.json
 # Fallback subnet scan is only used when mDNS discovery finds nothing.
 Environment=CHROMECAST_FALLBACK_SCAN_SUBNETS=192.168.0.0/24,192.168.1.0/24,10.0.0.0/24
+EnvironmentFile=-/etc/kick-api/kick-api.env
+
+# systemd sandboxing and Pi resource ceilings. Network access remains enabled
+# because Kick, mDNS multicast, fallback scanning, and Chromecast control need it.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0077
+StateDirectory=kick-api
+ReadWritePaths=/var/lib/kick-api
+MemoryMax=256M
+TasksMax=256
+LimitNOFILE=4096
 
 [Install]
 WantedBy=multi-user.target

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"kickapi/internal/breaker"
+	"kickapi/internal/buildinfo"
 	"kickapi/internal/cache"
 	"kickapi/internal/obs"
 )
@@ -38,6 +39,20 @@ func (a *App) handleLanguages(w http.ResponseWriter, r *http.Request) {
 // handleLiveness is the minimal liveness probe.
 func (a *App) handleLiveness(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "ok"})
+}
+
+// handleReadiness confirms that configuration, embedded assets, dependencies,
+// and the router were initialized. It deliberately does not depend on Kick.com:
+// an upstream outage must not make systemd restart a healthy local process.
+func (a *App) handleReadiness(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":  "ready",
+		"version": buildinfo.Snapshot(),
+	})
+}
+
+func (a *App) handleVersion(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, buildinfo.Snapshot())
 }
 
 // uptimeSeconds returns whole seconds since start (matches round(monotonic-start)).
@@ -75,6 +90,7 @@ func (a *App) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, status, map[string]any{
 		"status":         overall,
 		"uptime_seconds": a.uptimeSeconds(),
+		"version":        buildinfo.Snapshot(),
 		"components": map[string]any{
 			"cache": cacheStatus,
 			// Backwards-compatible legacy field.

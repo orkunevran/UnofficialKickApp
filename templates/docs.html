@@ -130,12 +130,14 @@
 <body>
 <div class="layout">
   <aside class="side">
-    <div class="brand"><span class="logo">KICK</span> App <span class="ver">v3.1.0</span></div>
+    <div class="brand"><span class="logo">KICK</span> App <span class="ver">v4.0.0</span></div>
     <a class="back" href="/">← Back to app</a>
 
     <h4>System</h4>
     <a href="#health"><span class="m get">GET</span> /health</a>
     <a href="#health-live"><span class="m get">GET</span> /health/live</a>
+    <a href="#health-ready"><span class="m get">GET</span> /health/ready</a>
+    <a href="#version"><span class="m get">GET</span> /version</a>
     <a href="#metrics"><span class="m get">GET</span> /metrics</a>
     <a href="#languages"><span class="m get">GET</span> /config/languages</a>
 
@@ -207,6 +209,18 @@
         <p class="desc">Minimal liveness probe (used by the container healthcheck).</p>
         <div class="label">200 response</div>
         <pre>{ "status": "ok" }</pre>
+      </div>
+
+      <div class="ep" id="health-ready">
+        <div class="ep-head"><span class="method get">GET</span><span class="path">/health/ready</span></div>
+        <p class="desc">Local initialization readiness and running build identity. It deliberately does not depend on Kick.com availability.</p>
+        <div class="label">200 response</div>
+        <pre>{ "status": "ready", "version": { "version": "4.0.0-…", "commit": "…", "built_at": "…" } }</pre>
+      </div>
+
+      <div class="ep" id="version">
+        <div class="ep-head"><span class="method get">GET</span><span class="path">/version</span></div>
+        <p class="desc">Version, source commit, and UTC build timestamp embedded in the running binary.</p>
       </div>
 
       <div class="ep" id="metrics">
@@ -360,6 +374,8 @@
     <!-- ── Chromecast ─────────────────────────────────────────── -->
     <section>
       <h2>Chromecast</h2>
+
+      <div class="note"><strong>Control authentication.</strong> In production, discovery and all POST routes require the per-install control token. Send <code>Authorization: Bearer &lt;token&gt;</code>, or let the SPA exchange it through <code>POST /api/control/session</code> for an HttpOnly SameSite cookie. Chromecast POST bodies must use <code>application/json</code>.</div>
 
       <div class="ep" id="cc-devices">
         <div class="ep-head"><span class="method get">GET</span><span class="path">/api/chromecast/devices</span></div>

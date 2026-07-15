@@ -1,4 +1,5 @@
-# Production deployment for the Raspberry Pi (replaces the systemd service).
+# Legacy container example for the Raspberry Pi. Production uses the hardened
+# systemd unit and scripts/deploy-pi.sh; do not run both because they bind :8081.
 #
 #   docker compose -f docker-compose.pi.yaml up -d --build
 #
@@ -37,7 +38,7 @@ services:
       CHROMECAST_SELECT_MAX_RETRIES: "2"
       CHROMECAST_SELECT_RETRY_DELAY: "2"
       CHROMECAST_DEVICE_CACHE_SECONDS: "30"
-      CHROMECAST_FALLBACK_SCAN_SUBNETS: "192.168.68.0/24,192.168.0.0/24,192.168.1.0/24,10.0.0.0/24"
+      CHROMECAST_FALLBACK_SCAN_SUBNETS: "192.168.0.0/24,192.168.1.0/24,10.0.0.0/24"
     healthcheck:
       test: ["CMD", "/kick-api", "-healthcheck"]
       interval: 30s

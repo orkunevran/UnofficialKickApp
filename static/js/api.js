@@ -224,17 +224,40 @@ export async function fetchBatchViewerCounts(livestreamIds) {
 
 // ── Chromecast API ───────────────────────────────────────────────────────
 
+async function unlockChromecastControl() {
+    const token = window.prompt('Enter the Chromecast control token shown by the Raspberry Pi deployment:');
+    if (!token?.trim()) return false;
+    const response = await fetchWithTimeout('/api/control/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: token.trim() }),
+    }, 10000);
+    if (!response.ok) {
+        window.alert('The Chromecast control token was not accepted.');
+        return false;
+    }
+    return true;
+}
+
+async function fetchChromecastControl(url, options = {}, timeoutMs = API_TIMEOUT_MS) {
+    let response = await fetchWithTimeout(url, options, timeoutMs);
+    if (response.status !== 401) return response;
+    if (!await unlockChromecastControl()) return response;
+    response = await fetchWithTimeout(url, options, timeoutMs);
+    return response;
+}
+
 export async function fetchChromecastDevices(force = false, knownHosts = null) {
     const url = new URL('/api/chromecast/devices', window.location.origin);
     if (force) url.searchParams.set('force', 'true');
     if (knownHosts) url.searchParams.set('known_hosts', knownHosts);
-    const response = await fetchWithTimeout(url, {}, 10000);
+    const response = await fetchChromecastControl(url, {}, 10000);
     if (!response.ok) throw new Error('Failed to discover devices');
     return await response.json();
 }
 
 export async function postChromecastSelect(uuid) {
-    const response = await fetchWithTimeout('/api/chromecast/select', {
+    const response = await fetchChromecastControl('/api/chromecast/select', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ uuid }),
@@ -243,7 +266,7 @@ export async function postChromecastSelect(uuid) {
 }
 
 export async function postChromecastCast(streamUrl, title) {
-    const response = await fetchWithTimeout('/api/chromecast/cast', {
+    const response = await fetchChromecastControl('/api/chromecast/cast', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ stream_url: streamUrl, title }),
@@ -253,7 +276,7 @@ export async function postChromecastCast(streamUrl, title) {
 }
 
 export async function postChromecastStop(uuid) {
-    const response = await fetchWithTimeout('/api/chromecast/stop', {
+    const response = await fetchChromecastControl('/api/chromecast/stop', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ uuid }),
@@ -268,7 +291,7 @@ export async function fetchChromecastStatus() {
 }
 
 export async function postChromecastPlay() {
-    const response = await fetchWithTimeout('/api/chromecast/play', {
+    const response = await fetchChromecastControl('/api/chromecast/play', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
     });
@@ -276,7 +299,7 @@ export async function postChromecastPlay() {
 }
 
 export async function postChromecastPause() {
-    const response = await fetchWithTimeout('/api/chromecast/pause', {
+    const response = await fetchChromecastControl('/api/chromecast/pause', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
     });
@@ -284,7 +307,7 @@ export async function postChromecastPause() {
 }
 
 export async function postChromecastVolume(level) {
-    const response = await fetchWithTimeout('/api/chromecast/volume', {
+    const response = await fetchChromecastControl('/api/chromecast/volume', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ level }),
@@ -293,7 +316,7 @@ export async function postChromecastVolume(level) {
 }
 
 export async function postChromecastSeek(position) {
-    const response = await fetchWithTimeout('/api/chromecast/seek', {
+    const response = await fetchChromecastControl('/api/chromecast/seek', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ position }),

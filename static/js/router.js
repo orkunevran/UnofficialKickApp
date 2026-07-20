@@ -98,6 +98,7 @@ async function resolve() {
 
     // Update sidebar active state
     updateSidebarActive(path);
+    announceRoute(path);
 
     if (contentArea) contentArea.setAttribute('aria-busy', 'true');
     try {
@@ -156,13 +157,31 @@ function updateSidebarActive(path) {
     document.querySelectorAll('[data-nav-route]').forEach(el => {
         const navRoute = el.dataset.navRoute;
         const isActive = path === navRoute || (navRoute !== '/browse' && path.startsWith(navRoute));
-        el.classList.toggle('active', isActive);
+        _setNavActive(el, isActive);
     });
     // Special case: /browse is default and also matches /channel
-    const browseNav = document.querySelector('[data-nav-route="/browse"]');
-    if (browseNav) {
-        browseNav.classList.toggle('active', path === '/browse' || path.startsWith('/channel'));
-    }
+    const browseNav = document.querySelectorAll('[data-nav-route="/browse"]');
+    browseNav.forEach(el => _setNavActive(el, path === '/browse' || path.startsWith('/channel')));
+}
+
+// Reflect active nav both visually (class) and semantically (aria-current) so
+// screen-reader users know which section they're in.
+function _setNavActive(el, isActive) {
+    el.classList.toggle('active', isActive);
+    if (isActive) el.setAttribute('aria-current', 'page');
+    else el.removeAttribute('aria-current');
+}
+
+// Announce the current view into the dedicated live region (see index.html).
+function announceRoute(path) {
+    const region = document.getElementById('route-announcer');
+    if (!region) return;
+    let name = 'Browse';
+    if (path.startsWith('/favorites')) name = 'Favorites';
+    else if (path.startsWith('/history')) name = 'History';
+    else if (path.startsWith('/settings')) name = 'Settings';
+    else if (path.startsWith('/channel/')) name = `${decodeURIComponent(path.split('/')[2] || '')} channel`;
+    region.textContent = `${name} page`;
 }
 
 let initialized = false;

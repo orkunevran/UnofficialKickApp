@@ -13,6 +13,7 @@
  */
 
 import { castStream } from './chromecast_logic.js';
+import { toast } from './toast.js';
 
 // ── State ────────────────────────────────────────────────────────────────
 
@@ -22,6 +23,12 @@ let _currentStream = null;    // { slug, title, channel, playbackUrl, thumbnailU
 let _cachedChannelData = null;
 let _fullSlot = null;
 let _videoEventsBound = false;
+
+// Playback-error recovery/reporting state.
+let _lastLoad = null;         // { playbackUrl, streamInfo, channelData } — for Retry
+let _hlsRecoverCount = 0;     // consecutive fatal-error recovery attempts
+let _errorShown = false;      // suppress duplicate error toasts for one failure
+const _MAX_HLS_RECOVER = 3;
 
 // Picture-in-picture geometry (persisted). The mini-player is a floating,
 // draggable, resizable 16:9 window — not a bottom bar with a size slider.
@@ -48,10 +55,13 @@ function _isSafari() {
     return document.documentElement.classList.contains('safari');
 }
 
-// Below 768px the mini-player docks as a fixed bottom bar (styled in CSS);
-// the floating/draggable PiP geometry is desktop-only.
-function _isMobile() {
-    return window.matchMedia('(max-width: 767px)').matches;
+// The mini-player docks as a fixed bottom bar (styled in CSS) on touch devices
+// — phones AND touch tablets (e.g. iPads) — where a floating, drag/resizable
+// PiP just overlaps content. Only fine-pointer desktops keep the draggable
+// floating PiP. Both this predicate and the CSS dock breakpoints must agree.
+function _shouldDock() {
+    return window.matchMedia('(max-width: 767px)').matches
+        || window.matchMedia('(hover: none) and (pointer: coarse) and (max-width: 1199px)').matches;
 }
 
 // A phone in landscape (short + wide): a live stream in full mode goes into the
@@ -106,6 +116,18 @@ function _bindVideoStateEvents() {
     video.addEventListener('pause', syncPaused);
     video.addEventListener('ended', syncPaused);
     video.addEventListener('emptied', syncPaused);
+    // Native-HLS (Safari) and direct MP4/WebM failures surface on the element.
+    // (HLS.js media/network errors come through Hls.Events.ERROR instead.)
+    video.addEventListener('error', () => {
+        if (!_currentStream || _mode === 'hidden') return; // ignore teardown noise
+        _showPlaybackError();
+    });
+    // A frame started rendering → recovery succeeded; clear any error UI and
+    // restore the full recovery budget. Without resetting _hlsRecoverCount here
+    // the cap becomes cumulative over the whole session (startLoad/recoverMediaError
+    // resume without re-firing MANIFEST_PARSED), and a 4th transient error hours
+    // later would permanently tear down an otherwise-healthy stream.
+    video.addEventListener('playing', () => { _errorShown = false; _hlsRecoverCount = 0; _clearPlaybackError(); });
     _videoEventsBound = true;
 }
 
@@ -127,8 +149,10 @@ function _pipMaxW() {
 }
 
 // Default bottom-right anchor; clears the mobile nav on narrow viewports.
+// The mobile bottom nav only exists below 768px, so use a strict < 768 here
+// (at exactly 768px there is no nav to clear).
 function _pipMargin() {
-    return window.innerWidth <= 768 ? 84 : 24;
+    return window.innerWidth < 768 ? 84 : 24;
 }
 
 function _cardHeightFor(width) {
@@ -140,8 +164,9 @@ function _cardHeightFor(width) {
 function _applyPipGeometry() {
     const card = _miniPlayer();
     if (!card) return;
-    // On mobile the bar is docked via CSS — don't impose floating coordinates.
-    if (_isMobile()) return;
+    // When docked (touch phones/tablets) the bar is positioned via CSS — don't
+    // impose floating coordinates.
+    if (_shouldDock()) return;
     // Skip while the viewport has no layout (zero size during route
     // transitions / background tabs); applying now would clamp the window into
     // the corner. A later resize/render recomputes once dimensions are real.
@@ -271,6 +296,13 @@ export function loadStream(playbackUrl, streamInfo, channelData) {
 
     _bindVideoStateEvents();
 
+    // Remember the source so a Retry (from the error UI) can reload it, and
+    // reset the per-load error/recovery state.
+    _lastLoad = { playbackUrl, streamInfo, channelData };
+    _hlsRecoverCount = 0;
+    _errorShown = false;
+    _clearPlaybackError();
+
     if (_hlsInstance) {
         _hlsInstance.destroy();
         _hlsInstance = null;
@@ -308,8 +340,29 @@ export function loadStream(playbackUrl, streamInfo, channelData) {
         hls.attachMedia(video);
         _hlsInstance = hls;
         hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
+            _hlsRecoverCount = 0;   // successful (re)load
+            _errorShown = false;
+            _clearPlaybackError();
             video.muted = true;
             video.play().catch(() => {});
+        });
+        hls.on(window.Hls.Events.ERROR, (_evt, data) => {
+            if (!data || !data.fatal) return; // non-fatal errors auto-recover
+            if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR && _hlsRecoverCount < _MAX_HLS_RECOVER) {
+                _hlsRecoverCount++;
+                hls.startLoad();               // e.g. dropped segment → resume loading
+                return;
+            }
+            if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR && _hlsRecoverCount < _MAX_HLS_RECOVER) {
+                _hlsRecoverCount++;
+                hls.recoverMediaError();        // e.g. buffer stall / decode error
+                return;
+            }
+            // Unrecoverable (or retries exhausted): surface it instead of a
+            // silent black box.
+            hls.destroy();
+            if (_hlsInstance === hls) _hlsInstance = null;
+            _showPlaybackError();
         });
         return;
     }
@@ -505,6 +558,12 @@ function _initPipInteractions() {
 
     thumb.addEventListener('pointerdown', (e) => {
         if (e.button !== 0 || e.target === handle) return;
+        // Docked (touch) layout: the thumb is tap-to-open only. Skip the drag
+        // machinery AND the interaction lock — the lock sets pointer-events:none
+        // on #app/.mobile-nav, which would turn the docked thumb into a scroll
+        // dead-zone and briefly freeze the nav on every touch. (Open is handled
+        // by the click listener below.)
+        if (_shouldDock()) return;
         e.preventDefault();
         dragging = true;
         moved = false;
@@ -519,7 +578,7 @@ function _initPipInteractions() {
     });
 
     thumb.addEventListener('pointermove', (e) => {
-        if (!dragging || _isMobile()) return; // docked bar — no drag-to-move on mobile
+        if (!dragging || _shouldDock()) return; // docked bar — no drag-to-move on touch
         e.preventDefault();
         const dx = e.clientX - startX;
         const dy = e.clientY - startY;
@@ -541,12 +600,20 @@ function _initPipInteractions() {
     thumb.addEventListener('pointerup', endDrag);
     thumb.addEventListener('pointercancel', endDrag);
 
+    // Docked (touch) layout: no drag machinery runs, so open the channel on a
+    // plain click/tap. Guarded by _shouldDock() so it's a no-op on desktop,
+    // where endDrag already handles tap-to-open (and this click still fires).
+    thumb.addEventListener('click', () => {
+        if (_shouldDock()) _openCurrentChannel();
+    });
+
     // ── Drag the corner handle to resize (16:9 locked) ──
     if (!handle) return;
     let resizing = false, rStartX = 0, rBaseW = 0;
 
     handle.addEventListener('pointerdown', (e) => {
         if (e.button !== 0) return;
+        if (_shouldDock()) return; // no resize on docked (touch) layouts
         e.preventDefault();
         e.stopPropagation();
         resizing = true;
@@ -558,7 +625,7 @@ function _initPipInteractions() {
     });
 
     handle.addEventListener('pointermove', (e) => {
-        if (!resizing || _isMobile()) return; // docked bar — no resize on mobile
+        if (!resizing || _shouldDock()) return; // docked bar — no resize on touch
         e.preventDefault();
         _pipW = rBaseW + (e.clientX - rStartX);
         _applyPipGeometry();
@@ -577,6 +644,40 @@ function _initPipInteractions() {
 }
 
 // ── Private helpers ──────────────────────────────────────────────────────
+
+// Surface a playback failure (dead/offline stream, blocked manifest, decode
+// error) instead of leaving a silent black box. Shows an inline message in the
+// channel slot when it's visible, plus a Retry toast. Guarded so one failure
+// doesn't spam duplicate toasts.
+function _showPlaybackError() {
+    if (_mode === 'full' && _fullSlot && !_isLandscapePhone() && !_fullSlot.querySelector('.player-error')) {
+        const overlay = document.createElement('div');
+        overlay.className = 'player-error';
+        overlay.setAttribute('role', 'alert');
+        overlay.innerHTML = `
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="13"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            <p class="player-error-title">Playback failed</p>
+            <p class="player-error-hint">This stream couldn't be loaded — it may be offline.</p>
+            <button type="button" class="player-error-retry">Retry</button>`;
+        _fullSlot.appendChild(overlay);
+        overlay.querySelector('.player-error-retry')?.addEventListener('click', _retryLoad);
+    }
+    if (_errorShown) return;
+    _errorShown = true;
+    toast('Playback failed', 'error', {
+        action: { label: 'Retry', onClick: _retryLoad },
+    });
+}
+
+function _retryLoad() {
+    if (!_lastLoad) return;
+    _clearPlaybackError();
+    loadStream(_lastLoad.playbackUrl, _lastLoad.streamInfo, _lastLoad.channelData);
+}
+
+function _clearPlaybackError() {
+    document.querySelectorAll('.player-error').forEach((el) => el.remove());
+}
 
 function _togglePlayPause() {
     const video = _video();

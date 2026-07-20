@@ -42,6 +42,14 @@ function renderEmptyState() {
 }
 
 export async function mount(params, contentEl) {
+    // The Undo actions below re-render by calling mount() again in place. The
+    // router only runs the returned cleanup on a real route change, so without
+    // this an in-place re-mount would stack another delegated click listener on
+    // contentEl (→ duplicate toasts, leaked handlers). Remove our own prior one.
+    if (contentEl._historyClickHandler) {
+        contentEl.removeEventListener('click', contentEl._historyClickHandler);
+        contentEl._historyClickHandler = null;
+    }
     const history = getHistory();
 
     contentEl.innerHTML = `
@@ -129,8 +137,15 @@ export async function mount(params, contentEl) {
     };
 
     contentEl.addEventListener('click', handleClick);
+    contentEl._historyClickHandler = handleClick;
 
     return () => {
-        contentEl.removeEventListener('click', handleClick);
+        // Remove whatever handler is CURRENTLY tracked, not the one captured in
+        // this closure — an in-place Undo re-mount replaces the handler, and the
+        // router may still hold a stale cleanup closing over an earlier one.
+        if (contentEl._historyClickHandler) {
+            contentEl.removeEventListener('click', contentEl._historyClickHandler);
+            contentEl._historyClickHandler = null;
+        }
     };
 }

@@ -257,7 +257,28 @@ function applyPageResult(cache, metaCache, result) {
     });
 }
 
+function sortPillAriaLabel(label, isActive, direction) {
+    if (!isActive) return `Sort by ${label}`;
+    return `Sort by ${label}, ${direction === 'asc' ? 'ascending' : 'descending'}`;
+}
+
 function rebuildAndRender(contentEl, { renderMode = 'full' } = {}) {
+    // Loading state: after a filter/language change the page cache is cleared,
+    // so rendering the merged (empty) stream list would flash the "No streams
+    // found" empty state during the fetch — contradicting the action the user
+    // just took. Render a skeleton grid instead until real data arrives.
+    if (renderMode === 'skeleton') {
+        const gridContainer = contentEl?.querySelector('#browse-grid');
+        if (gridContainer) {
+            gridContainer.innerHTML = `<div class="stream-grid">${renderCardSkeleton(8)}</div>`;
+        }
+        const countEl = contentEl?.querySelector('#stream-count');
+        if (countEl) countEl.textContent = '';
+        const sentinel = contentEl?.querySelector('#scroll-sentinel');
+        if (sentinel) sentinel.style.display = 'none';
+        return;
+    }
+
     const merged = mergePagesIntoStreams();
     appState.featuredStreams = applyFeaturedStreamsSort(merged, featuredSortState);
     appState.searchPool = [...appState.featuredStreams];
@@ -350,7 +371,7 @@ async function loadInitialPages(language, contentEl, browseView, forceClear = fa
         hasNextPage = true;
         evictedStreamCount = 0;
         pageHeightEstimate = 0;
-        rebuildAndRender(contentEl, { renderMode: 'full' }); // Render skeleton immediately
+        rebuildAndRender(contentEl, { renderMode: 'skeleton' }); // Show skeleton during the fetch
     }
 
     const generation = ++refreshGeneration;
@@ -569,6 +590,11 @@ async function loadNextScrollPage(contentEl) {
         prefetchNextPage();
     } catch (err) {
         console.error('Error loading next page:', err);
+        // Don't leave a dead-end grid with a vanished spinner — offer a retry,
+        // mirroring the initial-load failure path.
+        toast('Couldn’t load more streams', 'error', {
+            action: { label: 'Retry', onClick: () => { void loadNextScrollPage(contentEl); } },
+        });
     } finally {
         scrollLoadInFlight = false;
         updateSentinel(contentEl);
@@ -659,21 +685,21 @@ export async function mount(params, contentEl) {
                     <option value="">All Categories</option>
                 </select>
 
-                <div class="sort-pills">
+                <div class="sort-pills" role="group" aria-label="Sort streams">
                     ${['viewer_count', 'session_title', 'channel.user.username'].map(col => {
                         const label = col === 'viewer_count' ? 'Viewers' : col === 'session_title' ? 'Title' : 'Channel';
                         const type = col === 'viewer_count' ? 'number' : 'string';
                         const isActive = featuredSortState.column === col;
                         const cls = isActive ? `sort-pill active ${featuredSortState.direction}` : 'sort-pill';
-                        return `<button class="${cls}" data-sort="${col}" data-type="${type}">${label}</button>`;
+                        return `<button class="${cls}" data-sort="${col}" data-type="${type}" aria-pressed="${isActive}" aria-label="${sortPillAriaLabel(label, isActive, featuredSortState.direction)}">${label}</button>`;
                     }).join('')}
                 </div>
 
-                <div class="view-toggle">
-                    <button class="view-toggle-btn ${preferences.viewMode === 'grid' ? 'active' : ''}" data-view="grid" title="Grid view">
+                <div class="view-toggle" role="group" aria-label="View mode">
+                    <button class="view-toggle-btn ${preferences.viewMode === 'grid' ? 'active' : ''}" data-view="grid" title="Grid view" aria-label="Grid view" aria-pressed="${preferences.viewMode === 'grid'}">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
                     </button>
-                    <button class="view-toggle-btn ${preferences.viewMode === 'list' ? 'active' : ''}" data-view="list" title="List view">
+                    <button class="view-toggle-btn ${preferences.viewMode === 'list' ? 'active' : ''}" data-view="list" title="List view" aria-label="List view" aria-pressed="${preferences.viewMode === 'list'}">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
                     </button>
                 </div>
@@ -729,7 +755,11 @@ export async function mount(params, contentEl) {
         const mode = btn.dataset.view;
         preferences.viewMode = mode;
         localStorage.setItem('kick-api-preferences', JSON.stringify(preferences));
-        contentEl.querySelectorAll('.view-toggle-btn').forEach(b => b.classList.toggle('active', b.dataset.view === mode));
+        contentEl.querySelectorAll('.view-toggle-btn').forEach(b => {
+            const isActive = b.dataset.view === mode;
+            b.classList.toggle('active', isActive);
+            b.setAttribute('aria-pressed', String(isActive));
+        });
         rebuildAndRender(contentEl);
     };
     const viewToggleEl = browseView.querySelector('.view-toggle');
@@ -752,8 +782,14 @@ export async function mount(params, contentEl) {
         // Update pill states
         contentEl.querySelectorAll('.sort-pill').forEach(p => {
             p.classList.remove('active', 'asc', 'desc');
+            p.setAttribute('aria-pressed', 'false');
+            const plabel = p.dataset.sort === 'viewer_count' ? 'Viewers' : p.dataset.sort === 'session_title' ? 'Title' : 'Channel';
+            p.setAttribute('aria-label', sortPillAriaLabel(plabel, false, featuredSortState.direction));
         });
         pill.classList.add('active', featuredSortState.direction);
+        pill.setAttribute('aria-pressed', 'true');
+        const activeLabel = col === 'viewer_count' ? 'Viewers' : col === 'session_title' ? 'Title' : 'Channel';
+        pill.setAttribute('aria-label', sortPillAriaLabel(activeLabel, true, featuredSortState.direction));
 
         if (currentCategory && col === 'viewer_count') {
             void loadInitialPages(currentLanguage, contentEl, browseView, true);

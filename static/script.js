@@ -104,7 +104,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const btn = document.getElementById('theme-toggle-btn');
         if (btn) {
             const labels = { system: 'Theme: System', light: 'Theme: Light', dark: 'Theme: Dark' };
-            btn.title = labels[pref] || labels.system;
+            const label = labels[pref] || labels.system;
+            btn.title = label;
+            // Update aria-label too — it overrides the accessible name, so a
+            // static "Toggle theme" would hide the current state from SR users.
+            btn.setAttribute('aria-label', `${label} (activate to change)`);
         }
     }
 
@@ -270,11 +274,34 @@ syncClearVisibility(); // Initialize state on load
     };
 
     const onSelect = (slug) => {
-        input.value = slug;
+        // Clear the box explicitly here: navigate() uses pushState (no
+        // hashchange), and focus stays on the input after picking a result, so
+        // the hashchange-based clearSearchField() below would not fire for this
+        // path. Leaving the typed query would look like a pending search.
+        input.value = '';
+        input.setAttribute('aria-expanded', 'false');
+        input.removeAttribute('aria-activedescendant');
         hideSuggestions();
         syncClearButton();
+        syncClearVisibility();
         navigate(`/channel/${slug}`);
     };
+
+    // Reset the search field whenever the route changes, so a picked result or
+    // the current channel's slug doesn't linger in the box (looking like a
+    // pending search) after you move to Browse / Favorites / Settings.
+    const clearSearchField = () => {
+        if (document.activeElement === input) return; // don't fight active typing
+        if (input.value === '') return;
+        cancelActiveSearch();
+        input.value = '';
+        hideSuggestions();
+        input.setAttribute('aria-expanded', 'false');
+        input.removeAttribute('aria-activedescendant');
+        syncClearButton();
+        syncClearVisibility();
+    };
+    window.addEventListener('hashchange', clearSearchField);
 
     const getPool = () => (appState.searchPool.length > 0 ? appState.searchPool : appState.featuredStreams);
 
@@ -344,13 +371,22 @@ syncClearVisibility(); // Initialize state on load
         // Tier 1: local search (instant, no debounce)
         const pool = getPool();
         const localRes = fetchSearchResults(q, pool);
+        const willSearchRemote = q.length >= REMOTE_SEARCH_MIN_CHARS;
         if (localRes.data.length > 0) {
             renderSearchResults(localRes.data, onSelect);
-        } else {
+        } else if (willSearchRemote) {
+            // Only show the loading spinner when a server search is actually
+            // about to run — otherwise (e.g. a 2–3 char query like "xqc") the
+            // spinner would never resolve and hang on "Searching channels…".
             renderSearchLoading();
+        } else {
+            // Too short for a server search and no local match: show the empty
+            // state (with the "press Enter to visit directly" hint) rather than
+            // a spinner that never clears.
+            renderSearchEmpty();
         }
 
-        if (q.length < REMOTE_SEARCH_MIN_CHARS) return;
+        if (!willSearchRemote) return;
 
         remoteSearchDebounce = setTimeout(async () => {
             if (mySeq !== searchSeqId) return;

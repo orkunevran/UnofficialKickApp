@@ -32,6 +32,7 @@ let discoveredDevices = [];
 let pendingCastRequest = null;
 let chromecastListenersBound = false;
 let focusTrapHandler = null;
+let modalReturnFocus = null; // element focus is restored to when the modal closes
 let silentRefreshTimer = null;
 let isDevicePlaying = false;
 let isUserSeeking = false;
@@ -241,8 +242,16 @@ function _updateCastVisibility() {
 function openModal() {
     const modal = document.getElementById('chromecast-modal');
     if (!modal) return;
+    // Remember what to return focus to, then move focus into the dialog. #app
+    // goes inert while the modal is visible, so without this focus would be
+    // stranded on the now-inert trigger and the dialog wouldn't be announced.
+    modalReturnFocus = (document.activeElement instanceof HTMLElement) ? document.activeElement : null;
     modal.style.display = 'block';
-    requestAnimationFrame(() => modal.classList.add('visible'));
+    requestAnimationFrame(() => {
+        modal.classList.add('visible');
+        const focusTarget = modal.querySelector('.close-button') || modal.querySelector('.modal-content');
+        try { focusTarget?.focus(); } catch { /* no-op */ }
+    });
 
     // Focus trap
     const content = modal.querySelector('.modal-content');
@@ -290,6 +299,15 @@ function closeModal() {
     pendingCastRequest = null;
     const hostInput = document.getElementById('chromecast-host-input');
     if (hostInput) hostInput.value = '';
+    // Restore focus to the element that opened the modal, so keyboard/SR users
+    // don't lose their place. Deferred a frame: the #app `inert` attribute is
+    // cleared by a MutationObserver (async) when `.visible` is removed above, and
+    // focus() is a no-op while the target's ancestor is still inert.
+    const returnTo = modalReturnFocus;
+    modalReturnFocus = null;
+    if (returnTo && document.contains(returnTo)) {
+        requestAnimationFrame(() => { try { returnTo.focus(); } catch { /* no-op */ } });
+    }
 }
 
 // ── Host discovery (advanced) ────────────────────────────────────────────

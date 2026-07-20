@@ -433,7 +433,7 @@ export function renderChannelProfile(data, channelSlug, { activeTab = 'stream' }
         </div>
 
         <div class="profile-tabs" role="tablist" aria-label="Channel content">
-            ${tabs.map(t => `<button class="profile-tab ${t === activeTab ? 'active' : ''}" data-tab="${t}" role="tab" aria-selected="${t === activeTab}" aria-controls="profile-tab-content" id="tab-${t}">${tabLabels[t]}</button>`).join('')}
+            ${tabs.map(t => `<button class="profile-tab ${t === activeTab ? 'active' : ''}" data-tab="${t}" role="tab" aria-selected="${t === activeTab}" tabindex="${t === activeTab ? '0' : '-1'}" aria-controls="profile-tab-content" id="tab-${t}">${tabLabels[t]}</button>`).join('')}
         </div>
 
         <div id="profile-tab-content" role="tabpanel" aria-labelledby="tab-${activeTab}"></div>
@@ -485,6 +485,13 @@ export function renderStreamTabContent(data, channelSlug) {
         </div>
 
         <div class="stream-actions">
+            <!-- Populated/unhidden by player controls in channel.js once the HLS
+                 levels are known / PiP is supported. -->
+            <div id="quality-picker" class="quality-picker hidden"></div>
+            <button id="pip-button" class="btn-secondary pip-button hidden" type="button" title="Picture-in-Picture" aria-label="Picture-in-Picture">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><rect x="12" y="12" width="8" height="6" rx="1" fill="currentColor" stroke="none"/></svg>
+                PiP
+            </button>
             <button class="copy-button" data-url="${escapeHtml(d.playback_url || '')}">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
                 Copy Stream URL

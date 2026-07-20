@@ -69,9 +69,18 @@ function _initPipButton() {
     }
 }
 
-function _renderQualityPicker(hls) {
+function _renderQualityPicker(hls, _attempt = 0) {
     const container = document.getElementById('quality-picker');
-    if (!container || !hls?.levels?.length) return;
+    if (!container || !hls) return;
+    // Levels aren't populated until the manifest is parsed (async, after this
+    // is first called). Poll briefly rather than depend on event timing; bail
+    // if a different stream took over the picker meanwhile.
+    if (!hls.levels?.length) {
+        if (_attempt < 20 && getHlsInstance() === hls) {
+            setTimeout(() => _renderQualityPicker(hls, _attempt + 1), 300);
+        }
+        return;
+    }
 
     const levels = hls.levels.map((l, i) => ({
         index: i,
@@ -90,6 +99,26 @@ function _renderQualityPicker(hls) {
     container.querySelector('#quality-select')?.addEventListener('change', (e) => {
         hls.currentLevel = parseInt(e.target.value, 10);
     });
+}
+
+// Inline "no matches" state for the VOD/Clip title filters. Without it, a
+// zero-match query hides every card and leaves a blank area that looks broken.
+function _toggleSearchEmptyState(container, show, term, kind) {
+    let el = container.querySelector('.search-no-results');
+    if (show) {
+        if (!el) {
+            el = document.createElement('div');
+            el.className = 'search-no-results empty-state';
+            container.appendChild(el);
+        }
+        el.innerHTML = `
+            <div class="empty-state-icon"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div>
+            <div class="empty-state-title">No ${kind} found</div>
+            <div class="empty-state-text"></div>`;
+        el.querySelector('.empty-state-text').textContent = `Nothing matches “${term}”.`;
+    } else if (el) {
+        el.remove();
+    }
 }
 
 function startViewerRefresh(livestreamId) {
@@ -192,11 +221,15 @@ function renderTabContent(tab, liveData, vodsData, clipsData, channelSlug) {
             const vodSearch = document.getElementById('vodSearchInput');
             if (vodSearch) {
                 vodSearch.addEventListener('input', debounce((e) => {
-                    const term = e.target.value.toLowerCase();
+                    const term = e.target.value.trim().toLowerCase();
+                    let visible = 0;
                     tabContent.querySelectorAll('.vod-card').forEach(card => {
                         const title = card.dataset.title || '';
-                        card.style.display = (!term || title.includes(term)) ? '' : 'none';
+                        const match = !term || title.includes(term);
+                        card.style.display = match ? '' : 'none';
+                        if (match) visible++;
                     });
+                    _toggleSearchEmptyState(tabContent, !!term && visible === 0, e.target.value.trim(), 'VODs');
                 }, 200));
             }
 
@@ -264,11 +297,15 @@ function renderTabContent(tab, liveData, vodsData, clipsData, channelSlug) {
             const clipSearch = document.getElementById('clipSearchInput');
             if (clipSearch) {
                 clipSearch.addEventListener('input', debounce((e) => {
-                    const term = e.target.value.toLowerCase();
+                    const term = e.target.value.trim().toLowerCase();
+                    let visible = 0;
                     tabContent.querySelectorAll('.vod-card').forEach(card => {
                         const title = card.dataset.title || '';
-                        card.style.display = (!term || title.includes(term)) ? '' : 'none';
+                        const match = !term || title.includes(term);
+                        card.style.display = match ? '' : 'none';
+                        if (match) visible++;
                     });
+                    _toggleSearchEmptyState(tabContent, !!term && visible === 0, e.target.value.trim(), 'clips');
                 }, 200));
             }
 
@@ -316,8 +353,9 @@ export async function mount(params, contentEl) {
         return;
     }
 
-    const searchInput = document.getElementById('channelSlugInput');
-    if (searchInput) searchInput.value = channelSlug;
+    // Note: we intentionally do NOT mirror the channel slug into the global
+    // search box — it's a search field, not a location indicator, and leaving
+    // the slug there made it look like a pending search across every route.
 
     let liveData, vodsData = null, clipsData = null;
     let activeTab = 'stream';
@@ -416,11 +454,8 @@ export async function mount(params, contentEl) {
     }).catch(() => {});
 
     // Tab switching
-    const onTabClick = (e) => {
-        const tab = e.target.closest('.profile-tab');
-        if (!tab) return;
-        const tabName = tab.dataset.tab;
-        if (tabName === activeTab) return;
+    const switchToTab = (tabName) => {
+        if (!tabName || tabName === activeTab) return;
 
         // When leaving stream tab, switch video to hidden (but keep stream alive
         // in case user switches back) — or to mini if navigating away entirely
@@ -435,19 +470,42 @@ export async function mount(params, contentEl) {
             const isActive = t.dataset.tab === tabName;
             t.classList.toggle('active', isActive);
             t.setAttribute('aria-selected', String(isActive));
+            // Roving tabindex: only the active tab is in the Tab order.
+            t.setAttribute('tabindex', isActive ? '0' : '-1');
         });
         const tabPanel = document.getElementById('profile-tab-content');
         if (tabPanel) tabPanel.setAttribute('aria-labelledby', `tab-${tabName}`);
 
         renderTabContent(tabName, liveData, vodsData, clipsData, channelSlug);
     };
+    const onTabClick = (e) => {
+        const tab = e.target.closest('.profile-tab');
+        if (tab) switchToTab(tab.dataset.tab);
+    };
+    // APG tabs keyboard pattern: Arrow keys move between tabs, Home/End jump.
+    const onTabKeydown = (e) => {
+        const tabsList = [...contentEl.querySelectorAll('.profile-tab')];
+        if (tabsList.length === 0) return;
+        const currentIndex = Math.max(0, tabsList.findIndex(t => t.dataset.tab === activeTab));
+        let nextIndex = null;
+        if (e.key === 'ArrowRight') nextIndex = (currentIndex + 1) % tabsList.length;
+        else if (e.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + tabsList.length) % tabsList.length;
+        else if (e.key === 'Home') nextIndex = 0;
+        else if (e.key === 'End') nextIndex = tabsList.length - 1;
+        else return;
+        e.preventDefault();
+        const nextTab = tabsList[nextIndex];
+        if (nextTab) { switchToTab(nextTab.dataset.tab); nextTab.focus(); }
+    };
     const tabsEl = contentEl.querySelector('.profile-tabs');
     tabsEl?.addEventListener('click', onTabClick);
+    tabsEl?.addEventListener('keydown', onTabKeydown);
 
     // Cleanup — switch to mini mode (stream keeps playing)
     return () => {
         stopViewerRefresh();
         tabsEl?.removeEventListener('click', onTabClick);
+        tabsEl?.removeEventListener('keydown', onTabKeydown);
 
         if (d?.status === 'live' && getCurrentStream()) {
             // Cache the channel data for instant re-render on return

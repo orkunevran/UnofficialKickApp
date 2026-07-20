@@ -21,6 +21,7 @@ function _clearGoPrefix() {
 function _showShortcutsModal() {
     const modal = document.getElementById('shortcuts-modal');
     if (!modal) return;
+    const returnFocus = (document.activeElement instanceof HTMLElement) ? document.activeElement : null;
     modal.style.display = 'block';
     requestAnimationFrame(() => modal.classList.add('visible'));
 
@@ -53,6 +54,10 @@ function _showShortcutsModal() {
         document.removeEventListener('keydown', dismiss);
         modal.removeEventListener('click', onBackdropClick);
         modal.removeEventListener('keydown', trapFocus);
+        // Restore focus to wherever it was (deferred a frame while #app inert clears).
+        if (returnFocus && document.contains(returnFocus)) {
+            requestAnimationFrame(() => { try { returnFocus.focus(); } catch { /* no-op */ } });
+        }
     };
     const onBackdropClick = (e) => {
         if (e.target === modal || e.target.closest('.close-button')) dismiss(e);

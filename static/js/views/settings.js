@@ -79,13 +79,13 @@ export async function mount(params, contentEl) {
                     </select>
                 </div>
             </div>
-            <div class="settings-row">
-                <span class="settings-label">Auto-Refresh</span>
-                <label class="toggle-switch">
-                    <input type="checkbox" id="settings-auto-refresh" ${autoRefresh ? 'checked' : ''}>
+            <label class="settings-row">
+                <span class="settings-label" id="settings-auto-refresh-label">Auto-Refresh</span>
+                <span class="toggle-switch">
+                    <input type="checkbox" id="settings-auto-refresh" role="switch" aria-labelledby="settings-auto-refresh-label" ${autoRefresh ? 'checked' : ''}>
                     <span class="toggle-slider"></span>
-                </label>
-            </div>
+                </span>
+            </label>
             <div class="settings-row ${autoRefresh ? '' : 'settings-row-disabled'}" id="settings-interval-row">
                 <span class="settings-label">Refresh Interval</span>
                 <select id="settings-refresh-interval" class="filter-select">
@@ -100,13 +100,13 @@ export async function mount(params, contentEl) {
 
         <div class="settings-group">
             <div class="settings-group-title">Data</div>
-            <div class="settings-row">
-                <span class="settings-label">History Tracking</span>
-                <label class="toggle-switch">
-                    <input type="checkbox" id="settings-history-enabled" ${historyEnabled ? 'checked' : ''}>
+            <label class="settings-row">
+                <span class="settings-label" id="settings-history-enabled-label">History Tracking</span>
+                <span class="toggle-switch">
+                    <input type="checkbox" id="settings-history-enabled" role="switch" aria-labelledby="settings-history-enabled-label" ${historyEnabled ? 'checked' : ''}>
                     <span class="toggle-slider"></span>
-                </label>
-            </div>
+                </span>
+            </label>
             <div class="settings-row">
                 <span class="settings-label">Clear watch history</span>
                 <button id="settings-clear-history" class="btn-secondary">Clear</button>
@@ -133,11 +133,13 @@ export async function mount(params, contentEl) {
             <div class="settings-group-title">Keyboard Shortcuts</div>
             <div style="font-size:13px;color:var(--text-muted);line-height:2">
                 <div><kbd class="search-kbd" style="display:inline-flex;position:static;margin-right:8px">/</kbd> Focus search</div>
-                <div><kbd class="search-kbd" style="display:inline-flex;position:static;margin-right:8px">Esc</kbd> Close modal / clear search</div>
+                <div><kbd class="search-kbd" style="display:inline-flex;position:static;margin-right:8px">Esc</kbd> Close modal / blur search</div>
                 <div><kbd class="search-kbd" style="display:inline-flex;position:static;margin-right:8px">?</kbd> Show shortcuts help</div>
                 <div><kbd class="search-kbd" style="display:inline-flex;position:static;margin-right:8px">T</kbd> Cycle theme</div>
                 <div><kbd class="search-kbd" style="display:inline-flex;position:static;margin-right:4px">G</kbd><kbd class="search-kbd" style="display:inline-flex;position:static;margin-right:8px">B</kbd> Go to Browse</div>
                 <div><kbd class="search-kbd" style="display:inline-flex;position:static;margin-right:4px">G</kbd><kbd class="search-kbd" style="display:inline-flex;position:static;margin-right:8px">F</kbd> Go to Favorites</div>
+                <div><kbd class="search-kbd" style="display:inline-flex;position:static;margin-right:4px">G</kbd><kbd class="search-kbd" style="display:inline-flex;position:static;margin-right:8px">H</kbd> Go to History</div>
+                <div><kbd class="search-kbd" style="display:inline-flex;position:static;margin-right:4px">G</kbd><kbd class="search-kbd" style="display:inline-flex;position:static;margin-right:8px">S</kbd> Go to Settings</div>
             </div>
         </div>`;
 

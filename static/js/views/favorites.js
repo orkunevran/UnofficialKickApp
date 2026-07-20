@@ -4,11 +4,12 @@
  * then does a single sorted re-render (no flashing).
  */
 
-import { getFavorites, removeFavorite } from '../favorites.js';
+import { getFavorites, removeFavorite, addFavorite } from '../favorites.js';
 import { fetchLiveStatus } from '../api.js';
 import { escapeHtml, initialsAvatar, formatViewerCount } from '../utils.js';
 import { navigate } from '../router.js';
 import { updateFavoritesBadge } from '../ui.js';
+import { toast } from '../toast.js';
 
 // Module-level cache so returning to the tab is instant
 let _cachedResults = null;   // [{fav, liveData}, ...]
@@ -56,10 +57,17 @@ function renderFavoriteCardBody(fav, state) {
         : initialsAvatar(fav.username || fav.slug);
     const bodyAriaLabel = `${state.ariaLabel}${state.viewers != null ? ', ' + formatViewerCount(state.viewers) + ' viewers' : ''}`;
 
+    // On thumbnail load failure: fall back to the profile picture if we have
+    // one, otherwise hide the <img> — never set src='' (which resolves to the
+    // page URL and renders a broken-image glyph).
+    const thumbOnError = fav.profilePicture
+        ? `this.onerror=null;this.src='${escapeHtml(fav.profilePicture)}';this.style.objectFit='contain';this.classList.add('loaded');`
+        : `this.onerror=null;this.style.display='none';`;
+
     return `
             <a class="stream-card-link" href="#/channel/${encodeURIComponent(fav.slug)}" aria-label="${escapeHtml(bodyAriaLabel)}"></a>
             <div class="card-thumbnail">
-                ${state.thumbSrc ? `<img src="${escapeHtml(state.thumbSrc)}" alt="${escapeHtml(fav.username || fav.slug)} stream thumbnail" class="thumb-fade" loading="lazy" decoding="async" onload="this.classList.add('loaded')" onerror="this.onerror=null;this.src='${escapeHtml(fav.profilePicture || '')}';this.style.objectFit='contain';this.classList.add('loaded');">` : `<div class="favorite-thumb-placeholder ${state.isPending ? 'pending' : ''}">${state.statusLabel}</div>`}
+                ${state.thumbSrc ? `<img src="${escapeHtml(state.thumbSrc)}" alt="${escapeHtml(fav.username || fav.slug)} stream thumbnail" class="thumb-fade" loading="lazy" decoding="async" onload="this.classList.add('loaded')" onerror="${thumbOnError}">` : `<div class="favorite-thumb-placeholder ${state.isPending ? 'pending' : ''}">${state.statusLabel}</div>`}
                 <div class="card-uptime-badge ${state.isLive ? '' : 'card-uptime-badge--muted'}">${state.isLive ? '<span class="card-live-dot"></span>' : ''}${state.statusLabel}</div>
                 ${state.viewers != null ? `<div class="card-viewers"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg>${formatViewerCount(state.viewers)}</div>` : ''}
                 <div class="card-actions-overlay" style="opacity:1;background:linear-gradient(to top, rgba(0,0,0,0.5) 0%, transparent 60%)">
@@ -228,6 +236,7 @@ export async function mount(params, contentEl) {
             e.stopPropagation();
             const slug = unfavBtn.dataset.slug;
             if (slug) {
+                const removed = currentResolved.find(r => r.fav.slug === slug);
                 suppressNextFavoritesChange = true;
                 removeFavorite(slug);
                 updateFavoritesBadge();
@@ -242,6 +251,25 @@ export async function mount(params, contentEl) {
                     contentEl.querySelector('.section-count')?.remove();
                     renderGrid();
                 }
+                // Offer an Undo — mirrors history removal so an accidental tap
+                // (easy on touch) isn't silent, irreversible data loss.
+                const fav = removed?.fav;
+                toast(`Removed ${fav?.username || slug} from favorites`, 'info', {
+                    action: {
+                        label: 'Undo',
+                        onClick: () => {
+                            if (!fav) return;
+                            suppressNextFavoritesChange = true;
+                            addFavorite(fav.slug, fav.username, fav.profilePicture);
+                            if (!currentResolved.some(r => r.fav.slug === fav.slug)) {
+                                currentResolved.push(removed);
+                            }
+                            _cachedResults = currentResolved;
+                            updateFavoritesBadge();
+                            renderGrid();
+                        },
+                    },
+                });
             }
         }
     };

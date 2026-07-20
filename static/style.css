@@ -630,6 +630,27 @@ body {
 .sidebar-toggle {
     display: none;
 }
+/* Wide desktop: expose the collapse control (the handler + persisted
+   `sidebarCollapsed` pref already exist) so the 240px sidebar can shrink to the
+   icon rail. Below 1200px the sidebar is already the 64px rail, so there's
+   nothing to collapse and the button stays hidden. */
+@media (min-width: 1200px) {
+    .sidebar-toggle {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 40px;
+        height: 40px;
+        border-radius: 10px;
+        background: transparent;
+        border: none;
+        color: var(--text-muted);
+        cursor: pointer;
+        flex-shrink: 0;
+        transition: background 0.15s, color 0.15s;
+    }
+    .sidebar-toggle:hover { background: var(--surface-hover); color: var(--text-color); }
+}
 .search-container {
     flex: 1;
     max-width: 520px;
@@ -1467,10 +1488,15 @@ body.pip-interacting .mini-player * {
     display: flex;
     align-items: center;
     gap: 4px;
+    min-width: 0; /* allow the name to shrink/ellipsize instead of overflowing */
 }
 .card-channel-link {
     color: inherit;
     text-decoration: none;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 .card-channel-link:hover {
     color: var(--primary-color);
@@ -1858,7 +1884,8 @@ body.landscape-theater { overflow: hidden; }
     top: calc(env(safe-area-inset-top, 0px) + 12px);
     right: calc(env(safe-area-inset-right, 0px) + 14px);
     z-index: 1001;
-    width: 40px; height: 40px;
+    /* Sole visible exit affordance in landscape theater — keep it ≥44px. */
+    width: 48px; height: 48px;
     display: none;
     align-items: center;
     justify-content: center;
@@ -2269,14 +2296,19 @@ body.landscape-theater #theater-exit { display: flex; }
     border: 1px solid var(--border-color);
     border-radius: var(--radius-lg);
     padding: 24px;
-    min-width: 320px;
+    /* min(...) so the fixed floor never beats width:90% on sub-320px screens
+       (e.g. Galaxy Fold cover), which would overflow behind the clipped body. */
+    min-width: min(320px, 100% - 20px);
     max-width: 450px;
     width: 90%;
     box-shadow: var(--glass-shadow);
     display: flex;
     flex-direction: column;
     gap: 12px;
+    /* dvh (with a vh fallback) so a tall modal isn't clipped behind mobile
+       browser chrome — 100vh is the chrome-hidden (larger) viewport. */
     max-height: calc(100vh - 32px);
+    max-height: calc(100dvh - 32px);
     overflow: hidden;
     transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.2s ease;
     opacity: 0;
@@ -2308,8 +2340,11 @@ body.landscape-theater #theater-exit { display: flex; }
 }
 .close-button {
     background: none; border: none; color: var(--text-muted);
-    font-size: 24px; cursor: pointer; padding: 4px 8px;
-    border-radius: 6px; transition: background 0.15s, color 0.15s; line-height: 1;
+    font-size: 24px; cursor: pointer;
+    /* 44x44 hit area — this is the primary modal dismiss control on touch. */
+    min-width: 44px; min-height: 44px;
+    display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 8px; transition: background 0.15s, color 0.15s; line-height: 1;
 }
 .close-button:hover { background: var(--surface-hover); color: var(--text-color); }
 .modal-actions {
@@ -2790,10 +2825,15 @@ body.landscape-theater #theater-exit { display: flex; }
     align-items: center;
     justify-content: space-between;
     padding: 10px 8px;
+    /* Comfortable, full-width touch target — settings.js makes the whole row a
+       clickable <label> so the hit area isn't just the 40x22 switch. */
+    min-height: 48px;
     border-radius: 6px;
     transition: background 0.12s;
     margin: 0 -8px;
 }
+/* When the row is a <label> wrapping a control, the whole row is tappable. */
+label.settings-row { cursor: pointer; }
 .settings-row:hover {
     background: rgba(255, 255, 255, 0.02);
 }
@@ -3205,7 +3245,7 @@ a:focus-visible,
         min-width: 0;
     }
     .search-input {
-        height: 40px;
+        height: 44px;
         font-size: 16px; /* >= 16px prevents iOS Safari auto-zoom on focus */
         border-radius: 999px;
         padding: 0 12px 0 38px;
@@ -3220,9 +3260,9 @@ a:focus-visible,
         left: 12px;
     }
     .search-clear-btn {
-        right: 8px;
-        width: 34px;
-        height: 34px;
+        right: 6px;
+        width: 44px;
+        height: 44px;
     }
     .search-kbd {
         display: none;
@@ -3241,15 +3281,15 @@ a:focus-visible,
         --mini-player-thumb-width: clamp(120px, 30vw, 144px);
         --mini-player-title-size: clamp(13px, 3.2vw, 14px);
         --mini-player-channel-size: clamp(11px, 2.6vw, 12px);
-        --mini-player-button-size: clamp(36px, 8.5vw, 42px);
+        --mini-player-button-size: clamp(44px, 11vw, 48px); /* 44px floor: primary docked-bar controls must meet the touch target */
         --mini-player-icon-size: 16px;
         --mini-player-thumb-radius: 10px;
         --mini-player-radius: 18px;
     }
     .chromecast-btn,
     .theme-toggle-btn {
-        width: 40px;
-        height: 40px;
+        width: 44px;
+        height: 44px;
         padding: 0;
         border: 1px solid var(--border-color);
         border-radius: 50%;
@@ -3319,6 +3359,7 @@ a:focus-visible,
         flex: 0 0 auto;
         border-radius: var(--mini-player-thumb-radius);
         cursor: pointer;                 /* tap to open channel — drag is desktop-only */
+        touch-action: manipulation;      /* not a scroll dead-zone when docked */
     }
     .mini-player-inner {
         flex: 1 1 auto;
@@ -3487,9 +3528,12 @@ a:focus-visible,
     /* Rotate chevron when collapsed */
     .filter-toggle[aria-expanded="false"] { transform: rotate(180deg); }
     .filter-bar {
-        max-height: 200px;
+        /* Cap must exceed the tallest expanded bar (single-column stack with
+           wrapped sort pills at ≤480px ≈ 280px) or the bottom row — the
+           Grid/List view toggle — gets clipped and becomes unreachable. */
+        max-height: 600px;
         overflow: hidden;
-        transition: max-height 0.25s ease, opacity 0.2s ease, padding 0.25s ease;
+        transition: max-height 0.3s ease, opacity 0.2s ease, padding 0.25s ease;
     }
     .filter-bar.collapsed {
         max-height: 0;
@@ -4108,7 +4152,143 @@ html.safari .video-container.video-active {
     transform: scale(1.2);
 }
 
+/* Touch devices: enlarge the cast seek/volume thumbs (12–14px is hard to grab)
+   and give the sliders a taller invisible hit area while keeping the rail thin. */
+@media (hover: none), (pointer: coarse) {
+    .cc-progress-slider,
+    .cc-volume-slider {
+        padding: 16px 0;
+        background-clip: content-box;
+    }
+    /* Thumbs enlarged to 22px; margin-top centers each on its own rail
+       (progress rail 4px → -9px, volume rail 6px → -8px). */
+    .cc-progress-slider::-webkit-slider-thumb {
+        width: 22px;
+        height: 22px;
+        margin-top: -9px;
+    }
+    .cc-volume-slider::-webkit-slider-thumb {
+        width: 22px;
+        height: 22px;
+        margin-top: -8px;
+    }
+    .cc-progress-slider::-moz-range-thumb,
+    .cc-volume-slider::-moz-range-thumb {
+        width: 22px;
+        height: 22px;
+    }
+}
+
 @keyframes fadeIn {
     from { opacity: 0; transform: translateY(4px); }
     to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── Playback error overlay ─────────────────────────────────────────────────
+   Shown by player.js in the channel video slot when a stream fails to load,
+   instead of leaving a silent black box. */
+.player-error {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 24px;
+    text-align: center;
+    background: rgba(0, 0, 0, 0.82);
+    color: #fff;
+    -webkit-backdrop-filter: blur(2px);
+    backdrop-filter: blur(2px);
+}
+.player-error > svg { color: var(--live-color); opacity: 0.9; }
+.player-error-title { font-weight: 700; font-size: 16px; margin: 4px 0 0; }
+.player-error-hint { font-size: 13px; color: rgba(255, 255, 255, 0.7); margin: 0; max-width: 320px; }
+.player-error-retry {
+    margin-top: 12px;
+    min-height: 44px;
+    padding: 10px 22px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.player-error-retry:hover { background: rgba(255, 255, 255, 0.16); }
+
+/* ── Touch tablets (768–1199px, coarse pointer) ─────────────────────────────
+   The ≤767px block's 44px touch-target overrides and mini-player dock don't
+   reach the tablet band, so touch tablets (iPads) got desktop-sized controls
+   and a floating, drag/resizable PiP that just overlaps content. This block
+   brings the touch affordances up and docks the mini-player. It stops at
+   1199px because at ≥1200px the full 240px sidebar returns (kept as a floating
+   PiP there — matches _shouldDock() in player.js). */
+@media (hover: none) and (pointer: coarse) and (min-width: 768px) and (max-width: 1199px) {
+    .sort-pill,
+    .view-toggle-btn,
+    .filter-select,
+    .profile-tab,
+    .social-pill,
+    .btn-primary,
+    .btn-secondary {
+        min-height: 44px;
+    }
+    .profile-action-btn,
+    .favorite-btn,
+    .favorite-profile-btn,
+    .btn-icon,
+    .chromecast-btn,
+    .theme-toggle-btn,
+    .search-clear-btn {
+        min-width: 44px;
+        min-height: 44px;
+    }
+    /* iOS Safari zooms in when focusing a control with font-size < 16px. */
+    input, select, textarea, .search-input {
+        font-size: 16px;
+    }
+    /* No physical keyboard on a touch tablet → the '/' hint is misleading. */
+    .search-kbd { display: none; }
+
+    /* Dock the mini-player as a bottom bar within the content area (the 64px
+       sidebar rail is present at this width; there is no bottom nav). */
+    :root {
+        --mini-player-thumb-width: clamp(140px, 18vw, 200px);
+        --mini-player-button-size: clamp(44px, 6vw, 48px);
+    }
+    body.mini-active .content-area {
+        padding-bottom: calc(150px + env(safe-area-inset-bottom, 0px));
+    }
+    .mini-player {
+        left: calc(64px + 12px) !important;
+        right: 12px !important;
+        top: auto !important;
+        bottom: calc(14px + env(safe-area-inset-bottom, 0px)) !important;
+        width: auto !important;
+        display: flex;
+        flex-direction: row;
+        align-items: center;
+        gap: var(--mini-player-gap);
+        padding: 8px 10px;
+        border-radius: 16px;
+        animation: miniSlideUp 0.22s ease-out;
+    }
+    .mini-player-thumb {
+        width: var(--mini-player-thumb-width);
+        flex: 0 0 auto;
+        border-radius: var(--mini-player-thumb-radius);
+        cursor: pointer;
+        touch-action: manipulation;
+    }
+    .mini-player-inner {
+        flex: 1 1 auto;
+        min-width: 0;
+        padding: 0;
+    }
+    .mini-player-resize { display: none; }
+    #mini-player-cast { display: none; }
 }

@@ -105,20 +105,36 @@ export function toast(message, type = 'info', options = {}) {
 
     const id = ++toastId;
 
-    // Mobile: reuse the single live toast, updating it in place (never stack).
+    // Mobile: reuse the single live toast, updating it in place (never stack)
+    // — UNLESS the live toast carries something the user shouldn't lose.
     if (isMobileSingle()) {
         const existing = container.querySelector('.toast:not(.toast-exit)');
         if (existing) {
-            // Re-key the dedupe map onto this element under the new message.
-            for (const [k, entry] of recentToasts) {
-                if (entry.el === existing) recentToasts.delete(k);
+            const existingHasAction = !!existing.querySelector('.toast-action');
+            const existingIsError = existing.classList.contains('toast-error');
+            // Preserve a toast with a live Undo/Retry action, or an error that a
+            // lower-priority info/success shouldn't bury: show the new message as
+            // a second toast rather than overwriting (which would destroy the
+            // action button and restart the timer).
+            const mustPreserve = existingHasAction || (existingIsError && type !== 'error');
+            if (!mustPreserve) {
+                // Re-key the dedupe map onto this element under the new message.
+                for (const [k, entry] of recentToasts) {
+                    if (entry.el === existing) recentToasts.delete(k);
+                }
+                populateToast(existing, { id, message, type, action, duration });
+                recentToasts.set(key, { el: existing, count: 1, expiresAt: now + DEDUPE_WINDOW_MS });
+                // Pulse the icon chip so the in-place swap is noticeable.
+                const chip = existing.querySelector('.toast-icon-chip');
+                if (chip) { void chip.offsetWidth; chip.classList.add('toast-chip-pulse'); }
+                return id;
             }
-            populateToast(existing, { id, message, type, action, duration });
-            recentToasts.set(key, { el: existing, count: 1, expiresAt: now + DEDUPE_WINDOW_MS });
-            // Pulse the icon chip so the in-place swap is noticeable.
-            const chip = existing.querySelector('.toast-icon-chip');
-            if (chip) { void chip.offsetWidth; chip.classList.add('toast-chip-pulse'); }
-            return id;
+            // Preserve the existing toast; keep the mobile stack to 2 by dropping
+            // the oldest toast that has no live action, then fall through to append.
+            const live = [...container.querySelectorAll('.toast:not(.toast-exit)')];
+            if (live.length >= 2) {
+                dismissToast(live.find(t => !t.querySelector('.toast-action')) || live[0]);
+            }
         }
     } else {
         // Desktop: cap the stack, dismissing the oldest when full.

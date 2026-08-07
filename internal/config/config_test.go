@@ -31,4 +31,13 @@ func TestValidate(t *testing.T) {
 			t.Fatal("unknown default language should fail")
 		}
 	})
+
+	t.Run("enabled control auth needs token", func(t *testing.T) {
+		bad := *cfg
+		bad.ControlAuthEnabled = true
+		bad.ControlToken = ""
+		if err := bad.Validate(); err == nil {
+			t.Fatal("enabled control authentication without a token should fail")
+		}
+	})
 }

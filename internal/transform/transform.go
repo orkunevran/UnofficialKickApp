@@ -9,7 +9,10 @@
 // fields and use nil for null so encoding/json reproduces the Python output.
 package transform
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // ── dynamic-access helpers (the Go equivalent of dict.get chains) ────────
 
@@ -100,6 +103,7 @@ func ExtractCategoryName(data map[string]any) any {
 // BuildChannelProfile flattens raw channel data into the frontend profile shape.
 func BuildChannelProfile(data map[string]any, channelSlug string) map[string]any {
 	user, _ := getMap(get(data, "user"))
+	chatroom, _ := getMap(get(data, "chatroom"))
 
 	var bannerURL any
 	if banner, ok := getMap(get(data, "banner_image")); ok {
@@ -137,8 +141,12 @@ func BuildChannelProfile(data map[string]any, channelSlug string) map[string]any
 		"followers_count":      get(data, "followers_count"),
 		"verified":             truthy(get(data, "verified")),
 		"subscription_enabled": truthy(get(data, "subscription_enabled")),
-		"social_links":         social,
-		"recent_categories":    recent,
+		"chatroom_id":          get(chatroom, "id"),
+		// Chat *replay* is keyed on the channel id, not the chatroom id the live
+		// socket uses (see internal/httpapi/chat.go).
+		"channel_id":        get(data, "id"),
+		"social_links":      social,
+		"recent_categories": recent,
 	}
 }
 
@@ -224,6 +232,7 @@ func NormalizeClipList(raw any, channelSlug string) []map[string]any {
 			"clip_id":          c["id"],
 			"title":            c["title"],
 			"clip_url":         orFallback(c["clip_url"], c["video_url"]),
+			"playback_url":     "/streams/clip/" + channelSlug + "/" + fmt.Sprint(c["id"]),
 			"thumbnail_url":    c["thumbnail_url"],
 			"duration_seconds": c["duration"],
 			"views":            c["views"],

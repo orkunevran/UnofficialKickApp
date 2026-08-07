@@ -67,6 +67,7 @@ var (
 		"followers_count":      float64(4242),
 		"verified":             true,
 		"subscription_enabled": true,
+		"chatroom":             map[string]any{"id": float64(2468)},
 		"recent_categories":    []any{map[string]any{"name": "Just Chatting"}, map[string]any{"name": "Gaming"}},
 		"livestream": map[string]any{
 			"id":            float64(9876),
@@ -237,8 +238,12 @@ func parityExpected(path string) map[string]any {
 		"followers_count":      float64(4242),
 		"verified":             true,
 		"subscription_enabled": true,
-		"social_links":         map[string]any{"instagram": "live_insta", "twitter": "live_twitter", "youtube": "live_youtube", "discord": "live_discord", "tiktok": "live_tiktok"},
-		"recent_categories":    []any{"Just Chatting", "Gaming"},
+		"chatroom_id":          nil,
+		// Added beyond the Python payload: chat *replay* is keyed on the channel id,
+		// not the chatroom id the live socket uses (internal/httpapi/chat.go).
+		"channel_id":        nil,
+		"social_links":      map[string]any{"instagram": "live_insta", "twitter": "live_twitter", "youtube": "live_youtube", "discord": "live_discord", "tiktok": "live_tiktok"},
+		"recent_categories": []any{"Just Chatting", "Gaming"},
 	}
 
 	switch path {
@@ -251,6 +256,7 @@ func parityExpected(path string) map[string]any {
 		data["livestream_title"] = "Live Session"
 		data["livestream_viewer_count"] = float64(321)
 		data["livestream_category"] = "Just Chatting"
+		data["chatroom_id"] = float64(2468)
 		return env("success", "", data)
 
 	case "/streams/play/offline-user":
@@ -297,6 +303,7 @@ func parityExpected(path string) map[string]any {
 					"clip_id":          float64(7),
 					"title":            "Highlight",
 					"clip_url":         "https://cdn.example/clip-7",
+					"playback_url":     "/streams/clip/live-user/7",
 					"thumbnail_url":    "https://img.example/clip-7.png",
 					"duration_seconds": float64(12),
 					"views":            float64(123),

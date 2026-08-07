@@ -42,6 +42,7 @@ type Client struct {
 	baseURL           string
 	featuredURL       string
 	allLivestreamsURL string
+	chatHistoryURL    string
 	maxResponseBytes  int64
 	maxPlaylistBytes  int64
 
@@ -56,6 +57,7 @@ type Config struct {
 	BaseURL           string
 	FeaturedURL       string
 	AllLivestreamsURL string
+	ChatHistoryURL    string
 	MaxResponseBytes  int64
 	MaxPlaylistBytes  int64
 }
@@ -74,6 +76,7 @@ func New(cfg Config) (*Client, error) {
 		baseURL:           cfg.BaseURL,
 		featuredURL:       cfg.FeaturedURL,
 		allLivestreamsURL: cfg.AllLivestreamsURL,
+		chatHistoryURL:    cfg.ChatHistoryURL,
 		maxResponseBytes:  cfg.MaxResponseBytes,
 		maxPlaylistBytes:  cfg.MaxPlaylistBytes,
 	}, nil
@@ -157,6 +160,14 @@ func (c *Client) GetChannelData(slug string) (map[string]any, error) {
 	}
 	m, _ := v.(map[string]any)
 	return m, nil
+}
+
+// GetChatHistory fetches the chat messages from a ~4s window beginning at
+// startTime (RFC 3339, UTC). This is what makes chat replay possible: the window
+// is addressable by wall-clock time, so any position on the DVR timeline maps to
+// the chat that was on screen at that moment.
+func (c *Client) GetChatHistory(channelID int, startTime string) (any, error) {
+	return c.getJSON(fmt.Sprintf("%s%d/history?start_time=%s", c.chatHistoryURL, channelID, url.QueryEscape(startTime)))
 }
 
 // GetChannelVideos fetches the raw VOD list.

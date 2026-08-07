@@ -31,6 +31,7 @@ Unofficial Kick App provides a web UI plus a REST API for Kick.com live streams,
 
 ### Streaming & Playback
 - Live stream lookup with HLS playback and quality picker
+- **Live rewind (DVR)** — seek back through a live broadcast, not just the ~30s its live playlist carries. Kick records every stream in real time, so the in-progress recording is proxied as a growing, fully seekable playlist. Playback goes straight to the live stream and the rewind window loads behind it, so the first rewind (buttons, or `←`/`→`, `j`/`l`) is instant; *Go Live* returns. Settings → Playback can instead open on the recording, putting the whole broadcast on the scrubber from the start
 - Seamless mini-player handoff — live playback keeps running while you browse other channels
 - Resizable mini-player video panel with drag-to-resize and double-click expand
 - Picture-in-Picture support
@@ -169,6 +170,9 @@ The Go suite covers the framework-independent logic and the HTTP contract:
 | `GET` | `/streams/play/{channel_slug}` | Get live stream data for a channel |
 | `GET` | `/streams/go/{channel_slug}` | Redirect to the proxied HLS playlist |
 | `GET` | `/streams/m3u8/{channel_slug}.m3u8` | CORS-wrapped HLS master playlist proxy |
+| `GET` | `/streams/dvr/{channel_slug}` | Live rewind availability for the current broadcast |
+| `GET` | `/streams/dvr/{channel_slug}/master.m3u8` | Rewindable playlist for the live broadcast (whole stream, seekable) |
+| `GET` | `/streams/dvr/{channel_slug}/{variant}/playlist.m3u8` | Variant media playlist behind the rewind window |
 | `GET` | `/streams/vods/{channel_slug}` | List VODs for a channel |
 | `GET` | `/streams/vods/{channel_slug}/{vod_id}` | Redirect to a specific VOD |
 | `GET` | `/streams/clips/{channel_slug}` | List recent clips for a channel |
@@ -181,8 +185,10 @@ The Go suite covers the framework-independent logic and the HTTP contract:
 
 ### Chromecast Routes
 
-Discovery and state-changing routes require the production `CONTROL_TOKEN`.
-The SPA prompts once and exchanges it for an HttpOnly, SameSite session cookie.
+Discovery and state-changing routes are available without a token by default
+for trusted-LAN use. Set `CONTROL_AUTH_ENABLED=true` with a `CONTROL_TOKEN` to
+opt in; the SPA then prompts once and exchanges it for an HttpOnly, SameSite
+session cookie.
 
 | Method | Endpoint | Description |
 | --- | --- | --- |
@@ -274,7 +280,8 @@ Configured via environment variables. [`.env.example`](.env.example) is a refere
 | `LOG_LEVEL` | `INFO` | Logging level |
 | `LOG_FORMAT_JSON` | `False` | Structured JSON logging for production |
 | `DEFAULT_LANGUAGE_CODE` | `en` | Default featured-stream language |
-| `CONTROL_TOKEN` | `""` | Chromecast control secret; required by the Pi deployment |
+| `CONTROL_AUTH_ENABLED` | `False` | Require a token for Chromecast discovery and control |
+| `CONTROL_TOKEN` | `""` | Chromecast control secret; required only when control authentication is enabled |
 | `MAX_JSON_BODY_BYTES` | `16384` | Maximum control request body |
 | `RATE_LIMIT_REQUESTS_PER_SECOND` | `50` | Per-client request refill rate |
 | `RATE_LIMIT_BURST` | `100` | Per-client burst capacity |
@@ -320,13 +327,12 @@ Production runs as a hardened **systemd service**. The deployment script tests a
 make deploy
 ```
 
-Defaults target `pi@raspberrypi.local`; override the host with `PI_HOST` and the smoke-check port with `PORT`. Production paths and the unit name are intentionally fixed. The first deployment creates a dedicated `kick-api` user, persistent state under `/var/lib/kick-api`, and a root-owned `/etc/kick-api/kick-api.env` containing the Chromecast control token.
-
-Retrieve the token when a browser prompts for it:
-
-```bash
-ssh pi@raspberrypi.local "sudo sed -n 's/^CONTROL_TOKEN=//p' /etc/kick-api/kick-api.env"
-```
+Defaults target `pi@raspberrypi.local`; override the host with `PI_HOST` and the
+smoke-check port with `PORT`. Production paths and the unit name are
+intentionally fixed. The first deployment creates a dedicated `kick-api` user,
+persistent state under `/var/lib/kick-api`, and a root-owned optional
+environment file at `/etc/kick-api/kick-api.env`. Chromecast token protection
+is not enabled automatically.
 
 [`docker-compose.pi.yaml`](docker-compose.pi.yaml) is retained only as a legacy container example. Do not run it alongside systemd because both bind port 8081.
 

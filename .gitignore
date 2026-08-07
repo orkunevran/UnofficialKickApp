@@ -30,6 +30,7 @@ coverage.*
 # ── Local tooling (not part of the project) ───────────────────────────────
 .kilo/
 .kilocode/
+.claude/
 
 # ── OS ─────────────────────────────────────────────────────────────────────
 .DS_Store

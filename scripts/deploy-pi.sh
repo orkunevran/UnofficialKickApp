@@ -63,14 +63,10 @@ echo "==> Uploading candidate binary and systemd unit..."
 rsync -az -e "ssh -o ControlPath=$CTL" "$BINARY" "$PI_HOST:$REMOTE_UPLOAD"
 rsync -az -e "ssh -o ControlPath=$CTL" deploy/kick-api.service "$PI_HOST:$REMOTE_UNIT"
 
-echo "==> Preparing service account, state, and protected configuration..."
+echo "==> Preparing service account, state, and configuration..."
 "${SSH[@]}" "$PI_HOST" "id -u kick-api >/dev/null 2>&1 || sudo useradd --system --home-dir /var/lib/kick-api --shell /usr/sbin/nologin kick-api"
 "${SSH[@]}" "$PI_HOST" "sudo mkdir -p '$APP_DIR/releases' && sudo chmod 0755 '$APP_DIR' '$APP_DIR/releases' && sudo install -d -o kick-api -g kick-api -m 0750 /var/lib/kick-api && sudo install -d -m 0750 '$(dirname "$ENV_FILE")'"
 "${SSH[@]}" "$PI_HOST" "if [ -f '$APP_DIR/.kick_chromecast_cache.json' ] && [ ! -f /var/lib/kick-api/chromecast-state.json ]; then sudo install -o kick-api -g kick-api -m 0600 '$APP_DIR/.kick_chromecast_cache.json' /var/lib/kick-api/chromecast-state.json; fi"
-if ! "${SSH[@]}" "$PI_HOST" "sudo grep -q '^CONTROL_TOKEN=' '$ENV_FILE' 2>/dev/null"; then
-  "${SSH[@]}" "$PI_HOST" "token=\$(openssl rand -hex 16) && printf 'CONTROL_TOKEN=%s\n' \"\$token\" | sudo tee -a '$ENV_FILE' >/dev/null && sudo chmod 0600 '$ENV_FILE'"
-  echo "    Created CONTROL_TOKEN in $ENV_FILE (retrieve it with sudo on the Pi)."
-fi
 
 PREVIOUS="$("${SSH[@]}" "$PI_HOST" "if [ -e '$APP_DIR/current' ]; then readlink -f '$APP_DIR/current'; elif [ -x '$APP_DIR/kick-api-arm64' ]; then printf '%s' '$APP_DIR/kick-api-arm64'; fi")"
 HAD_UNIT="$("${SSH[@]}" "$PI_HOST" "if sudo test -f /etc/systemd/system/kick-api.service; then printf yes; fi")"
@@ -115,4 +111,3 @@ echo "==> Deployment complete."
 "${SSH[@]}" "$PI_HOST" "systemctl show '$SERVICE' -p ActiveState -p MainPID -p ExecMainStartTimestamp"
 echo "    Version: $VERSION"
 echo "    Logs: ssh $PI_HOST 'journalctl -u $SERVICE -f'"
-echo "    Control token: ssh $PI_HOST \"sudo sed -n 's/^CONTROL_TOKEN=//p' $ENV_FILE\""

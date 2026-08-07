@@ -112,33 +112,32 @@ export async function fetchLiveStatus(channelSlug) {
     }
 }
 
-export async function fetchChannelData(channelSlug) {
+// Whether the channel's current broadcast has a rewindable in-progress
+// recording, and where to play it from. Returns null on failure — callers treat
+// that as "no rewind", never as a hard error.
+export async function fetchDvrInfo(channelSlug) {
     try {
-        const livePromise = fetchWithTimeout(`/streams/play/${channelSlug}`).then(async res => {
-            if (res.status >= 500) {
-                throw new Error(`Live stream API Error: ${res.status}`);
-            }
-            return await res.json();
-        });
-        const vodsPromise = fetchWithTimeout(`/streams/vods/${channelSlug}`).then(async res => {
-            if (res.status >= 500) {
-                throw new Error(`VODs API Error: ${res.status}`);
-            }
-            return await res.json();
-        });
-        const clipsPromise = fetchWithTimeout(`/streams/clips/${channelSlug}`).then(async res => {
-            if (!res.ok) return { status: 'error', data: { clips: [] } };
-            return await res.json();
-        });
-
-        const [liveData, vodsData, clipsData] = await Promise.all([livePromise, vodsPromise, clipsPromise]);
-        return { liveData, vodsData, clipsData };
-    } catch (error) {
-        if (error.name === 'AbortError') {
-            throw new Error('Request timed out. Please try again.');
-        }
-        throw error;
+        const res = await fetchWithTimeout(`/streams/dvr/${encodeURIComponent(channelSlug)}`, {}, 8000);
+        if (!res.ok) return null;
+        return await res.json();
+    } catch {
+        return null;
     }
+}
+
+// A channel's recordings and clips, fetched when their tab is opened rather than
+// on every channel open: each is an upstream call (measured 578–977ms and
+// 378–462ms) that otherwise competes with the requests getting video on screen.
+export async function fetchVods(channelSlug) {
+    const res = await fetchWithTimeout(`/streams/vods/${encodeURIComponent(channelSlug)}`);
+    if (res.status >= 500) throw new Error(`VODs API Error: ${res.status}`);
+    return res.json();
+}
+
+export async function fetchClips(channelSlug) {
+    const res = await fetchWithTimeout(`/streams/clips/${encodeURIComponent(channelSlug)}`);
+    if (!res.ok) return { status: 'error', data: { clips: [] } };
+    return res.json();
 }
 
 export function fetchSearchResults(query, featuredStreams = []) {
@@ -225,7 +224,7 @@ export async function fetchBatchViewerCounts(livestreamIds) {
 // ── Chromecast API ───────────────────────────────────────────────────────
 
 async function unlockChromecastControl() {
-    const token = window.prompt('Enter the Chromecast control token shown by the Raspberry Pi deployment:');
+    const token = window.prompt('Enter the Chromecast control token configured by the administrator:');
     if (!token?.trim()) return false;
     const response = await fetchWithTimeout('/api/control/session', {
         method: 'POST',

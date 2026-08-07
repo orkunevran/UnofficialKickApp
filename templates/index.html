@@ -305,6 +305,18 @@
                     <div class="shortcut-keys"><kbd class="shortcut-key">G</kbd> <kbd class="shortcut-key">S</kbd></div>
                 </div>
                 <div class="shortcut-row">
+                    <span class="shortcut-label">Rewind / forward live stream 30s</span>
+                    <div class="shortcut-keys"><kbd class="shortcut-key">&larr;</kbd> <kbd class="shortcut-key">&rarr;</kbd></div>
+                </div>
+                <div class="shortcut-row">
+                    <span class="shortcut-label">Jump to broadcast start / live</span>
+                    <div class="shortcut-keys"><kbd class="shortcut-key">Home</kbd> <kbd class="shortcut-key">End</kbd></div>
+                </div>
+                <div class="shortcut-row">
+                    <span class="shortcut-label">Rewind / forward live stream 10s</span>
+                    <div class="shortcut-keys"><kbd class="shortcut-key">J</kbd> <kbd class="shortcut-key">L</kbd></div>
+                </div>
+                <div class="shortcut-row">
                     <span class="shortcut-label">Show this help</span>
                     <div class="shortcut-keys"><kbd class="shortcut-key">?</kbd></div>
                 </div>
@@ -319,7 +331,7 @@
     <!-- Route change announcer for screen readers (replaces a page-wide aria-live). -->
     <div id="route-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
 
-    <script defer src="https://cdn.jsdelivr.net/npm/hls.js@1.5.15/dist/hls.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/hls.js@1.6.16/dist/hls.min.js"></script>
     <script type="module" src="{{ url_for('static', filename='script.js', ) }}"></script>
 </body>
 </html>

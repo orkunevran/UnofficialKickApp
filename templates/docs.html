@@ -146,6 +146,8 @@
     <a href="#play"><span class="m get">GET</span> /play/{slug}</a>
     <a href="#m3u8"><span class="m get">GET</span> /m3u8/{file}</a>
     <a href="#go"><span class="m get">GET</span> /go/{slug}</a>
+    <a href="#dvr"><span class="m get">GET</span> /dvr/{slug}</a>
+    <a href="#dvr-playlist"><span class="m get">GET</span> /dvr/{slug}/master.m3u8</a>
     <a href="#search"><span class="m get">GET</span> /search</a>
     <a href="#avatar"><span class="m get">GET</span> /avatar/{slug}</a>
     <a href="#clips"><span class="m get">GET</span> /clips/{slug}</a>
@@ -306,6 +308,25 @@
         <p class="desc">307 redirect to <code>/streams/m3u8/{slug}.m3u8</code> — a convenience entry point for external players.</p>
       </div>
 
+      <div class="ep" id="dvr">
+        <div class="ep-head"><span class="method get">GET</span><span class="path">/streams/dvr/<span class="var">{slug}</span></span></div>
+        <p class="desc">Live rewind (DVR) availability. Kick records a livestream to a VOD while it is still live, so the in-progress recording covers the whole broadcast — unlike the live playlist, which carries only ~30 seconds. A channel Kick is not recording answers <code>available: false</code> rather than an error.</p>
+        <div class="label">200 response</div>
+        <pre>{ "status": "success", "message": "",
+  "data": { "available": true, "vod_id": 119352180, "title": "…",
+            "started_at": "2026-07-27 09:00:07",
+            "playlist_url": "/streams/dvr/jahrein/master.m3u8" } }</pre>
+      </div>
+
+      <div class="ep" id="dvr-playlist">
+        <div class="ep-head"><span class="method get">GET</span><span class="path">/streams/dvr/<span class="var">{slug}</span>/master.m3u8</span></div>
+        <p class="desc">Rewindable master playlist for the live broadcast. Variant URIs resolve to <code>/streams/dvr/{slug}/{variant}/playlist.m3u8</code>, whose media playlists have their segment URIs absolutized and — while the recording is still being written — the <code>#EXT-X-ENDLIST</code> tag Kick emits mid-broadcast removed, so players keep polling and the seekable window grows with the stream.</p>
+        <p class="desc">Media playlists are served <code>Cache-Control: no-cache</code> with an <code>ETag</code>: send <code>If-None-Match</code> and an unchanged playlist answers <code>304</code> with no body. They are cached and refreshed in the background, so a refresh is served from memory rather than waiting on the upstream recording.</p>
+        <div class="label">Example</div>
+        <pre>GET /streams/dvr/jahrein/master.m3u8       →  #EXTM3U … (variants)
+GET /streams/dvr/jahrein/720p60/playlist.m3u8  →  #EXTM3U … (whole broadcast, seekable)</pre>
+      </div>
+
       <div class="ep" id="search">
         <div class="ep-head"><span class="method get">GET</span><span class="path">/streams/search</span></div>
         <p class="desc">Channel search via Kick's Typesense cluster. Avatars are enriched server-side from cache when available.</p>
@@ -375,7 +396,7 @@
     <section>
       <h2>Chromecast</h2>
 
-      <div class="note"><strong>Control authentication.</strong> In production, discovery and all POST routes require the per-install control token. Send <code>Authorization: Bearer &lt;token&gt;</code>, or let the SPA exchange it through <code>POST /api/control/session</code> for an HttpOnly SameSite cookie. Chromecast POST bodies must use <code>application/json</code>.</div>
+      <div class="note"><strong>Control authentication.</strong> Chromecast control is token-free by default for trusted-LAN use. To opt in, set <code>CONTROL_AUTH_ENABLED=true</code> and configure <code>CONTROL_TOKEN</code>. Then send <code>Authorization: Bearer &lt;token&gt;</code>, or let the SPA exchange it through <code>POST /api/control/session</code> for an HttpOnly SameSite cookie. Chromecast POST bodies must use <code>application/json</code>.</div>
 
       <div class="ep" id="cc-devices">
         <div class="ep-head"><span class="method get">GET</span><span class="path">/api/chromecast/devices</span></div>

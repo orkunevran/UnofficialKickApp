@@ -9,6 +9,7 @@ import { initButtonDelegation, renderSearchResults, renderSearchLoading, renderS
 import { appState, loadPreferences, preferences, savePreferences } from './js/state.js';
 import { initShortcuts } from './js/shortcuts.js';
 import { initMiniPlayerControls } from './js/player.js';
+import { initDvrPrefetch } from './js/dvr.js';
 import { getFavoriteCount } from './js/favorites.js';
 import { fetchSearchResults, fetchChannelSearch, fetchChannelAvatar } from './js/api.js';
 import { initialsAvatar } from './js/utils.js';
@@ -156,6 +157,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initButtonDelegation();
     initShortcuts();
     initMiniPlayerControls();
+    initDvrPrefetch();
 
     // ── Dynamic mini-player gap (iPhone safe-area robustness) ────────────
     function syncMiniPlayerGap() {

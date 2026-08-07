@@ -145,10 +145,10 @@ The browse view uses three render modes for performance:
   SSE subscribers, so N browser connections don't each poll the device.
 - **Graceful shutdown:** `BeginShutdown` signals long-lived SSE handlers to
   return so `http.Server.Shutdown` drains promptly (no restart hang).
-- **Protected control plane:** Chromecast discovery and mutations require the
-  production control token, same-origin browser requests, JSON content types,
-  and bounded request bodies; the SPA exchanges the token for an HttpOnly
-  SameSite cookie.
+- **LAN control plane:** Chromecast discovery and mutations always enforce
+  same-origin browser requests, JSON content types, and bounded bodies. Bearer
+  token authentication is opt-in through `CONTROL_AUTH_ENABLED`; when enabled,
+  the SPA exchanges the configured token for an HttpOnly SameSite cookie.
 - **Production bounds:** semantic cache keys, per-client token-bucket limiting,
   bounded upstream bodies, and systemd resource limits protect the Pi.
 

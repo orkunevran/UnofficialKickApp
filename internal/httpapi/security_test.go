@@ -17,6 +17,7 @@ func serveRequest(app *App, req *http.Request) *httptest.ResponseRecorder {
 
 func TestChromecastControlAuthentication(t *testing.T) {
 	app := newParityApp(t)
+	app.cfg.ControlAuthEnabled = true
 	app.cfg.ControlToken = "production-secret"
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chromecast/devices", nil)
@@ -34,6 +35,7 @@ func TestChromecastControlAuthentication(t *testing.T) {
 
 func TestChromecastControlSession(t *testing.T) {
 	app := newParityApp(t)
+	app.cfg.ControlAuthEnabled = true
 	app.cfg.ControlToken = "production-secret"
 
 	login := httptest.NewRequest(http.MethodPost, "/api/control/session", strings.NewReader(`{"token":"production-secret"}`))
@@ -58,6 +60,7 @@ func TestChromecastControlSession(t *testing.T) {
 
 func TestChromecastControlRequestValidation(t *testing.T) {
 	app := newParityApp(t)
+	app.cfg.ControlAuthEnabled = true
 	app.cfg.ControlToken = "production-secret"
 
 	t.Run("content type", func(t *testing.T) {
@@ -89,6 +92,16 @@ func TestChromecastControlRequestValidation(t *testing.T) {
 			t.Fatalf("status = %d; want 400", rec.Code)
 		}
 	})
+}
+
+func TestChromecastControlAuthenticationDisabledByDefault(t *testing.T) {
+	app := newParityApp(t)
+	app.cfg.ControlToken = "ignored-unless-explicitly-enabled"
+
+	req := httptest.NewRequest(http.MethodGet, "/api/chromecast/devices", nil)
+	if rec := serveRequest(app, req); rec.Code != http.StatusOK {
+		t.Fatalf("default unauthenticated status = %d; want 200", rec.Code)
+	}
 }
 
 func TestNormalizedCacheKeys(t *testing.T) {

@@ -35,6 +35,7 @@ type kickClient interface {
 	GetViewerCount(livestreamID int) (int, error)
 	GetViewerCountsBatch(ids []int) (map[int]int, error)
 	SearchChannelsTypesense(query string) ([]map[string]any, error)
+	GetChatHistory(channelID int, startTime string) (any, error)
 }
 
 var (
@@ -166,6 +167,12 @@ func (a *App) handlePlayStream(w http.ResponseWriter, r *http.Request) {
 	if a.serveStale(w, staleKey, freshKey, "", a.cbCritical, func() {
 		a.refreshPlayStream(staleKey, freshKey, slug)
 	}) {
+		// Warm on the serve, not only on the fetch: this response is usually a
+		// cache hit (the featured lists prime it), and a viewer opening a channel
+		// needs the rewind playlists either way.
+		if a.channelIsLive(slug) {
+			a.warmDVRSource(slug)
+		}
 		return
 	}
 
@@ -234,6 +241,11 @@ func (a *App) cachePlayResult(staleKey, freshKey, slug string, data map[string]a
 	}
 	a.cachePut(staleKey, payload, 200, a.ttl(a.cfg.LiveStaleTTLSeconds))
 	a.cache.SetTTL(freshKey, true, a.ttl(a.cfg.LiveCacheDurationSeconds))
+	// Opening a live channel is the signal that its rewind window is about to be
+	// asked for; resolve it now so playback can start on the full timeline.
+	if data, _ := payload["data"].(map[string]any); data != nil && data["status"] == "live" {
+		a.warmDVRSource(slug)
+	}
 	return payload, nil
 }
 
@@ -317,11 +329,7 @@ func (a *App) handlePlayM3U8(w http.ResponseWriter, r *http.Request) {
 		errorJSON(w, "Failed to load stream playlist.", 502)
 		return
 	}
-	h := w.Header()
-	h.Set("Content-Type", "application/vnd.apple.mpegurl")
-	h.Set("Access-Control-Allow-Origin", "*")
-	h.Set("Cache-Control", "no-cache, no-store, must-revalidate")
-	_, _ = w.Write(body)
+	writeM3U8(w, body)
 }
 
 // ── /streams/avatar ──────────────────────────────────────────────────────────
@@ -398,6 +406,116 @@ func (a *App) handleClips(w http.ResponseWriter, r *http.Request) {
 		}
 		return envelopeMap("success", "", map[string]any{"clips": transform.NormalizeClipList(raw, slug)}), nil
 	})
+}
+
+func (a *App) handlePlayClip(w http.ResponseWriter, r *http.Request) {
+	slug, ok := a.slug(w, r)
+	if !ok {
+		return
+	}
+	clipID := r.PathValue("clipID")
+	if !validateSlug(clipID) {
+		errorJSON(w, "Invalid clip ID.", 400)
+		return
+	}
+
+	raw, apiErr := kickCall(a.cbCritical, obs.LaneCritical, slug, func() (any, error) {
+		return a.kick.GetChannelClips(slug)
+	})
+	if apiErr != nil {
+		writeAPIErr(w, apiErr)
+		return
+	}
+
+	manifestURL := ""
+	for _, clip := range transform.NormalizeClipList(raw, slug) {
+		if fmt.Sprint(clip["clip_id"]) != clipID {
+			continue
+		}
+		manifestURL, _ = clip["clip_url"].(string)
+		break
+	}
+	if manifestURL == "" {
+		errorJSON(w, "Clip not found.", 404)
+		return
+	}
+
+	body, err := a.kick.FetchPlaylist(manifestURL)
+	if err != nil {
+		a.log.Error("failed to proxy clip playlist", "slug", slug, "clip_id", clipID, "error", err)
+		errorJSON(w, "Failed to load clip playlist.", 502)
+		return
+	}
+	body = absolutizeHLSReferences(manifestURL, body)
+
+	h := w.Header()
+	h.Set("Content-Type", "application/vnd.apple.mpegurl")
+	h.Set("Access-Control-Allow-Origin", "*")
+	h.Set("Cache-Control", "private, max-age=60")
+	_, _ = w.Write(body)
+}
+
+func absolutizeHLSReferences(manifestURL string, body []byte) []byte {
+	base, err := url.Parse(manifestURL)
+	if err != nil {
+		return body
+	}
+
+	lines := strings.Split(string(body), "\n")
+	normalizeHLSByteRangeOrder(lines)
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if !strings.HasPrefix(trimmed, "#") {
+			if ref, parseErr := url.Parse(trimmed); parseErr == nil {
+				lines[i] = base.ResolveReference(ref).String()
+			}
+			continue
+		}
+		lines[i] = absolutizeHLSURIAttributes(base, line)
+	}
+	return []byte(strings.Join(lines, "\n"))
+}
+
+// Kick clip playlists sometimes place EXT-X-BYTERANGE immediately before
+// EXTINF. RFC 8216 orders the segment duration first; normalising that pair
+// keeps strict HLS clients (including hls.js) from rejecting otherwise valid
+// clip media playlists.
+func normalizeHLSByteRangeOrder(lines []string) {
+	for i := 0; i+1 < len(lines); i++ {
+		if strings.HasPrefix(strings.TrimSpace(lines[i]), "#EXT-X-BYTERANGE:") &&
+			strings.HasPrefix(strings.TrimSpace(lines[i+1]), "#EXTINF:") {
+			lines[i], lines[i+1] = lines[i+1], lines[i]
+			i++
+		}
+	}
+}
+
+func absolutizeHLSURIAttributes(base *url.URL, line string) string {
+	const marker = `URI="`
+	searchFrom := 0
+	for {
+		start := strings.Index(line[searchFrom:], marker)
+		if start < 0 {
+			return line
+		}
+		start += searchFrom + len(marker)
+		endOffset := strings.IndexByte(line[start:], '"')
+		if endOffset < 0 {
+			return line
+		}
+		end := start + endOffset
+		ref, err := url.Parse(line[start:end])
+		if err == nil {
+			absolute := base.ResolveReference(ref).String()
+			line = line[:start] + absolute + line[end:]
+			searchFrom = start + len(absolute) + 1
+		} else {
+			searchFrom = end + 1
+		}
+	}
 }
 
 func (a *App) handleVODs(w http.ResponseWriter, r *http.Request) {

@@ -22,8 +22,8 @@ Restart=always
 RestartSec=5
 TimeoutStopSec=15
 
-# Safe production defaults. Local overrides and CONTROL_TOKEN live in the
-# root-owned EnvironmentFile and are never committed to the repository.
+# Safe production defaults. Optional local overrides, including opt-in
+# Chromecast authentication, live in the root-owned EnvironmentFile.
 Environment=PORT=8081
 Environment=LOG_LEVEL=INFO
 Environment=LOG_FORMAT_JSON=true

@@ -6,6 +6,7 @@ import { preferences, savePreferences } from '../state.js';
 import { toast } from '../toast.js';
 import { clearHistory } from '../history.js';
 import { clearFavorites } from '../favorites.js';
+import { escapeHtml } from '../utils.js';
 
 export async function mount(params, contentEl) {
     // Fetch languages for the selector
@@ -20,6 +21,15 @@ export async function mount(params, contentEl) {
         }
     } catch { /* use fallback */ }
 
+    let buildVersion = '4.0.0';
+    try {
+        const res = await fetch('/version');
+        if (res.ok) {
+            const info = await res.json();
+            if (info.version && info.version !== 'dev') buildVersion = info.version;
+        }
+    } catch { /* show the release-family fallback */ }
+
     const currentLang = preferences.language || defaultLang;
     const currentTheme = preferences.theme || 'system';
     const sortCol = preferences.defaultSort?.column || '';
@@ -27,6 +37,7 @@ export async function mount(params, contentEl) {
     const autoRefresh = preferences.autoRefresh !== false;
     const refreshInterval = preferences.autoRefreshInterval || 120;
     const historyEnabled = preferences.historyEnabled !== false;
+    const liveStartMode = preferences.liveStartMode === 'edge' ? 'edge' : 'timeline';
 
     contentEl.innerHTML = `
         <div class="section-header">
@@ -99,6 +110,20 @@ export async function mount(params, contentEl) {
         </div>
 
         <div class="settings-group">
+            <div class="settings-group-title">Playback</div>
+            <div class="settings-row settings-row-stacked">
+                <span class="settings-label">
+                    Live Stream Start
+                    <span class="settings-hint">Live edge reaches the stream fastest and loads the rewind window in the background, ready the moment you use it. Full timeline instead opens on the stream's recording — the whole broadcast is on the scrubber right away, but it starts slower and runs ~40s further behind.</span>
+                </span>
+                <select id="settings-live-start" class="filter-select">
+                    <option value="edge" ${liveStartMode === 'edge' ? 'selected' : ''}>Live edge (fastest start)</option>
+                    <option value="timeline" ${liveStartMode === 'timeline' ? 'selected' : ''}>Full timeline</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="settings-group">
             <div class="settings-group-title">Data</div>
             <label class="settings-row">
                 <span class="settings-label" id="settings-history-enabled-label">History Tracking</span>
@@ -121,7 +146,7 @@ export async function mount(params, contentEl) {
             <div class="settings-group-title">About</div>
             <div class="settings-row">
                 <span class="settings-label">Version</span>
-                <span style="color:var(--text-muted);font-size:13px">3.1.0</span>
+                <span style="color:var(--text-muted);font-size:13px">${escapeHtml(buildVersion)}</span>
             </div>
             <div class="settings-row">
                 <span class="settings-label">API Documentation</span>
@@ -229,6 +254,17 @@ export async function mount(params, contentEl) {
         toast('Refresh interval updated', 'success');
     };
 
+    const onLiveStartChange = (e) => {
+        preferences.liveStartMode = e.target.value === 'edge' ? 'edge' : 'timeline';
+        savePreferences();
+        toast(
+            preferences.liveStartMode === 'edge'
+                ? 'Live streams will start at the live edge'
+                : 'Live streams will start with the full timeline',
+            'success',
+        );
+    };
+
     const onHistoryToggle = (e) => {
         preferences.historyEnabled = e.target.checked;
         savePreferences();
@@ -259,6 +295,7 @@ export async function mount(params, contentEl) {
     const sortColEl = contentEl.querySelector('#settings-sort-column');
     const autoRefreshEl = contentEl.querySelector('#settings-auto-refresh');
     const refreshIntervalEl = contentEl.querySelector('#settings-refresh-interval');
+    const liveStartEl = contentEl.querySelector('#settings-live-start');
     const historyEl = contentEl.querySelector('#settings-history-enabled');
     const clearHistBtn = contentEl.querySelector('#settings-clear-history');
     const clearFavBtn = contentEl.querySelector('#settings-clear-favorites');
@@ -270,6 +307,7 @@ export async function mount(params, contentEl) {
     directionEl?.addEventListener('change', onSortDirectionChange);
     autoRefreshEl?.addEventListener('change', onAutoRefreshToggle);
     refreshIntervalEl?.addEventListener('change', onRefreshIntervalChange);
+    liveStartEl?.addEventListener('change', onLiveStartChange);
     historyEl?.addEventListener('change', onHistoryToggle);
     clearHistBtn?.addEventListener('click', onClearHistory);
     clearFavBtn?.addEventListener('click', onClearFavorites);
@@ -282,6 +320,7 @@ export async function mount(params, contentEl) {
         directionEl?.removeEventListener('change', onSortDirectionChange);
         autoRefreshEl?.removeEventListener('change', onAutoRefreshToggle);
         refreshIntervalEl?.removeEventListener('change', onRefreshIntervalChange);
+        liveStartEl?.removeEventListener('change', onLiveStartChange);
         historyEl?.removeEventListener('change', onHistoryToggle);
         clearHistBtn?.removeEventListener('click', onClearHistory);
         clearFavBtn?.removeEventListener('click', onClearFavorites);

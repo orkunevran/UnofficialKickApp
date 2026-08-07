@@ -258,6 +258,7 @@ function applyPageResult(cache, metaCache, result) {
 }
 
 function sortPillAriaLabel(label, isActive, direction) {
+    if (label === 'Featured') return isActive ? 'Featured order selected' : 'Use Featured order';
     if (!isActive) return `Sort by ${label}`;
     return `Sort by ${label}, ${direction === 'asc' ? 'ascending' : 'descending'}`;
 }
@@ -672,7 +673,7 @@ export async function mount(params, contentEl) {
         <div id="browse-view">
             <div class="browse-sticky-header">
                 <div class="section-header">
-                    <h1 class="section-title">Featured Streams <span id="stream-count" class="section-count">${initialCount > 0 ? `(${initialCount})` : ''}</span></h1>
+                    <h1 class="section-title">Live Streams <span id="stream-count" class="section-count">${initialCount > 0 ? `(${initialCount})` : ''}</span></h1>
                     <span id="featured-spinner" class="inline-spinner" aria-hidden="true"></span>
                     <button id="filter-toggle" class="filter-toggle" aria-label="Toggle filters" aria-expanded="true">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
@@ -686,11 +687,14 @@ export async function mount(params, contentEl) {
                 </select>
 
                 <div class="sort-pills" role="group" aria-label="Sort streams">
-                    ${['viewer_count', 'session_title', 'channel.user.username'].map(col => {
-                        const label = col === 'viewer_count' ? 'Viewers' : col === 'session_title' ? 'Title' : 'Channel';
-                        const type = col === 'viewer_count' ? 'number' : 'string';
-                        const isActive = featuredSortState.column === col;
-                        const cls = isActive ? `sort-pill active ${featuredSortState.direction}` : 'sort-pill';
+                    ${[
+                        { col: '', label: 'Featured', type: 'featured' },
+                        { col: 'viewer_count', label: 'Viewers', type: 'number' },
+                        { col: 'session_title', label: 'Title', type: 'string' },
+                        { col: 'channel.user.username', label: 'Channel', type: 'string' },
+                    ].map(({ col, label, type }) => {
+                        const isActive = col ? featuredSortState.column === col : !featuredSortState.column;
+                        const cls = isActive && col ? `sort-pill active ${featuredSortState.direction}` : isActive ? 'sort-pill active' : 'sort-pill';
                         return `<button class="${cls}" data-sort="${col}" data-type="${type}" aria-pressed="${isActive}" aria-label="${sortPillAriaLabel(label, isActive, featuredSortState.direction)}">${label}</button>`;
                     }).join('')}
                 </div>
@@ -769,10 +773,12 @@ export async function mount(params, contentEl) {
     const onSortPill = (e) => {
         const pill = e.target.closest('.sort-pill');
         if (!pill) return;
-        const col = pill.dataset.sort;
-        const type = pill.dataset.type;
+        const col = pill.dataset.sort || null;
 
-        if (featuredSortState.column === col) {
+        if (!col) {
+            featuredSortState.column = null;
+            featuredSortState.direction = 'desc';
+        } else if (featuredSortState.column === col) {
             featuredSortState.direction = featuredSortState.direction === 'asc' ? 'desc' : 'asc';
         } else {
             featuredSortState.column = col;
@@ -783,12 +789,13 @@ export async function mount(params, contentEl) {
         contentEl.querySelectorAll('.sort-pill').forEach(p => {
             p.classList.remove('active', 'asc', 'desc');
             p.setAttribute('aria-pressed', 'false');
-            const plabel = p.dataset.sort === 'viewer_count' ? 'Viewers' : p.dataset.sort === 'session_title' ? 'Title' : 'Channel';
+            const plabel = !p.dataset.sort ? 'Featured' : p.dataset.sort === 'viewer_count' ? 'Viewers' : p.dataset.sort === 'session_title' ? 'Title' : 'Channel';
             p.setAttribute('aria-label', sortPillAriaLabel(plabel, false, featuredSortState.direction));
         });
-        pill.classList.add('active', featuredSortState.direction);
+        pill.classList.add('active');
+        if (col) pill.classList.add(featuredSortState.direction);
         pill.setAttribute('aria-pressed', 'true');
-        const activeLabel = col === 'viewer_count' ? 'Viewers' : col === 'session_title' ? 'Title' : 'Channel';
+        const activeLabel = !col ? 'Featured' : col === 'viewer_count' ? 'Viewers' : col === 'session_title' ? 'Title' : 'Channel';
         pill.setAttribute('aria-label', sortPillAriaLabel(activeLabel, true, featuredSortState.direction));
 
         if (currentCategory && col === 'viewer_count') {

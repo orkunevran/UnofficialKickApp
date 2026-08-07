@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -16,17 +18,29 @@ import (
 
 // fakeKick is a configurable kickClient for offline route tests.
 type fakeKick struct {
-	channel     map[string]any
-	channelErr  error
-	calls       atomic.Int64
-	clips       any
-	videos      any
-	featured    any
-	search      []map[string]any
-	viewers     int
-	batch       map[int]int
-	playlist    []byte
-	playlistErr error
+	channel      map[string]any
+	channelErr   error
+	calls        atomic.Int64
+	videoCalls   atomic.Int64
+	chatCalls    atomic.Int64
+	chatHistory  any
+	chatErr      error
+	chatAskedFor string
+	clips        any
+	videos       any
+	featured     any
+	search       []map[string]any
+	viewers      int
+	batch        map[int]int
+	playlist     []byte
+	playlistErr  error
+	// playlists serves per-URL playlist bodies (the DVR proxy fetches several
+	// distinct playlists); falls back to playlist when a URL isn't listed.
+	playlists map[string][]byte
+	// Recorded fetches. Guarded: the DVR proxy refreshes playlists from
+	// background goroutines.
+	playlistMu   sync.Mutex
+	playlistURLs []string
 }
 
 func (f *fakeKick) GetChannelData(slug string) (map[string]any, error) {
@@ -36,16 +50,40 @@ func (f *fakeKick) GetChannelData(slug string) (map[string]any, error) {
 	}
 	return f.channel, nil
 }
-func (f *fakeKick) GetChannelVideos(string) (any, error)            { return f.videos, nil }
+func (f *fakeKick) GetChannelVideos(string) (any, error) {
+	f.videoCalls.Add(1)
+	return f.videos, nil
+}
+
 func (f *fakeKick) GetChannelClips(string) (any, error)             { return f.clips, nil }
 func (f *fakeKick) GetFeaturedLivestreams(string, int) (any, error) { return f.featured, nil }
 func (f *fakeKick) GetAllLivestreams(string, int, string, string, string, string, bool) (any, error) {
 	return f.featured, nil
 }
-func (f *fakeKick) FetchPlaylist(string) ([]byte, error)                     { return f.playlist, f.playlistErr }
+func (f *fakeKick) FetchPlaylist(playlistURL string) ([]byte, error) {
+	f.playlistMu.Lock()
+	f.playlistURLs = append(f.playlistURLs, playlistURL)
+	f.playlistMu.Unlock()
+	if body, ok := f.playlists[playlistURL]; ok {
+		return body, nil
+	}
+	return f.playlist, f.playlistErr
+}
+
+// playlistFetches is how many times the upstream playlist endpoint was hit.
+func (f *fakeKick) playlistFetches() int {
+	f.playlistMu.Lock()
+	defer f.playlistMu.Unlock()
+	return len(f.playlistURLs)
+}
 func (f *fakeKick) GetViewerCount(int) (int, error)                          { return f.viewers, nil }
 func (f *fakeKick) GetViewerCountsBatch([]int) (map[int]int, error)          { return f.batch, nil }
 func (f *fakeKick) SearchChannelsTypesense(string) ([]map[string]any, error) { return f.search, nil }
+func (f *fakeKick) GetChatHistory(channelID int, startTime string) (any, error) {
+	f.chatCalls.Add(1)
+	f.chatAskedFor = startTime
+	return f.chatHistory, f.chatErr
+}
 
 func appWithKick(t *testing.T, fake *fakeKick) *App {
 	t.Helper()
@@ -128,6 +166,55 @@ func TestInvalidSlug(t *testing.T) {
 	code, _ := getJSON(t, appWithKick(t, &fakeKick{}), "/streams/play/bad!slug")
 	if code != 400 {
 		t.Fatalf("status = %d; want 400", code)
+	}
+}
+
+func TestPlayClipProxiesAbsolutePlaylist(t *testing.T) {
+	fake := &fakeKick{
+		clips: map[string]any{
+			"clips": map[string]any{
+				"data": []any{
+					map[string]any{
+						"id":       "clip_abc",
+						"clip_url": "https://clips.example/media/clip.m3u8?token=secret",
+					},
+				},
+			},
+		},
+		playlist: []byte("#EXTM3U\n#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"\n#EXT-X-BYTERANGE:1024@0\n#EXTINF:4,\n0.ts\n"),
+	}
+	app := appWithKick(t, fake)
+	req := httptest.NewRequest(http.MethodGet, "/streams/clip/alice/clip_abc", nil)
+	rec := httptest.NewRecorder()
+
+	app.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d; want 200", rec.Code)
+	}
+	if got := rec.Header().Get("Content-Type"); got != "application/vnd.apple.mpegurl" {
+		t.Fatalf("content type = %q", got)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `URI="https://clips.example/media/key.bin"`) {
+		t.Fatalf("key URI was not made absolute: %s", body)
+	}
+	if !strings.Contains(body, "https://clips.example/media/0.ts") {
+		t.Fatalf("segment URI was not made absolute: %s", body)
+	}
+	if !strings.Contains(body, "#EXTINF:4,\n#EXT-X-BYTERANGE:1024@0\n") {
+		t.Fatalf("byterange tag was not normalised after EXTINF: %s", body)
+	}
+}
+
+func TestPlayClipNotFound(t *testing.T) {
+	fake := &fakeKick{clips: map[string]any{"clips": []any{}}}
+	code, body := getJSON(t, appWithKick(t, fake), "/streams/clip/alice/missing")
+	if code != http.StatusNotFound {
+		t.Fatalf("status = %d; want 404", code)
+	}
+	if body["status"] != "error" || body["message"] != "Clip not found." {
+		t.Fatalf("unexpected error envelope: %v", body)
 	}
 }
 

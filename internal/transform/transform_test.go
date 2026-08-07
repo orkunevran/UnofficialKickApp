@@ -14,6 +14,9 @@ func TestBuildChannelProfileFallbacksAndNulls(t *testing.T) {
 	if p["verified"] != false {
 		t.Fatalf("verified = %v; want false", p["verified"])
 	}
+	if p["chatroom_id"] != nil {
+		t.Fatalf("chatroom_id = %v; want nil", p["chatroom_id"])
+	}
 
 	// Empty/whitespace bio → null; present bio → trimmed.
 	p = BuildChannelProfile(map[string]any{"user": map[string]any{"bio": "   "}}, "c")
@@ -26,6 +29,13 @@ func TestBuildChannelProfileFallbacksAndNulls(t *testing.T) {
 	}
 	if p["username"] != "Bob" {
 		t.Fatalf("username = %v; want Bob", p["username"])
+	}
+
+	p = BuildChannelProfile(map[string]any{
+		"chatroom": map[string]any{"id": float64(1234)},
+	}, "c")
+	if p["chatroom_id"] != float64(1234) {
+		t.Fatalf("chatroom_id = %v; want 1234", p["chatroom_id"])
 	}
 }
 

@@ -6,98 +6,113 @@
  * so playback survives route changes without a reload.
  */
 
-import { fetchChannelData, fetchLiveStatus, fetchViewerCount } from '../api.js';
+import { fetchVods, fetchClips, fetchLiveStatus, fetchViewerCount } from '../api.js';
 import { renderChannelProfile, renderStreamTabContent, renderProfileSkeleton, renderVodGrid, renderClipGrid, renderVodPlayerContent, renderClipPlayerContent, renderVodSkeleton } from '../ui.js';
 import { appState, preferences } from '../state.js';
 import { addToHistory } from '../history.js';
 import { toast } from '../toast.js';
 import { escapeHtml, debounce } from '../utils.js';
 import { navigate } from '../router.js';
+import { mountLiveChat } from '../live-chat.js';
+import { mountDvrControls, preferredLiveSource, getTimelineModel, dispose as disposeDvrControls } from '../dvr.js';
 import {
-    getCurrentStream, getCachedChannelData, getHlsInstance,
+    getCurrentStream, getCachedChannelData,
     loadStream, setMode, cacheChannelData, stopStream,
 } from '../player.js';
 
 let viewerRefreshTimer = null;
 
-function initVideoPlayer(playbackUrl, channelSlug, liveData) {
-    const slot = document.getElementById('video-slot');
+function createPlayerSlot(poster = '', { showChat = false } = {}) {
+    const stage = document.getElementById('channel-watch-stage');
+    const anchor = document.getElementById('channel-player-anchor');
+    if (!stage || !anchor) return null;
+
+    const sharedVideo = document.getElementById('sharedVideo');
+    if (sharedVideo && anchor.contains(sharedVideo)) setMode('hidden');
+    anchor.replaceChildren();
+    const slot = document.createElement('div');
+    slot.id = 'channel-player-slot';
+    slot.className = 'video-container';
+    if (poster) slot.dataset.poster = poster;
+    anchor.appendChild(slot);
+
+    stage.classList.add('active');
+    stage.classList.toggle('show-chat', showChat);
+    requestAnimationFrame(() => stage.scrollIntoView({ block: 'start' }));
+    return slot;
+}
+
+// hidePlayerStage tears down the watch stage — when leaving the stream tab, or
+// when a VOD/clip player closes.
+//
+// Anything still playing is handed to the mini-player rather than parked in the
+// hidden layer. 'hidden' moves the video into an off-screen container without
+// pausing it, so a live stream carried on playing with no player, no controls and
+// no mini-bar: audible, with nothing on screen able to stop it.
+function hidePlayerStage() {
+    const stage = document.getElementById('channel-watch-stage');
+    const anchor = document.getElementById('channel-player-anchor');
+    const sharedVideo = document.getElementById('sharedVideo');
+    if (sharedVideo && anchor?.contains(sharedVideo)) {
+        // No FLIP animation here: a tab switch that restores a VOD player re-projects
+        // to full in the same task, and animating a handoff that is immediately
+        // undone only produces a flicker.
+        if (getCurrentStream()) setMode('mini', null, { collapsePanel: true });
+        else setMode('hidden');
+    }
+    stage?.classList.remove('active', 'show-chat');
+    anchor?.replaceChildren();
+}
+
+async function initVideoPlayer(playbackUrl, channelSlug, liveData, slot) {
     if (!slot || !playbackUrl) return;
 
     const miniStream = getCurrentStream();
 
-    if (miniStream?.slug === channelSlug) {
+    if (miniStream?.slug === channelSlug && !['vod', 'clip'].includes(miniStream.type)) {
         // Same channel — just project the already-playing video to full size.
-        // HLS stays attached.  Zero interruption.
+        // HLS stays attached.  Zero interruption. (A rewound stream stays
+        // rewound: 'dvr' is this channel's live stream, seen from the past.)
         setMode('full', slot, { animate: true });
-        _renderQualityPicker(getHlsInstance());
-        _initPipButton();
+        _initDvrControls(playbackUrl, channelSlug, liveData);
         return;
     }
 
     // Different channel or no active stream — stop any existing stream
     if (miniStream) stopStream();
 
+    // Prefer the rewindable source, so the timeline covers the whole broadcast
+    // rather than starting wherever the viewer happened to arrive.
+    const source = await preferredLiveSource({ slug: channelSlug, liveUrl: playbackUrl });
+    // Resolving it is asynchronous — the viewer may have navigated on, switched
+    // tabs, or started something else meanwhile.
+    if (!slot.isConnected) return;
+
     // Fresh load: start HLS on the shared video and project to full
     const streamInfo = {
         slug: channelSlug,
         title: liveData?.data?.livestream_title || channelSlug,
         channel: liveData?.data?.username || channelSlug,
-        playbackUrl,
+        playbackUrl: source.url,
+        // Always the live edge, whatever is playing: cast targets and the
+        // "copy stream URL" action want the stream, not a rewound position.
+        liveUrl: playbackUrl,
         thumbnailUrl: liveData?.data?.livestream_thumbnail_url || '',
+        ...(source.type ? { type: source.type } : {}),
     };
-    loadStream(playbackUrl, streamInfo, liveData);
+    loadStream(source.url, streamInfo, liveData);
     setMode('full', slot);
-    _renderQualityPicker(getHlsInstance());
-    _initPipButton();
+    _initDvrControls(playbackUrl, channelSlug, liveData);
 }
 
-function _initPipButton() {
-    const video = document.getElementById('sharedVideo');
-    const pipBtn = document.getElementById('pip-button');
-    if (pipBtn && video && document.pictureInPictureEnabled) {
-        pipBtn.classList.remove('hidden');
-        pipBtn.onclick = async () => {
-            try {
-                if (document.pictureInPictureElement) {
-                    await document.exitPictureInPicture();
-                } else {
-                    await video.requestPictureInPicture();
-                }
-            } catch (e) { console.warn('PiP failed:', e); }
-        };
-    }
-}
-
-function _renderQualityPicker(hls, _attempt = 0) {
-    const container = document.getElementById('quality-picker');
-    if (!container || !hls) return;
-    // Levels aren't populated until the manifest is parsed (async, after this
-    // is first called). Poll briefly rather than depend on event timing; bail
-    // if a different stream took over the picker meanwhile.
-    if (!hls.levels?.length) {
-        if (_attempt < 20 && getHlsInstance() === hls) {
-            setTimeout(() => _renderQualityPicker(hls, _attempt + 1), 300);
-        }
-        return;
-    }
-
-    const levels = hls.levels.map((l, i) => ({
-        index: i,
-        label: l.height ? `${l.height}p` : `${Math.round(l.bitrate / 1000)}k`,
-        height: l.height || 0,
-    }));
-    levels.sort((a, b) => b.height - a.height);
-
-    container.innerHTML = `
-        <select id="quality-select" class="filter-select quality-select" title="Stream quality">
-            <option value="-1" selected>Auto</option>
-            ${levels.map(l => `<option value="${l.index}">${l.label}</option>`).join('')}
-        </select>`;
-    container.classList.remove('hidden');
-
-    container.querySelector('#quality-select')?.addEventListener('change', (e) => {
-        hls.currentLevel = parseInt(e.target.value, 10);
+// Live rewind: available only when Kick is recording the broadcast, which
+// dvr.js checks with the backend before the player offers a broadcast timeline.
+function _initDvrControls(playbackUrl, channelSlug, liveData) {
+    void mountDvrControls({
+        slug: channelSlug,
+        liveUrl: playbackUrl,
+        liveData,
+        title: liveData?.data?.livestream_title,
     });
 }
 
@@ -188,18 +203,27 @@ function renderTabContent(tab, liveData, vodsData, clipsData, channelSlug) {
         requestAnimationFrame(() => tabContent.classList.add('tab-fade-in'));
     }
 
+    // Live rewind belongs to the stream tab only — tear it down elsewhere so its
+    // ticker and key handlers don't outlive the markup they drive.
+    if (tab !== 'stream') disposeDvrControls();
+
     if (tab === 'stream') {
+        if (['vod', 'clip'].includes(getCurrentStream()?.type)) stopStream();
         tabContent.innerHTML = renderStreamTabContent(liveData?.data, channelSlug);
         if (liveData?.data?.status === 'live') {
-            // On mobile, move video to top-of-page anchor for video-first UX
-            if (window.innerWidth < 768) {
-                const anchor = document.getElementById('mobile-video-anchor');
-                const videoEl = document.getElementById('video-slot');
-                if (anchor && videoEl) anchor.appendChild(videoEl);
-            }
-            initVideoPlayer(liveData.data.playback_url, channelSlug, liveData);
+            const slot = createPlayerSlot(liveData.data.livestream_thumbnail_url || '', {
+                showChat: Boolean(liveData.data.chatroom_id),
+            });
+            void initVideoPlayer(liveData.data.playback_url, channelSlug, liveData, slot);
+        } else {
+            disposeDvrControls();
+            hidePlayerStage();
         }
     } else if (tab === 'vods') {
+        const activeMedia = getCurrentStream();
+        const restoreVod = activeMedia?.slug === channelSlug && activeMedia.type === 'vod';
+        if (!restoreVod && ['vod', 'clip'].includes(activeMedia?.type)) stopStream();
+        hidePlayerStage();
         if (!vodsData) {
             tabContent.innerHTML = renderVodSkeleton();
             return;
@@ -210,6 +234,43 @@ function renderTabContent(tab, liveData, vodsData, clipsData, channelSlug) {
         if (tabContent._vodClickHandler) {
             tabContent.removeEventListener('click', tabContent._vodClickHandler);
         }
+
+        const _showVod = (card, { reuseActive = false } = {}) => {
+            if (!reuseActive && getCurrentStream()) stopStream();
+
+            tabContent.innerHTML = renderVodPlayerContent(card);
+
+            // Cast and playback should use the absolute manifest URL.
+            // The proxy redirect route is still kept for "open in new tab".
+            const playbackUrl = card.dataset.playbackUrl || card.dataset.sourceUrl || '';
+            const slot = createPlayerSlot(card.dataset.vodThumb || '');
+            if (!slot) return;
+
+            if (reuseActive) {
+                // Re-project the shared video instead of loading it again, so
+                // playback position survives the mini-player round trip.
+                setMode('full', slot, { animate: true });
+            } else {
+                const streamInfo = {
+                    slug: channelSlug,
+                    title: card.dataset.vodTitle || 'VOD',
+                    channel: channelSlug,
+                    playbackUrl,
+                    sourceUrl: card.dataset.sourceUrl || '',
+                    thumbnailUrl: card.dataset.vodThumb || '',
+                    mediaId: card.dataset.playVod || '',
+                    type: 'vod',
+                };
+                loadStream(playbackUrl, streamInfo, null);
+                setMode('full', slot);
+            }
+
+            tabContent.querySelector('.vod-back-btn')?.addEventListener('click', () => {
+                stopStream();
+                hidePlayerStage();
+                _renderVodList();
+            });
+        };
 
         const _renderVodList = () => {
             const searchHTML = `
@@ -234,48 +295,39 @@ function renderTabContent(tab, liveData, vodsData, clipsData, channelSlug) {
             }
 
             // Click delegation for inline VOD playback
+            if (tabContent._vodClickHandler) {
+                tabContent.removeEventListener('click', tabContent._vodClickHandler);
+            }
             tabContent._vodClickHandler = async (e) => {
                 // Ignore clicks on cast/external-link buttons
                 if (e.target.closest('.cast-button') || e.target.closest('a[target="_blank"]')) return;
                 const card = e.target.closest('[data-play-vod]');
                 if (!card) return;
                 e.preventDefault();
-
-                // Stop any existing stream
-                if (getCurrentStream()) stopStream();
-
-                // Show player UI
-                tabContent.innerHTML = renderVodPlayerContent(card);
-
-                // Cast and playback should use the absolute manifest URL.
-                // The proxy redirect route is still kept for "open in new tab".
-                const playbackUrl = card.dataset.playbackUrl || card.dataset.sourceUrl || '';
-
-                const slot = document.getElementById('video-slot');
-                if (!slot) return;
-
-                const streamInfo = {
-                    slug: channelSlug,
-                    title: card.dataset.vodTitle || 'VOD',
-                    channel: channelSlug,
-                    playbackUrl,
-                    thumbnailUrl: card.dataset.vodThumb || '',
-                    type: 'vod',
-                };
-                loadStream(playbackUrl, streamInfo, null);
-                setMode('full', slot);
-
-                // "Back to list" button
-                tabContent.querySelector('.vod-back-btn')?.addEventListener('click', () => {
-                    stopStream();
-                    _renderVodList();
-                });
+                _showVod(card);
             };
             tabContent.addEventListener('click', tabContent._vodClickHandler);
+
+            const current = getCurrentStream();
+            if (current?.slug === channelSlug && current.type === 'vod') {
+                const cards = [...tabContent.querySelectorAll('[data-play-vod]')];
+                const activeCard = cards.find(card =>
+                    (current.mediaId && card.dataset.playVod === current.mediaId)
+                    || (current.playbackUrl && (
+                        card.dataset.playbackUrl === current.playbackUrl
+                        || card.dataset.sourceUrl === current.playbackUrl
+                    ))
+                );
+                if (activeCard) _showVod(activeCard, { reuseActive: true });
+            }
         };
         _renderVodList();
 
     } else if (tab === 'clips') {
+        const activeMedia = getCurrentStream();
+        const restoreClip = activeMedia?.slug === channelSlug && activeMedia.type === 'clip';
+        if (!restoreClip && ['vod', 'clip'].includes(activeMedia?.type)) stopStream();
+        hidePlayerStage();
         if (!clipsData) {
             tabContent.innerHTML = renderVodSkeleton();
             return;
@@ -286,6 +338,38 @@ function renderTabContent(tab, liveData, vodsData, clipsData, channelSlug) {
         if (tabContent._clipClickHandler) {
             tabContent.removeEventListener('click', tabContent._clipClickHandler);
         }
+
+        const _showClip = (card, { reuseActive = false } = {}) => {
+            if (!reuseActive && getCurrentStream()) stopStream();
+
+            tabContent.innerHTML = renderClipPlayerContent(card);
+
+            const clipUrl = card.dataset.clipUrl;
+            const slot = createPlayerSlot(card.dataset.clipThumb || '');
+            if (!slot) return;
+
+            if (reuseActive) {
+                setMode('full', slot, { animate: true });
+            } else {
+                const streamInfo = {
+                    slug: channelSlug,
+                    title: card.dataset.clipTitle || 'Clip',
+                    channel: channelSlug,
+                    playbackUrl: clipUrl,
+                    sourceUrl: card.dataset.clipSourceUrl || '',
+                    thumbnailUrl: card.dataset.clipThumb || '',
+                    type: 'clip',
+                };
+                loadStream(clipUrl, streamInfo, null);
+                setMode('full', slot);
+            }
+
+            tabContent.querySelector('.vod-back-btn')?.addEventListener('click', () => {
+                stopStream();
+                hidePlayerStage();
+                _renderClipList();
+            });
+        };
 
         const _renderClipList = () => {
             const searchHTML = `
@@ -310,37 +394,29 @@ function renderTabContent(tab, liveData, vodsData, clipsData, channelSlug) {
             }
 
             // Click delegation for inline clip playback
+            if (tabContent._clipClickHandler) {
+                tabContent.removeEventListener('click', tabContent._clipClickHandler);
+            }
             tabContent._clipClickHandler = async (e) => {
                 if (e.target.closest('.cast-button') || e.target.closest('a[target="_blank"]')) return;
                 const card = e.target.closest('[data-play-clip]');
                 if (!card) return;
                 e.preventDefault();
-
-                if (getCurrentStream()) stopStream();
-
-                tabContent.innerHTML = renderClipPlayerContent(card);
-
-                const clipUrl = card.dataset.clipUrl;
-                const slot = document.getElementById('video-slot');
-                if (!slot) return;
-
-                const streamInfo = {
-                    slug: channelSlug,
-                    title: card.dataset.clipTitle || 'Clip',
-                    channel: channelSlug,
-                    playbackUrl: clipUrl,
-                    thumbnailUrl: card.dataset.clipThumb || '',
-                    type: 'clip',
-                };
-                loadStream(clipUrl, streamInfo, null);
-                setMode('full', slot);
-
-                tabContent.querySelector('.vod-back-btn')?.addEventListener('click', () => {
-                    stopStream();
-                    _renderClipList();
-                });
+                _showClip(card);
             };
             tabContent.addEventListener('click', tabContent._clipClickHandler);
+
+            const current = getCurrentStream();
+            if (current?.slug === channelSlug && current.type === 'clip') {
+                const cards = [...tabContent.querySelectorAll('[data-play-clip]')];
+                const activeCard = cards.find(card =>
+                    current.playbackUrl && (
+                        card.dataset.clipUrl === current.playbackUrl
+                        || card.dataset.clipSourceUrl === current.playbackUrl
+                    )
+                );
+                if (activeCard) _showClip(activeCard, { reuseActive: true });
+            }
         };
         _renderClipList();
     }
@@ -357,12 +433,60 @@ export async function mount(params, contentEl) {
     // search box — it's a search field, not a location indicator, and leaving
     // the slug there made it look like a pending search across every route.
 
+    const miniStream = getCurrentStream();
     let liveData, vodsData = null, clipsData = null;
-    let activeTab = 'stream';
+    let vodsPending = false, clipsPending = false;
+    let activeTab = miniStream?.slug === channelSlug && miniStream.type === 'vod'
+        ? 'vods'
+        : miniStream?.slug === channelSlug && miniStream.type === 'clip'
+            ? 'clips'
+            : 'stream';
 
     // ── Instant render path: if mini-player has this channel, use cached data ──
-    const miniStream = getCurrentStream();
     const cachedData = (miniStream?.slug === channelSlug) ? getCachedChannelData() : null;
+    let chat = null;
+    let chatSyncTimer = null;
+
+    // Chat follows the player: rewound playback shows the messages from that moment
+    // (live-chat.js fetches them by timestamp), live playback shows the socket.
+    // Polled rather than pushed because the position moves for many reasons —
+    // scrubbing, the rewind keys, Go Live, ordinary playback drift.
+    const startChatSync = () => {
+        stopChatSync();
+        chatSyncTimer = setInterval(() => {
+            if (!chat?.setReplayPosition) return;
+            const model = getTimelineModel();
+            if (!model.available) return;
+            chat.setReplayPosition(model.atLive ? null : model.wallClockAt(model.position));
+        }, 1000);
+    };
+    const stopChatSync = () => {
+        if (chatSyncTimer) { clearInterval(chatSyncTimer); chatSyncTimer = null; }
+    };
+    let chatHydrationTimer = null;
+    let viewDisposed = false;
+
+    const hydrateLiveChat = candidate => {
+        const chatroomId = candidate?.data?.chatroom_id;
+        if (viewDisposed || liveData?.data?.chatroom_id || !chatroomId) return;
+
+        liveData = candidate;
+        chat?.dispose();
+        chat = mountLiveChat({ chatroomId, channelSlug });
+        startChatSync();
+        if (activeTab === 'stream') {
+            document.getElementById('channel-watch-stage')?.classList.add('show-chat');
+        }
+    };
+
+    const scheduleChatHydration = () => {
+        const d = liveData?.data;
+        if (d?.status !== 'live' || d?.chatroom_id || !d?._partial || chatHydrationTimer) return;
+        chatHydrationTimer = setTimeout(async () => {
+            chatHydrationTimer = null;
+            hydrateLiveChat(await fetchLiveStatus(channelSlug));
+        }, 900);
+    };
 
     if (cachedData) {
         liveData = cachedData;
@@ -384,6 +508,8 @@ export async function mount(params, contentEl) {
             channelSlug,
             { activeTab }
         );
+        chat = mountLiveChat({ chatroomId: d?.chatroom_id, channelSlug });
+        startChatSync();
         renderTabContent(activeTab, liveData, vodsData, clipsData, channelSlug);
 
         if (d?.status === 'live') {
@@ -435,6 +561,8 @@ export async function mount(params, contentEl) {
             channelSlug,
             { activeTab }
         );
+        chat = mountLiveChat({ chatroomId: d?.chatroom_id, channelSlug });
+        startChatSync();
         renderTabContent(activeTab, liveData, vodsData, clipsData, channelSlug);
 
         if (liveData?.data?.status === 'live') {
@@ -443,28 +571,49 @@ export async function mount(params, contentEl) {
     }
 
     const d = liveData?.data;
+    scheduleChatHydration();
 
-    // Phase 2: Fetch vods + clips in background
-    fetchChannelData(channelSlug).then(result => {
-        vodsData = result.vodsData;
-        clipsData = result.clipsData;
-        if (activeTab === 'vods' || activeTab === 'clips') {
-            renderTabContent(activeTab, liveData, vodsData, clipsData, channelSlug);
-        }
+    // Phase 2: refresh the live status, which is what chat hydration needs when
+    // /play answered from a partial cache entry. Recordings and clips are *not*
+    // fetched here — they load with their own tabs (see loadTabData), so opening a
+    // channel doesn't spend two upstream calls on panels nobody is looking at.
+    fetchLiveStatus(channelSlug).then(fresh => {
+        if (fresh?.status === 'success') hydrateLiveChat(fresh);
     }).catch(() => {});
+
+    // Lazily load whichever tab's data is missing, then re-render if the viewer is
+    // still on it.
+    const loadTabData = (tab) => {
+        if (tab === 'vods' && !vodsData && !vodsPending) {
+            vodsPending = true;
+            fetchVods(channelSlug).then(data => {
+                vodsData = data;
+                if (!viewDisposed && activeTab === 'vods') {
+                    renderTabContent('vods', liveData, vodsData, clipsData, channelSlug);
+                }
+            }).catch(() => { vodsPending = false; });
+        }
+        if (tab === 'clips' && !clipsData && !clipsPending) {
+            clipsPending = true;
+            fetchClips(channelSlug).then(data => {
+                clipsData = data;
+                if (!viewDisposed && activeTab === 'clips') {
+                    renderTabContent('clips', liveData, vodsData, clipsData, channelSlug);
+                }
+            }).catch(() => { clipsPending = false; });
+        }
+    };
+    loadTabData(activeTab);
 
     // Tab switching
     const switchToTab = (tabName) => {
         if (!tabName || tabName === activeTab) return;
 
-        // When leaving stream tab, switch video to hidden (but keep stream alive
-        // in case user switches back) — or to mini if navigating away entirely
-        if (activeTab === 'stream' && d?.status === 'live') {
-            // Just hide the video layer while staying on the channel page
-            // (don't stop the stream — user might switch back to stream tab)
-            setMode('hidden');
-        }
-
+        // Leaving the stream tab is handled by renderTabContent, which routes every
+        // branch through hidePlayerStage()/createPlayerSlot(). Hiding the video here
+        // as well moved it out of the player anchor first, so hidePlayerStage no
+        // longer recognised it as its own and skipped the mini-player handoff —
+        // leaving a live stream playing with nothing on screen to stop it.
         activeTab = tabName;
         contentEl.querySelectorAll('.profile-tab').forEach(t => {
             const isActive = t.dataset.tab === tabName;
@@ -476,6 +625,9 @@ export async function mount(params, contentEl) {
         const tabPanel = document.getElementById('profile-tab-content');
         if (tabPanel) tabPanel.setAttribute('aria-labelledby', `tab-${tabName}`);
 
+        // Fetch this tab's data the first time it's opened; renderTabContent shows a
+        // skeleton until it lands.
+        loadTabData(tabName);
         renderTabContent(tabName, liveData, vodsData, clipsData, channelSlug);
     };
     const onTabClick = (e) => {
@@ -503,16 +655,25 @@ export async function mount(params, contentEl) {
 
     // Cleanup — switch to mini mode (stream keeps playing)
     return () => {
+        viewDisposed = true;
+        if (chatHydrationTimer) clearTimeout(chatHydrationTimer);
         stopViewerRefresh();
+        stopChatSync();
+        chat?.dispose();
+        disposeDvrControls();
         tabsEl?.removeEventListener('click', onTabClick);
         tabsEl?.removeEventListener('keydown', onTabKeydown);
 
-        if (d?.status === 'live' && getCurrentStream()) {
-            // Cache the channel data for instant re-render on return
-            cacheChannelData(liveData);
-            // Hand off to the collapsed mini-player — zero interruption.
+        const currentStream = getCurrentStream();
+        if (currentStream) {
+            if (d?.status === 'live' && !['vod', 'clip'].includes(currentStream.type)) {
+                // Cache live channel data for instant re-render on return.
+                cacheChannelData(liveData);
+            }
+            // Hand off live streams, VODs, and clips to the mini-player so
+            // route replacement never removes the shared video element.
             setMode('mini', null, { animate: true, collapsePanel: true });
         }
-        // If not live or no stream, nothing to do — stream stays stopped
+        // If no media is active, there is nothing to hand off.
     };
 }

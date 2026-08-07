@@ -26,6 +26,7 @@ type Config struct {
 	Port                       int
 	LogLevel                   string
 	LogFormatJSON              bool
+	ControlAuthEnabled         bool
 	ControlToken               string
 	MaxJSONBodyBytes           int
 	RateLimitRequestsPerSecond float64
@@ -35,20 +36,23 @@ type Config struct {
 	KickAPIBaseURL             string
 	KickFeaturedLivestreamsURL string
 	KickAllLivestreamsURL      string
+	KickChatHistoryURL         string
 	KickMaxResponseBytes       int
 	KickMaxPlaylistBytes       int
 
 	// Cache
-	CacheMaxSize                 int
-	LiveCacheDurationSeconds     int
-	LiveStaleTTLSeconds          int
-	VODCacheDurationSeconds      int
-	FeaturedCacheDurationSeconds int
-	SearchCacheDurationSeconds   int
-	AvatarCacheDurationSeconds   int
-	ViewerCacheDurationSeconds   int
-	NegativeCacheDurationSeconds int
-	FeaturedStaleTTLSeconds      int
+	CacheMaxSize                    int
+	LiveCacheDurationSeconds        int
+	LiveStaleTTLSeconds             int
+	VODCacheDurationSeconds         int
+	FeaturedCacheDurationSeconds    int
+	SearchCacheDurationSeconds      int
+	AvatarCacheDurationSeconds      int
+	ViewerCacheDurationSeconds      int
+	NegativeCacheDurationSeconds    int
+	FeaturedStaleTTLSeconds         int
+	DVRSourceCacheDurationSeconds   int
+	DVRPlaylistCacheDurationSeconds int
 
 	// Languages
 	FeaturedLanguages   []Language
@@ -95,6 +99,7 @@ func Load() *Config {
 		Port:                       envInt("PORT", 8081),
 		LogLevel:                   envStr("LOG_LEVEL", "INFO"),
 		LogFormatJSON:              envBool("LOG_FORMAT_JSON", false),
+		ControlAuthEnabled:         envBool("CONTROL_AUTH_ENABLED", false),
 		ControlToken:               envStr("CONTROL_TOKEN", ""),
 		MaxJSONBodyBytes:           envInt("MAX_JSON_BODY_BYTES", 16384),
 		RateLimitRequestsPerSecond: envFloat("RATE_LIMIT_REQUESTS_PER_SECOND", 50),
@@ -103,8 +108,10 @@ func Load() *Config {
 		KickAPIBaseURL:             envStr("KICK_API_BASE_URL", "https://kick.com/api/v2/channels/"),
 		KickFeaturedLivestreamsURL: envStr("KICK_FEATURED_LIVESTREAMS_URL", "https://kick.com/stream/featured-livestreams/"),
 		KickAllLivestreamsURL:      envStr("KICK_ALL_LIVESTREAMS_URL", "https://kick.com/stream/livestreams/"),
-		KickMaxResponseBytes:       envInt("KICK_MAX_RESPONSE_BYTES", 4*1024*1024),
-		KickMaxPlaylistBytes:       envInt("KICK_MAX_PLAYLIST_BYTES", 1024*1024),
+		// Chat replay lives on a different host from the rest of the API.
+		KickChatHistoryURL:   envStr("KICK_CHAT_HISTORY_URL", "https://web.kick.com/api/v1/chat/"),
+		KickMaxResponseBytes: envInt("KICK_MAX_RESPONSE_BYTES", 4*1024*1024),
+		KickMaxPlaylistBytes: envInt("KICK_MAX_PLAYLIST_BYTES", 1024*1024),
 
 		CacheMaxSize:                 envInt("CACHE_MAX_SIZE", 2000),
 		LiveCacheDurationSeconds:     envInt("LIVE_CACHE_DURATION_SECONDS", 60),
@@ -116,6 +123,10 @@ func Load() *Config {
 		ViewerCacheDurationSeconds:   envInt("VIEWER_CACHE_DURATION_SECONDS", 30),
 		NegativeCacheDurationSeconds: envInt("NEGATIVE_CACHE_DURATION_SECONDS", 10),
 		FeaturedStaleTTLSeconds:      envInt("FEATURED_STALE_TTL_SECONDS", 3600),
+		// The DVR recording URL is stable for a whole broadcast, so it caches
+		// long; its playlist grows every ~12s, so that caches only briefly.
+		DVRSourceCacheDurationSeconds:   envInt("DVR_SOURCE_CACHE_DURATION_SECONDS", 600),
+		DVRPlaylistCacheDurationSeconds: envInt("DVR_PLAYLIST_CACHE_DURATION_SECONDS", 5),
 
 		LiveInflightWaitTimeoutSeconds: envFloat("LIVE_INFLIGHT_WAIT_TIMEOUT_SECONDS", 5.0),
 
@@ -152,8 +163,8 @@ func Load() *Config {
 
 // Validate rejects unsafe or nonsensical production configuration instead of
 // silently starting with values that make caches, timeouts, or listeners
-// ineffective. CONTROL_TOKEN remains optional for local development; the Pi
-// deployment provisions it in the service EnvironmentFile.
+// ineffective. Chromecast token authentication is opt-in: deployments remain
+// unprotected unless CONTROL_AUTH_ENABLED=true and CONTROL_TOKEN is configured.
 func (c *Config) Validate() error {
 	if c.Port < 1 || c.Port > 65535 {
 		return fmt.Errorf("PORT must be between 1 and 65535")
@@ -169,6 +180,9 @@ func (c *Config) Validate() error {
 	}
 	if c.RateLimitRequestsPerSecond <= 0 {
 		return fmt.Errorf("RATE_LIMIT_REQUESTS_PER_SECOND must be positive")
+	}
+	if c.ControlAuthEnabled && strings.TrimSpace(c.ControlToken) == "" {
+		return fmt.Errorf("CONTROL_TOKEN is required when CONTROL_AUTH_ENABLED is true")
 	}
 	if c.LiveCacheDurationSeconds < 1 || c.LiveStaleTTLSeconds < c.LiveCacheDurationSeconds ||
 		c.FeaturedCacheDurationSeconds < 1 || c.FeaturedStaleTTLSeconds < c.FeaturedCacheDurationSeconds ||

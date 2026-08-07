@@ -13,6 +13,8 @@
  */
 
 import { castStream } from './chromecast_logic.js';
+import { mountPlayerControls, unmountPlayerControls } from './player-controls.js';
+import { preferences, savePreferences } from './state.js';
 import { toast } from './toast.js';
 
 // ── State ────────────────────────────────────────────────────────────────
@@ -26,6 +28,7 @@ let _videoEventsBound = false;
 
 // Playback-error recovery/reporting state.
 let _lastLoad = null;         // { playbackUrl, streamInfo, channelData } — for Retry
+let _loadedAt = 0;            // Date.now() of the last loadStream
 let _hlsRecoverCount = 0;     // consecutive fatal-error recovery attempts
 let _errorShown = false;      // suppress duplicate error toasts for one failure
 const _MAX_HLS_RECOVER = 3;
@@ -55,12 +58,23 @@ function _isSafari() {
     return document.documentElement.classList.contains('safari');
 }
 
-// The mini-player docks as a fixed bottom bar (styled in CSS) on touch devices
-// — phones AND touch tablets (e.g. iPads) — where a floating, drag/resizable
-// PiP just overlaps content. Only fine-pointer desktops keep the draggable
-// floating PiP. Both this predicate and the CSS dock breakpoints must agree.
+// The mini-player docks as a fixed bottom bar (styled in CSS) wherever a
+// floating, drag/resizable PiP would just cover content: phones in either
+// orientation, and touch tablets. Only roomy fine-pointer desktops keep the
+// draggable floating window.
+//
+// The short-viewport clause is what catches a phone in landscape — 768–932px
+// wide on current handsets, so the width clause alone misses it, and it is the
+// case where a floating card does the most damage (a 360px window with its
+// control strip is most of a 390px-tall screen). It asks nothing about the
+// pointer on purpose: a browser reporting fine-pointer (Android's desktop-site
+// mode, embedded WebViews) is still a phone, and the geometry settles it.
+//
+// This must stay the exact OR of the dock block's media query in style.css —
+// the two drifting apart is what leaves the card floating.
 function _shouldDock() {
     return window.matchMedia('(max-width: 767px)').matches
+        || window.matchMedia('(max-height: 500px) and (max-width: 1199px)').matches
         || window.matchMedia('(hover: none) and (pointer: coarse) and (max-width: 1199px)').matches;
 }
 
@@ -122,12 +136,28 @@ function _bindVideoStateEvents() {
         if (!_currentStream || _mode === 'hidden') return; // ignore teardown noise
         _showPlaybackError();
     });
+    // A jump can't paint anything until a whole segment arrives, which for a
+    // recording's 12–15s segments is a visible wait on the previous frame. Mark it
+    // so the player can say it's working rather than looking frozen.
+    const markBusy = () => _fullSlot?.classList.add('media-seeking');
+    const clearBusy = () => _fullSlot?.classList.remove('media-seeking');
+    video.addEventListener('seeking', markBusy);
+    video.addEventListener('waiting', markBusy);
+    video.addEventListener('seeked', clearBusy);
+    video.addEventListener('canplay', clearBusy);
+    video.addEventListener('pause', clearBusy);
+
     // A frame started rendering → recovery succeeded; clear any error UI and
     // restore the full recovery budget. Without resetting _hlsRecoverCount here
     // the cap becomes cumulative over the whole session (startLoad/recoverMediaError
     // resume without re-firing MANIFEST_PARSED), and a 4th transient error hours
     // later would permanently tear down an otherwise-healthy stream.
-    video.addEventListener('playing', () => { _errorShown = false; _hlsRecoverCount = 0; _clearPlaybackError(); });
+    video.addEventListener('playing', () => {
+        _errorShown = false;
+        _hlsRecoverCount = 0;
+        _clearPlaybackError();
+        clearBusy();
+    });
     _videoEventsBound = true;
 }
 
@@ -283,11 +313,123 @@ export function getCurrentStream() { return _currentStream; }
 export function getCachedChannelData() { return _cachedChannelData; }
 export function getHlsInstance() { return _hlsInstance; }
 export function getVideoElement() { return _video(); }
+/** When the current source was loaded, for callers deciding whether playback has
+ *  only just started. (currentTime can't answer that: on a live playlist it
+ *  starts at whatever offset the window happens to have.) */
+export function getStreamLoadedAt() { return _loadedAt; }
+
+// _preferredVolume is the level to open at, clamped in case a stored preference has
+// been hand-edited. A stored 0 would make "unmuted" silent, so it floors at
+// something audible and lets the muted flag carry the silence.
+function _preferredVolume() {
+    const stored = Number(preferences.playerVolume);
+    if (!Number.isFinite(stored) || stored <= 0) return 1;
+    return Math.min(1, stored);
+}
+
+/**
+ * Remember the viewer's volume choice, so the next stream doesn't start silent.
+ * Called by the controls rather than inferred from a 'volumechange' listener,
+ * because playback itself sets the volume on every load and that must not be
+ * mistaken for a choice.
+ */
+export function rememberVolume(volume, muted) {
+    const level = Number(volume);
+    if (Number.isFinite(level) && level > 0) preferences.playerVolume = level;
+    preferences.playerMuted = Boolean(muted);
+    savePreferences();
+}
+
+/**
+ * Ask HLS.js to fetch the fragment immediately after a seek at a low rendition.
+ *
+ * A jump shows nothing until a whole segment has downloaded, and a recording's
+ * segments run 12–15s: ~9MB at 1080p60 against ~1MB at 360p — the difference
+ * between a jump landing in well under a second and taking several. ABR climbs
+ * back on the following fragment, so the low rendition lasts one segment.
+ *
+ * Only applies while ABR is in charge: a viewer who picked a quality keeps it.
+ */
+export function hintLowLevelForSeek() {
+    const hls = _hlsInstance;
+    if (!hls || !hls.autoLevelEnabled || !hls.levels?.length) return;
+    // Lowest rendition that still looks like video; HLS.js orders levels by bitrate.
+    const index = hls.levels.findIndex(level => (level.height || 0) >= 360);
+    hls.nextLoadLevel = index >= 0 ? index : 0;
+}
+
+// _hlsConfigFor tunes HLS.js for what is being played:
+//
+//   live     — chase the low-latency edge of the broadcast (the default source)
+//   dvr      — the in-progress recording of a live broadcast: an append-only
+//              playlist covering the whole stream, so it is seekable end to end
+//   recorded — a finished VOD or clip
+//
+// The DVR case must not set liveDurationInfinity (duration has to stay finite
+// for the scrubber to span the recorded window) and must not set any
+// liveMaxLatencyDuration*, which would haul the viewer back to the live edge —
+// exactly what rewinding is meant to prevent.
+function _hlsConfigFor(type, opts = {}) {
+    if (type === 'dvr') {
+        return {
+            lowLatencyMode: false,
+            liveDurationInfinity: false,
+            // Ride one segment behind the recording's end rather than the usual
+            // three: its segments are ~12s, so the default would open a live
+            // channel a needless ~40s behind. The segments are already fully
+            // written upstream when they appear, so there is little to gain from
+            // a deeper safety margin.
+            liveSyncDurationCount: 1,
+            maxBufferLength: 30,
+            maxMaxBufferLength: 60,
+            // Enough to make short rewinds instant without hoarding: 60s of
+            // 1080p60 is already ~45MB of decoded-adjacent buffer, and this
+            // plays on phones too.
+            backBufferLength: 60,
+            // Recording segments are 12–15s, so the first one decides how long the
+            // player shows nothing: ~2.3MB at 480p (measured 1894ms) against ~1MB
+            // at 360p. Start low deliberately and let ABR climb after the first
+            // segment gives it a real bandwidth reading — walking up the ladder is
+            // free now that every rendition is served from one cached playlist.
+            abrEwmaDefaultEstimate: 700_000,
+            // Begin fetching that first segment while the media element is still
+            // being attached, rather than after.
+            startFragPrefetch: true,
+            // And never climb past what the element can actually show: in the
+            // mini-player that avoids pulling 1080p60 segments into a 360px box.
+            capLevelToPlayerSize: true,
+            ...(Number.isFinite(opts.startPosition) ? { startPosition: opts.startPosition } : {}),
+        };
+    }
+    if (type === 'vod' || type === 'clip') {
+        return { maxBufferLength: 30, maxMaxBufferLength: 60, backBufferLength: 60 };
+    }
+    return {
+        lowLatencyMode: true,
+        liveSyncDurationCount: 3,
+        liveMaxLatencyDurationCount: 6,
+        maxBufferLength: 10,
+        maxMaxBufferLength: 20,
+        liveDurationInfinity: true,
+        backBufferLength: 15,
+        // Reaching the stream is the whole point of opening a live channel, and the
+        // first segment gates that: ~3MB at 1080p60 against ~330KB at 360p. Open
+        // low and let ABR climb once it has measured the connection.
+        abrEwmaDefaultEstimate: 700_000,
+        startFragPrefetch: true,
+    };
+}
 
 /**
  * Load a stream onto the shared video. Does not change the current visual mode.
+ *
+ * @param {object} [opts]
+ * @param {boolean} [opts.preserveVolume] keep the current muted state instead of
+ *   force-muting — for source switches within one viewing session (live ⇄ DVR),
+ *   where re-muting a stream the viewer already unmuted would be a regression.
+ * @param {number} [opts.startPosition] initial playback position, in seconds.
  */
-export function loadStream(playbackUrl, streamInfo, channelData) {
+export function loadStream(playbackUrl, streamInfo, channelData, opts = {}) {
     _currentStream = streamInfo;
     _cachedChannelData = channelData || null;
 
@@ -295,10 +437,27 @@ export function loadStream(playbackUrl, streamInfo, channelData) {
     if (!video) return;
 
     _bindVideoStateEvents();
+    // Route navigation and HLS manifest parsing are asynchronous, so the original
+    // click/keypress activation may be gone by the time media is ready. Muted
+    // autoplay is deterministic across mouse, touch, and keyboard navigation.
+    //
+    // The mute is only forced until the viewer has told us otherwise: once they
+    // unmute, that choice is remembered and every later stream starts with sound.
+    // Autoplay stays allowed because a page where audio has already played counts as
+    // engaged — and if a browser disagrees it pauses, which the controls show.
+    video.autoplay = true;
+    // preserveVolume means this is a source switch inside one viewing session (live ⇄
+    // DVR), where whatever is playing right now is the truth — reapplying the stored
+    // level would undo an adjustment made since the stream started.
+    if (!opts.preserveVolume) {
+        video.volume = _preferredVolume();
+        video.muted = preferences.playerMuted !== false;
+    }
 
     // Remember the source so a Retry (from the error UI) can reload it, and
     // reset the per-load error/recovery state.
-    _lastLoad = { playbackUrl, streamInfo, channelData };
+    _lastLoad = { playbackUrl, streamInfo, channelData, opts };
+    _loadedAt = Date.now();
     _hlsRecoverCount = 0;
     _errorShown = false;
     _clearPlaybackError();
@@ -312,29 +471,23 @@ export function loadStream(playbackUrl, streamInfo, channelData) {
 
     // Treat Kick proxy redirect routes as HLS sources; the browser/HLS.js
     // follows the redirect to the actual manifest.
-    const isRedirectStream = /\/streams\/(vods|go)\//i.test(playbackUrl);
+    const isRedirectStream = /\/streams\/(?:vods|go|clip)\//i.test(playbackUrl);
     const isHLS = isRedirectStream || /\.m3u8($|\?)/i.test(playbackUrl);
+    const hlsJsSupported = Boolean(window.Hls && window.Hls.isSupported());
+    const isSafari = document.documentElement.classList.contains('safari');
 
-    // Native HLS (Safari) — handles both live and VOD M3U8
-    if (isHLS && video.canPlayType('application/vnd.apple.mpegurl')) {
+    // Safari's native HLS is excellent, but some Chromium builds on macOS
+    // claim native support while rejecting Kick's byterange clip playlists.
+    // Prefer hls.js everywhere except Safari for consistent recording support.
+    if (isHLS && video.canPlayType('application/vnd.apple.mpegurl') && (isSafari || !hlsJsSupported)) {
         video.src = playbackUrl;
-        video.muted = true;
         video.play().catch(() => {});
         return;
     }
 
     // HLS.js (Chrome, Firefox) — for M3U8 manifests
-    if (isHLS && window.Hls && window.Hls.isSupported()) {
-        const isLive = streamInfo?.type !== 'vod' && streamInfo?.type !== 'clip';
-        const hls = new window.Hls({
-            lowLatencyMode: isLive,
-            liveSyncDurationCount: 3,
-            liveMaxLatencyDurationCount: 6,
-            maxBufferLength: isLive ? 10 : 30,
-            maxMaxBufferLength: isLive ? 20 : 60,
-            liveDurationInfinity: isLive,
-            backBufferLength: isLive ? 15 : 60,
-        });
+    if (isHLS && hlsJsSupported) {
+        const hls = new window.Hls(_hlsConfigFor(streamInfo?.type, opts));
 
         hls.loadSource(playbackUrl);
         hls.attachMedia(video);
@@ -343,7 +496,6 @@ export function loadStream(playbackUrl, streamInfo, channelData) {
             _hlsRecoverCount = 0;   // successful (re)load
             _errorShown = false;
             _clearPlaybackError();
-            video.muted = true;
             video.play().catch(() => {});
         });
         hls.on(window.Hls.Events.ERROR, (_evt, data) => {
@@ -369,7 +521,6 @@ export function loadStream(playbackUrl, streamInfo, channelData) {
 
     // Direct media (MP4, WebM clips) — native <video> playback
     video.src = playbackUrl;
-    video.muted = false;
     video.play().catch(() => {});
 }
 
@@ -402,6 +553,7 @@ export function setMode(mode, slot, opts = {}) {
     if (mode === 'hidden') {
         _mode = 'hidden';
         video.controls = false;
+        unmountPlayerControls();
         _hideMiniPoster();
         _hideMiniBar();
         _moveVideoTo(_layer());
@@ -412,6 +564,7 @@ export function setMode(mode, slot, opts = {}) {
     if (mode === 'mini') {
         _mode = 'mini';
         video.controls = false;
+        unmountPlayerControls();
         _showMiniBar(Boolean(fromRect));
         _renderMiniVideo();
         if (fromRect) _flipAnimate(video, fromRect);
@@ -420,20 +573,24 @@ export function setMode(mode, slot, opts = {}) {
 
     _mode = 'full';
     _fullSlot = slot;
-    video.controls = true;
-    video.muted = false;
     _hideMiniPoster();
     _hideMiniBar();
+    // On by default so that a control surface exists no matter what: mountPlayerControls
+    // turns it off once its own bar is up, and if it can't mount (no container, no
+    // media element) the native bar is still there rather than nothing at all.
+    video.controls = true;
     if (_isLandscapePhone()) {
         // Phone landscape → fullscreen theater overlay (the in-page slot would
         // be below the fold). Minimize collapses to the mini-player.
         _moveVideoTo(_theaterLayer());
         _styleVideoForMode('full');
         document.body.classList.add('landscape-theater');
+        mountPlayerControls(_theaterLayer());
     } else {
         _moveVideoTo(_fullSlot);
         _styleVideoForMode('full');
         _fullSlot.classList.add('video-active');
+        mountPlayerControls(_fullSlot);
     }
     if (fromRect) _flipAnimate(video, fromRect);
 }
@@ -512,9 +669,11 @@ export function initMiniPlayerControls() {
     playBtn?.addEventListener('click', _togglePlayPause);
 
     castBtn?.addEventListener('click', () => {
-        if (_currentStream?.playbackUrl) {
-            castStream(_currentStream.playbackUrl, _currentStream.title || 'Kick Stream');
-        }
+        // Cast the live stream even when the viewer has rewound locally: a cast
+        // device given the DVR playlist would start from an arbitrary point in
+        // the recording rather than from where they are watching.
+        const url = _currentStream?.liveUrl || _currentStream?.playbackUrl;
+        if (url) castStream(url, _currentStream.title || 'Kick Stream');
     });
 
     closeBtn?.addEventListener('click', stopStream);
@@ -650,7 +809,8 @@ function _initPipInteractions() {
 // channel slot when it's visible, plus a Retry toast. Guarded so one failure
 // doesn't spam duplicate toasts.
 function _showPlaybackError() {
-    if (_mode === 'full' && _fullSlot && !_isLandscapePhone() && !_fullSlot.querySelector('.player-error')) {
+    const existingOverlay = _fullSlot?.querySelector('.player-error');
+    if (_mode === 'full' && _fullSlot && !_isLandscapePhone() && !existingOverlay) {
         const overlay = document.createElement('div');
         overlay.className = 'player-error';
         overlay.setAttribute('role', 'alert');
@@ -672,7 +832,12 @@ function _showPlaybackError() {
 function _retryLoad() {
     if (!_lastLoad) return;
     _clearPlaybackError();
-    loadStream(_lastLoad.playbackUrl, _lastLoad.streamInfo, _lastLoad.channelData);
+    const opts = { ..._lastLoad.opts };
+    // Retrying a rewound stream should resume where it broke, not jump back to
+    // wherever the failed load started.
+    const position = _video()?.currentTime;
+    if (_lastLoad.streamInfo?.type === 'dvr' && position > 0) opts.startPosition = position;
+    loadStream(_lastLoad.playbackUrl, _lastLoad.streamInfo, _lastLoad.channelData, opts);
 }
 
 function _clearPlaybackError() {

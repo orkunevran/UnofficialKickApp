@@ -85,17 +85,16 @@ func writeBodyError(w http.ResponseWriter, err error) {
 	errorJSON(w, "Invalid request body.", http.StatusBadRequest)
 }
 
-// requireControl protects Chromecast discovery and every state-changing
-// operation with a per-install bearer token. It also rejects cross-origin
-// browser requests and non-JSON POSTs. Read-only status/SSE routes stay public
-// so EventSource works without putting secrets in URLs.
+// requireControl always rejects cross-origin browser requests and non-JSON
+// POSTs. Per-install bearer-token authentication is opt-in through
+// CONTROL_AUTH_ENABLED; read-only status/SSE routes remain public.
 func (a *App) requireControl(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if origin := r.Header.Get("Origin"); origin != "" && !sameOrigin(origin, r.Host) {
 			errorJSON(w, "Cross-origin Chromecast control is not allowed.", http.StatusForbidden)
 			return
 		}
-		if token := a.cfg.ControlToken; token != "" {
+		if token := a.cfg.ControlToken; a.cfg.ControlAuthEnabled {
 			provided := ""
 			if cookie, err := r.Cookie(controlCookieName); err == nil {
 				provided = cookie.Value
@@ -123,7 +122,7 @@ func (a *App) requireControl(next http.Handler) http.Handler {
 	})
 }
 
-// handleControlSession exchanges the per-install token for an HttpOnly,
+// handleControlSession exchanges an opt-in per-install token for an HttpOnly,
 // SameSite cookie. The token never needs to be persisted in browser storage.
 func (a *App) handleControlSession(w http.ResponseWriter, r *http.Request) {
 	if origin := r.Header.Get("Origin"); origin != "" && !sameOrigin(origin, r.Host) {
@@ -133,6 +132,10 @@ func (a *App) handleControlSession(w http.ResponseWriter, r *http.Request) {
 	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/json" {
 		errorJSON(w, "Content-Type must be application/json.", http.StatusUnsupportedMediaType)
+		return
+	}
+	if !a.cfg.ControlAuthEnabled {
+		successJSON(w, nil, "Chromecast control authentication is disabled.", http.StatusOK)
 		return
 	}
 	var body struct {

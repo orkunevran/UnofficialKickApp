@@ -19,5 +19,6 @@ suggested mitigation. Reports will be acknowledged as soon as practical.
 
 This application uses unofficial upstream endpoints and can control devices on
 the local network. Operators should keep the service on a trusted LAN or VPN,
-configure `CONTROL_TOKEN`, keep dependencies current, and avoid exposing port
-8081 directly to the public internet.
+keep dependencies current, and avoid exposing port 8081 directly to the public
+internet. For deployments outside a trusted LAN, enable Chromecast control
+authentication with `CONTROL_AUTH_ENABLED=true` and configure `CONTROL_TOKEN`.

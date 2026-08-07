@@ -40,9 +40,15 @@
     --mini-player-icon-size: clamp(17px, calc(1vw + 0.1vh), 19px);
     --mini-player-thumb-radius: clamp(10px, calc(0.8vw + 0.15vh), 14px);
     --mini-player-radius: clamp(14px, calc(1vw + 0.3vh), 18px);
-    --mini-player-mobile-bottom-gap: 74px;
-    --mini-player-mobile-content-pad: calc(var(--mini-player-mobile-bottom-gap) + var(--mini-player-panel-height) + 18px);
-    --mini-player-mobile-toast-bottom: calc(var(--mini-player-mobile-bottom-gap) + var(--mini-player-panel-height) + 34px);
+    /* Insets for the docked mini-player bar (the dock block near the end of this
+       file). These defaults suit layouts that have the sidebar rail and no bottom
+       nav; the phone block overrides them to clear the floating nav pill. */
+    --mini-dock-left: 76px;      /* 64px sidebar rail + 12px */
+    --mini-dock-right: 12px;
+    --mini-dock-bottom: 14px;
+    /* Space the bar occupies, so page content and toasts can stay clear of it. */
+    --mini-dock-content-pad: calc(var(--mini-dock-bottom) + var(--mini-player-panel-height) + 18px);
+    --mini-dock-toast-bottom: calc(var(--mini-dock-bottom) + var(--mini-player-panel-height) + 34px);
 }
 
 /* ── Light Theme ──────────────────────────────────────────────────────── */
@@ -1563,6 +1569,7 @@ body.pip-interacting .mini-player * {
     padding: 8px 12px;
     cursor: pointer;
     contain: layout style;
+    position: relative;
     transition: background 0.15s, border-color 0.15s, box-shadow 0.15s, transform 0.15s;
     animation: card-enter 0.3s ease-out both;
 }
@@ -1588,6 +1595,39 @@ body.pip-interacting .mini-player * {
     width: 100%; height: 100%;
     object-fit: cover;
     transition: transform 0.3s ease;
+}
+.list-actions-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    background: rgba(0, 0, 0, 0.62);
+    opacity: 0;
+    transition: opacity 0.18s ease;
+}
+.list-actions-overlay .card-action-btn {
+    width: 44px;
+    height: 44px;
+}
+.stream-list-item:hover .list-actions-overlay,
+.stream-list-item:focus-within .list-actions-overlay {
+    opacity: 1;
+}
+@media (hover: none) {
+    .list-actions-overlay {
+        opacity: 1;
+        align-items: flex-end;
+        justify-content: flex-end;
+        padding: 5px;
+        background: linear-gradient(135deg, transparent 20%, rgba(0, 0, 0, 0.74) 100%);
+    }
+    .list-actions-overlay .card-action-btn {
+        width: 44px;
+        height: 44px;
+    }
 }
 .list-info { flex: 1; min-width: 0; }
 .list-title {
@@ -1624,6 +1664,9 @@ body.pip-interacting .mini-player * {
 }
 
 /* ── Profile Page ──────────────────────────────────────────────────────── */
+.profile-summary {
+    display: contents;
+}
 .profile-banner {
     width: 100%;
     height: 200px;
@@ -1675,6 +1718,10 @@ body.pip-interacting .mini-player * {
     object-fit: cover;
 }
 .profile-identity { flex: 1; padding-bottom: 4px; }
+.profile-about {
+    padding: 0 8px;
+    margin-top: 16px;
+}
 .profile-username {
     font-family: var(--font-display);
     font-size: 24px;
@@ -1752,7 +1799,8 @@ body.pip-interacting .mini-player * {
     font-size: 12px;
     color: var(--text-muted);
     transition: border-color 0.15s, background 0.15s, transform 0.15s;
-    cursor: default;
+    cursor: pointer;
+    text-decoration: none;
 }
 .social-pill:hover {
     border-color: var(--border-highlight);
@@ -1760,6 +1808,10 @@ body.pip-interacting .mini-player * {
     transform: translateY(-1px);
 }
 .social-pill strong { color: var(--text-color); }
+.social-pill:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+}
 .category-tags {
     display: flex;
     flex-wrap: wrap;
@@ -1791,6 +1843,108 @@ body.pip-interacting .mini-player * {
     color: var(--text-secondary);
     margin-top: 16px;
     margin-bottom: 8px;
+}
+
+/* A desktop watch page needs one hero, not a second full banner below the
+   player. Compress channel identity for both live streams and VOD playback. */
+@media (min-width: 1101px) {
+    .channel-watch-stage.active + .profile-summary {
+        display: grid;
+        grid-template-columns: minmax(260px, 0.72fr) minmax(0, 1.6fr);
+        align-items: center;
+        gap: 18px;
+        min-height: 104px;
+        margin: -2px 0 14px;
+        padding: 14px 16px;
+        overflow: hidden;
+        position: relative;
+        isolation: isolate;
+        border: 1px solid var(--border-color);
+        border-radius: var(--radius-lg);
+        background: linear-gradient(115deg, rgba(83, 252, 24, 0.055), var(--surface-color) 44%);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+    }
+    .channel-watch-stage.active + .profile-summary .profile-banner {
+        display: block;
+        width: auto;
+        height: auto;
+        position: absolute;
+        inset: 0;
+        z-index: -2;
+        border-radius: inherit;
+        opacity: 0.24;
+        background: transparent;
+    }
+    .channel-watch-stage.active + .profile-summary .profile-banner img {
+        filter: saturate(0.72) contrast(1.05);
+        object-position: center 38%;
+    }
+    .channel-watch-stage.active + .profile-summary .profile-banner-overlay {
+        background:
+            linear-gradient(90deg, rgba(8, 12, 16, 0.92) 0%, rgba(8, 12, 16, 0.78) 42%, rgba(8, 12, 16, 0.9) 100%),
+            linear-gradient(180deg, transparent, rgba(8, 12, 16, 0.55));
+    }
+    [data-theme="light"] .channel-watch-stage.active + .profile-summary {
+        background: linear-gradient(115deg, rgba(59, 183, 19, 0.08), rgba(255, 255, 255, 0.98) 44%);
+    }
+    [data-theme="light"] .channel-watch-stage.active + .profile-summary .profile-banner-overlay {
+        background: linear-gradient(90deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0.82) 48%, rgba(255, 255, 255, 0.92));
+    }
+    .channel-watch-stage.active + .profile-summary .profile-header {
+        margin: 0;
+        padding: 0;
+        align-items: center;
+        gap: 13px;
+        z-index: 1;
+    }
+    .channel-watch-stage.active + .profile-summary .profile-avatar-wrap {
+        width: 68px;
+        height: 68px;
+        border-width: 3px;
+    }
+    .channel-watch-stage.active + .profile-summary .profile-username {
+        font-size: 22px;
+    }
+    .channel-watch-stage.active + .profile-summary .profile-about {
+        min-width: 0;
+        margin: 0;
+        padding: 0 0 0 18px;
+        border-left: 1px solid rgba(255, 255, 255, 0.09);
+        display: flex;
+        align-items: center;
+        align-content: center;
+        flex-wrap: wrap;
+        gap: 7px 10px;
+        z-index: 1;
+    }
+    [data-theme="light"] .channel-watch-stage.active + .profile-summary .profile-about {
+        border-left-color: rgba(0, 0, 0, 0.1);
+    }
+    .channel-watch-stage.active + .profile-summary .profile-bio {
+        flex: 1 1 100%;
+        display: -webkit-box;
+        margin: 0;
+        padding: 6px 10px;
+        overflow: hidden;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+        border-left-width: 2px;
+        font-size: 12px;
+        line-height: 1.4;
+    }
+    .channel-watch-stage.active + .profile-summary .profile-socials,
+    .channel-watch-stage.active + .profile-summary .category-tags {
+        margin: 0;
+        gap: 5px;
+    }
+    .channel-watch-stage.active + .profile-summary .social-pill,
+    .channel-watch-stage.active + .profile-summary .category-tag {
+        padding: 3px 9px;
+        font-size: 11px;
+    }
+    .channel-watch-stage.active + .profile-summary .profile-section-label {
+        display: none;
+    }
 }
 
 /* ── Profile Tabs ──────────────────────────────────────────────────────── */
@@ -1831,9 +1985,247 @@ body.pip-interacting .mini-player * {
     opacity: 0.6;
 }
 
-/* ── Mobile Video Anchor (hidden on desktop) ─────────────────────────── */
-.mobile-video-anchor { display: none; }
-@media (max-width: 767px) { .mobile-video-anchor { display: block; } }
+/* ── Watch stage: player with a native realtime KICK chat feed ───────── */
+.channel-watch-stage {
+    display: none;
+    margin-bottom: 18px;
+}
+.channel-watch-stage.active {
+    display: block;
+}
+.channel-watch-stage.active.show-chat {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 330px);
+    gap: 14px;
+    align-items: stretch;
+}
+/* The player and its broadcast timeline form one column, so the side-by-side chat
+   layout treats them as a unit and the anchor can be re-rendered without taking
+   the timeline with it. */
+.channel-player-column {
+    min-width: 0;
+}
+.channel-player-anchor {
+    min-width: 0;
+}
+.channel-player-anchor .video-container {
+    margin: 0;
+}
+.channel-chat-dock {
+    display: none;
+    box-sizing: border-box;
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
+    overflow: hidden;
+    border: 1px solid rgba(83, 252, 24, 0.16);
+    border-radius: var(--radius-md);
+    background:
+        linear-gradient(180deg, rgba(83, 252, 24, 0.055), transparent 64px),
+        rgba(10, 14, 19, 0.98);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.035),
+        0 18px 45px rgba(0, 0, 0, 0.2);
+    flex-direction: column;
+    position: relative;
+}
+[data-theme="light"] .channel-chat-dock {
+    background:
+        linear-gradient(180deg, rgba(59, 183, 19, 0.075), transparent 64px),
+        rgba(255, 255, 255, 0.98);
+}
+.channel-watch-stage.show-chat .channel-chat-dock {
+    display: flex;
+}
+.channel-chat-header {
+    min-height: 58px;
+    padding: 11px 13px;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex: 0 0 auto;
+}
+.channel-chat-heading {
+    min-width: 0;
+}
+.channel-chat-kicker {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--primary-color);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+.channel-chat-dock h2 {
+    margin: 3px 0 0;
+    font-family: var(--font-display);
+    font-size: 16px;
+    line-height: 1;
+}
+.channel-chat-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    min-height: 22px;
+    padding: 0 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    color: var(--text-muted);
+    background: rgba(255, 255, 255, 0.025);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+}
+.channel-chat-status::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    opacity: 0.7;
+}
+.channel-chat-status[data-state="connecting"]::before {
+    animation: channel-chat-pulse 1.2s ease-in-out infinite;
+}
+.channel-chat-status[data-state="live"] {
+    color: var(--primary-color);
+    border-color: rgba(83, 252, 24, 0.22);
+    background: rgba(83, 252, 24, 0.06);
+}
+.channel-chat-messages {
+    min-height: 0;
+    flex: 1 1 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+    padding: 9px 11px 12px;
+    font-size: 12px;
+    line-height: 1.42;
+}
+.channel-chat-message {
+    padding: 4px 3px;
+    overflow-wrap: anywhere;
+}
+.channel-chat-message:hover {
+    background: rgba(255, 255, 255, 0.025);
+    border-radius: 6px;
+}
+.channel-chat-username {
+    font-weight: 750;
+}
+.channel-chat-message-body {
+    color: var(--text-color);
+}
+.channel-chat-badges {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    margin-right: 4px;
+    vertical-align: 1px;
+}
+.channel-chat-badge {
+    min-width: 18px;
+    height: 13px;
+    padding: 0 3px;
+    border-radius: 3px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #050805;
+    background: var(--primary-color);
+    font-size: 7px;
+    font-weight: 900;
+    line-height: 1;
+}
+.channel-chat-badge.badge-vip {
+    color: #fff;
+    background: #d946ef;
+}
+.channel-chat-badge.badge-moderator {
+    color: #fff;
+    background: #16a34a;
+}
+.channel-chat-emote {
+    width: auto;
+    height: 24px;
+    max-width: 52px;
+    margin: -5px 2px;
+    object-fit: contain;
+    vertical-align: middle;
+}
+.channel-chat-empty {
+    min-height: 100%;
+    display: grid;
+    place-content: center;
+    justify-items: center;
+    gap: 9px;
+    color: var(--text-muted);
+    font-size: 11px;
+    text-align: center;
+}
+.channel-chat-loader {
+    width: 18px;
+    height: 18px;
+    border: 2px solid rgba(83, 252, 24, 0.18);
+    border-top-color: var(--primary-color);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+.channel-chat-new {
+    position: absolute;
+    z-index: 2;
+    right: 12px;
+    bottom: 43px;
+    min-height: 28px;
+    padding: 0 10px;
+    border: 1px solid rgba(83, 252, 24, 0.25);
+    border-radius: 999px;
+    color: var(--primary-color);
+    background: rgba(12, 18, 14, 0.94);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.32);
+    font-size: 10px;
+    font-weight: 700;
+    cursor: pointer;
+}
+.channel-chat-footer {
+    min-height: 36px;
+    padding: 0 12px;
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    flex: 0 0 auto;
+    color: var(--text-muted);
+    background: rgba(255, 255, 255, 0.018);
+    font-size: 10px;
+}
+.channel-chat-footer a {
+    color: var(--primary-color);
+    font-weight: 700;
+    text-decoration: none;
+}
+.channel-chat-footer a:hover {
+    text-decoration: underline;
+}
+@keyframes channel-chat-pulse {
+    0%, 100% { opacity: 0.35; transform: scale(0.82); }
+    50% { opacity: 1; transform: scale(1); }
+}
+@media (max-width: 1100px) {
+    .channel-watch-stage.active.show-chat {
+        display: block;
+    }
+    .channel-chat-dock {
+        height: 320px;
+        margin-top: 10px;
+    }
+}
 
 /* ── Video Player ──────────────────────────────────────────────────────── */
 .video-container {
@@ -1935,6 +2327,284 @@ body.landscape-theater #theater-exit { display: flex; }
     box-shadow: 0 0 4px var(--live-color);
     animation: pulse-glow 2s infinite;
     color: var(--live-color);
+}
+
+/* Waiting on media after a jump: a recording's segments are 12–15s, so there is a
+   real gap before the first frame at the new position. Says "working" instead of
+   leaving the previous frame looking frozen. */
+.video-container.media-seeking::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 34px; height: 34px;
+    margin: -17px 0 0 -17px;
+    z-index: 4;
+    border: 3px solid rgba(255, 255, 255, 0.25);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+    .video-container.media-seeking::after {
+        animation-duration: 2.4s;
+    }
+}
+
+/* ── Player controls ───────────────────────────────────────────────────────
+   Replaces the browser's bar so the broadcast timeline can be the scrubber (see
+   static/js/player-controls.js). Auto-hides while playing. */
+.player-controls {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+}
+.pc-scrim {
+    position: absolute;
+    inset: 0;
+    cursor: pointer;
+}
+/* The fade lives on the bar, not on the overlay root: a root at opacity 0 would take
+   the unmute button down with it, and that one has to stay visible precisely when the
+   bar is hidden. The scrim needs no fade — it has no appearance of its own. */
+.pc-bar {
+    position: relative;
+    padding: 0 12px 8px;
+    background: linear-gradient(transparent, rgba(0, 0, 0, 0.72) 42%);
+    opacity: 0;
+    transition: opacity 0.18s ease;
+}
+.player-controls.visible .pc-bar,
+.player-controls.is-paused .pc-bar,
+.player-controls:focus-within .pc-bar {
+    opacity: 1;
+}
+/* While the bar is hidden its buttons must not be clickable — an invisible
+   fullscreen button is worse than no button. The scrim stays live so a click
+   anywhere still reaches the video, and any pointer movement brings the bar back. */
+.player-controls:not(.visible):not(.is-paused):not(:focus-within) .pc-bar {
+    pointer-events: none;
+}
+
+/* Seek bar: a tall hit area over a thin track, so it's easy to grab without a
+   heavy-looking bar. */
+.pc-seek {
+    position: relative;
+    padding: 12px 0 8px;
+    cursor: pointer;
+    touch-action: none;
+}
+.pc-seek:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 2px;
+    border-radius: 4px;
+}
+.pc-seek-track {
+    position: relative;
+    height: 5px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.26);
+}
+.pc-seek-buffered,
+.pc-seek-played {
+    position: absolute;
+    top: 0; left: 0;
+    height: 100%;
+    border-radius: 3px;
+}
+.pc-seek-buffered { background: rgba(255, 255, 255, 0.28); }
+.pc-seek-played { background: var(--primary-color); }
+.pc-seek.at-live .pc-seek-played { background: var(--live-color); }
+.pc-seek-handle {
+    position: absolute;
+    top: 50%;
+    width: 13px; height: 13px;
+    margin-left: -6.5px;
+    border-radius: 50%;
+    background: #fff;
+    transform: translateY(-50%) scale(0.85);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+    transition: transform 0.12s;
+}
+.pc-seek:hover .pc-seek-handle { transform: translateY(-50%) scale(1.15); }
+.pc-seek-tip {
+    position: absolute;
+    bottom: 100%;
+    transform: translateX(-50%);
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.86);
+    color: #fff;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+}
+
+.pc-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    /* The spacer absorbs the slack; nothing else may be squeezed. Without this the
+       row's fixed-size buttons were shrunk to 20px on a phone and the last two were
+       pushed clean off the right edge. */
+    min-width: 0;
+}
+.pc-spacer { flex: 1 1 auto; min-width: 0; }
+.pc-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 36px; height: 36px;
+    padding: 0;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: #fff;
+    cursor: pointer;
+}
+.pc-btn:hover { background: rgba(255, 255, 255, 0.14); }
+.pc-btn:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 1px; }
+
+.pc-live {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    gap: 6px;
+    height: 26px;
+    padding: 0 9px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 13px;
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
+    font-family: inherit;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    font-variant-numeric: tabular-nums;
+    cursor: pointer;
+}
+.pc-live:disabled { cursor: default; }
+.pc-live.behind {
+    border-color: rgba(255, 51, 102, 0.55);
+    color: var(--live-color);
+}
+.pc-live-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--live-color);
+    box-shadow: 0 0 4px var(--live-color);
+    animation: pulse-glow 2s infinite;
+}
+.pc-live.behind .pc-live-dot { animation: none; }
+.pc-time {
+    flex: 0 0 auto;
+    color: rgba(255, 255, 255, 0.86);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.pc-volume {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+    gap: 2px;
+}
+.pc-volume-slider {
+    width: 0;
+    opacity: 0;
+    accent-color: var(--primary-color);
+    transition: width 0.16s, opacity 0.16s;
+}
+.pc-volume:hover .pc-volume-slider,
+.pc-volume-slider:focus-visible { width: 68px; opacity: 1; }
+/* Chat is replaying a past moment rather than showing what's being said now. */
+.channel-chat-status[data-state="replay"] {
+    color: var(--warning-color);
+}
+
+.pc-quality {
+    flex: 0 1 auto;
+    min-width: 0;
+    height: 28px;
+    /* Left native, this renders as a light system control on a dark bar — and its
+       intrinsic width is what shoved the trailing buttons off a phone screen. */
+    appearance: none;
+    -webkit-appearance: none;
+    padding: 0 22px 0 8px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 6px;
+    background-color: rgba(0, 0, 0, 0.5);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23ffffff'%3E%3Cpath d='M7 10l5 5 5-5z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 4px center;
+    background-size: 14px 14px;
+    color: #fff;
+    font-family: inherit;
+    font-size: 12px;
+}
+.pc-quality option { color: initial; background: #fff; }
+[data-theme="dark"] .pc-quality option { color: #fff; background: #16181c; }
+
+/* Tap for sound. Playback has to start muted for autoplay to be allowed, so the one
+   control that must be reachable without first summoning the bar gets its own
+   button — centred, and outside the part of the overlay that auto-hides. */
+.pc-unmute {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 44px;
+    padding: 0 16px;
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    border-radius: 22px;
+    background: rgba(0, 0, 0, 0.62);
+    backdrop-filter: blur(6px);
+    color: #fff;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+}
+.pc-unmute:hover { background: rgba(0, 0, 0, 0.78); }
+.pc-unmute:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
+
+/* Phones: full-size targets, and a trimmed row so everything fits. The volume
+   slider is pointless next to hardware keys, and the elapsed readout is the first
+   thing worth losing — the LIVE pill already says where playback is. */
+@media (max-width: 599px) {
+    .pc-btn { width: 44px; height: 44px; }
+    .pc-live { height: 34px; border-radius: 17px; }
+    .pc-quality { height: 34px; max-width: 84px; }
+    .pc-row { gap: 4px; }
+    .pc-volume-slider { display: none; }
+    .pc-time { display: none; }
+}
+/* Narrowest phones can't fit picture-in-picture as well; fullscreen matters more. */
+@media (max-width: 420px) {
+    [data-pc="pip"] { display: none; }
+}
+/* Touch, any size: full-size targets, and the volume slider can't be hover-gated —
+   there is no hover to gate it on, so it was simply unreachable on a tablet. */
+@media (hover: none) and (pointer: coarse) {
+    .pc-btn { width: 44px; height: 44px; }
+    .pc-live { min-height: 34px; border-radius: 17px; }
+    .pc-quality { height: 34px; }
+    .pc-seek { padding: 16px 0 12px; }
+}
+@media (hover: none) and (pointer: coarse) and (min-width: 600px) {
+    .pc-volume-slider { width: 68px; opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .pc-bar { transition: none; }
+    .pc-live-dot { animation: none; }
 }
 
 /* ── Stream Actions ────────────────────────────────────────────────────── */
@@ -2844,6 +3514,30 @@ label.settings-row { cursor: pointer; }
     font-size: 14px;
     color: var(--text-muted);
 }
+/* Secondary line under a setting's name, for options whose trade-off isn't
+   obvious from the label alone. Constrained so it wraps instead of squeezing
+   the control next to it. */
+.settings-hint {
+    display: block;
+    max-width: 46ch;
+    margin-top: 3px;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text-secondary);
+}
+/* A hint plus a control side by side leaves neither enough room on a phone —
+   stack them and let the control take the full width. Marked with a class
+   rather than :has(), which this codebase avoids. */
+@media (max-width: 599px) {
+    .settings-row-stacked {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+    }
+    .settings-row-stacked .filter-select {
+        width: 100%;
+    }
+}
 
 /* ── Toggle Switch ────────────────────────────────────────────────────── */
 .toggle-switch {
@@ -2906,6 +3600,7 @@ label.settings-row { cursor: pointer; }
     text-decoration: none;
     color: inherit;
     display: block;
+    position: relative;
 }
 .vod-card:hover {
     border-color: var(--border-highlight);
@@ -2915,10 +3610,25 @@ label.settings-row { cursor: pointer; }
 .vod-card:hover .vod-card-thumb img {
     transform: scale(1.04);
 }
-.vod-card:focus-visible {
+.vod-card:focus-within {
     outline: none;
     border-color: var(--primary-color);
     box-shadow: 0 0 0 2px var(--bg-color), 0 0 0 4px var(--primary-color);
+}
+.vod-card-play {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+}
+.vod-card-play:focus-visible {
+    outline: none;
+}
+.vod-card .card-actions-overlay,
+.vod-card .card-action-btn {
+    z-index: 2;
 }
 .vod-card-thumb {
     aspect-ratio: 16/9;
@@ -3330,45 +4040,19 @@ a:focus-visible,
     .content-area {
         padding: 10px 10px calc(92px + env(safe-area-inset-bottom, 0px));
     }
-    /* While a stream plays, the mini-player docks as a bar above the nav, so
-       reserve bottom space so the last cards aren't hidden behind it. */
-    body.mini-active .content-area {
-        padding-bottom: calc(var(--mini-player-mobile-content-pad) + env(safe-area-inset-bottom, 0px));
+    /* Dock the mini-player clear of the floating bottom-nav pill. The bar itself,
+       and the room reserved for it, come from the dock block at the end of this
+       file. */
+    :root {
+        --mini-dock-left: 10px;
+        --mini-dock-right: 10px;
+        /* The nav pill stands 75px off the bottom edge, and grows by the
+           home-indicator inset twice over — once for its own offset, once for the
+           padding that keeps its labels clear of the indicator. The dock block
+           adds one env() of its own, so the second one is counted here; without
+           it the bar lands on top of the nav on a notched phone. */
+        --mini-dock-bottom: calc(85px + env(safe-area-inset-bottom, 0px));
     }
-
-    /* ── Mobile: dock the mini-player as a fixed bar above the bottom nav ──
-       On phones the floating/draggable PiP just covers content, so it docks
-       here instead. player.js skips its PiP geometry below 768px; the
-       !important position rules guarantee CSS wins over any stale inline style. */
-    .mini-player {
-        left: 10px !important;
-        right: 10px !important;
-        top: auto !important;
-        bottom: calc(var(--mini-player-mobile-bottom-gap) + env(safe-area-inset-bottom, 0px)) !important;
-        width: auto !important;
-        display: flex;
-        flex-direction: row;
-        align-items: center;
-        gap: var(--mini-player-gap);
-        padding: 8px 10px;
-        border-radius: 16px;
-        animation: miniSlideUp 0.22s ease-out;
-    }
-    .mini-player-thumb {
-        width: var(--mini-player-thumb-width);
-        flex: 0 0 auto;
-        border-radius: var(--mini-player-thumb-radius);
-        cursor: pointer;                 /* tap to open channel — drag is desktop-only */
-        touch-action: manipulation;      /* not a scroll dead-zone when docked */
-    }
-    .mini-player-inner {
-        flex: 1 1 auto;
-        min-width: 0;
-        padding: 0;
-    }
-    .mini-player-resize { display: none; } /* no resize handle on mobile */
-    /* Hide the in-bar cast button on mobile (cast UI lives in the top bar). */
-    #mini-player-cast { display: none; }
     .stream-grid {
         grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
         gap: 10px;
@@ -3380,10 +4064,6 @@ a:focus-visible,
         right: auto;
         width: calc(100% - 20px);
         max-width: 380px;
-    }
-    /* When the mini-player is docked, lift toasts above it so they don't overlap */
-    body.mini-active .toast-container {
-        bottom: calc(var(--mini-player-mobile-toast-bottom) + env(safe-area-inset-bottom, 0px));
     }
     .toast {
         transform: translateY(20px);
@@ -3398,23 +4078,51 @@ a:focus-visible,
         width: 32px;
         height: 32px;
     }
-    /* ── Mobile video-first layout for live channels ────────────────── */
-    .mobile-video-anchor {
+    /* ── Mobile video-first layout for live channels and recordings ─── */
+    .channel-watch-stage.active {
+        margin: -10px -10px 10px;
+    }
+    /* The player pins to the top while the page scrolls — with its timeline, so the
+       two never come apart. */
+    .channel-player-column {
         position: sticky;
         top: 0;
         z-index: 10;
         background: var(--bg-color);
-        margin: -10px -10px 10px;
     }
-    .mobile-video-anchor:empty { display: none; }
-    .mobile-video-anchor .video-container {
+    .channel-watch-stage.active.show-chat .channel-player-column {
+        position: relative;
+        top: auto;
+        z-index: auto;
+    }
+    .channel-player-anchor .video-container {
         margin: 0;
         border-radius: 0 0 var(--radius-md) var(--radius-md);
     }
-    /* Compact profile when video is anchored at top */
-    .mobile-video-anchor:not(:empty) ~ .profile-banner { height: 80px; }
-    .mobile-video-anchor:not(:empty) ~ .profile-header { margin-top: -30px; }
-    .mobile-video-anchor:not(:empty) ~ .profile-header .profile-avatar-wrap { width: 56px; height: 56px; }
+    .channel-watch-stage.active.show-chat .channel-chat-dock {
+        height: 280px;
+        margin: 8px 10px 0;
+        border-radius: 14px;
+    }
+    .channel-chat-header {
+        min-height: 52px;
+        padding: 9px 11px;
+    }
+    .channel-chat-messages {
+        padding-inline: 9px;
+        font-size: 12px;
+    }
+    /* Keep identity visible without pushing the active player below the fold. */
+    .channel-watch-stage.active + .profile-summary .profile-banner { height: 80px; }
+    .channel-watch-stage.active + .profile-summary .profile-header { margin-top: -30px; }
+    .channel-watch-stage.active + .profile-summary .profile-header .profile-avatar-wrap { width: 56px; height: 56px; }
+    /* Recording viewers need the title/actions directly below the player.
+       The full channel identity returns as soon as they go back to the list. */
+    .channel-watch-stage.active:not(.show-chat) + .profile-summary .profile-banner,
+    .channel-watch-stage.active:not(.show-chat) + .profile-summary .profile-header,
+    .channel-watch-stage.active:not(.show-chat) + .profile-summary .profile-about {
+        display: none;
+    }
     .profile-banner { height: 140px; }
     .profile-header { margin-top: -36px; }
     .profile-avatar-wrap { width: 72px; height: 72px; }
@@ -3525,8 +4233,8 @@ a:focus-visible,
     }
     /* ── Collapsible filter bar (mobile only) ─────────────────────────── */
     .filter-toggle:hover { color: var(--text-color); }
-    /* Rotate chevron when collapsed */
-    .filter-toggle[aria-expanded="false"] { transform: rotate(180deg); }
+    /* Point up while expanded (collapse action), down while collapsed. */
+    .filter-toggle[aria-expanded="true"] { transform: rotate(180deg); }
     .filter-bar {
         /* Cap must exceed the tallest expanded bar (single-column stack with
            wrapped sort pills at ≤480px ≈ 280px) or the bottom row — the
@@ -4221,12 +4929,11 @@ html.safari .video-container.video-active {
 .player-error-retry:hover { background: rgba(255, 255, 255, 0.16); }
 
 /* ── Touch tablets (768–1199px, coarse pointer) ─────────────────────────────
-   The ≤767px block's 44px touch-target overrides and mini-player dock don't
-   reach the tablet band, so touch tablets (iPads) got desktop-sized controls
-   and a floating, drag/resizable PiP that just overlaps content. This block
-   brings the touch affordances up and docks the mini-player. It stops at
-   1199px because at ≥1200px the full 240px sidebar returns (kept as a floating
-   PiP there — matches _shouldDock() in player.js). */
+   The ≤767px block's 44px touch-target overrides don't reach the tablet band, so
+   touch tablets (iPads) got desktop-sized controls. This block brings the touch
+   affordances up. It stops at 1199px because at ≥1200px the full 240px sidebar
+   returns and the layout is a desktop one. (The mini-player dock is handled by
+   the dock block below, which covers this band among others.) */
 @media (hover: none) and (pointer: coarse) and (min-width: 768px) and (max-width: 1199px) {
     .sort-pill,
     .view-toggle-btn,
@@ -4254,20 +4961,43 @@ html.safari .video-container.video-active {
     /* No physical keyboard on a touch tablet → the '/' hint is misleading. */
     .search-kbd { display: none; }
 
-    /* Dock the mini-player as a bottom bar within the content area (the 64px
-       sidebar rail is present at this width; there is no bottom nav). */
+    /* A tablet-sized docked bar: wider than a phone's, well short of desktop. */
     :root {
         --mini-player-thumb-width: clamp(140px, 18vw, 200px);
         --mini-player-button-size: clamp(44px, 6vw, 48px);
     }
-    body.mini-active .content-area {
-        padding-bottom: calc(150px + env(safe-area-inset-bottom, 0px));
-    }
+}
+
+/* ── Docked mini-player ─────────────────────────────────────────────────────
+   Wherever a floating, draggable PiP window would simply cover content, the
+   mini-player docks as a bar along the bottom instead.
+
+   The query below is the exact OR of the conditions _shouldDock() tests in
+   player.js — written as one list rather than copied per breakpoint, because the
+   two drifting apart is what leaves the card floating over the page. Each clause
+   earns its place:
+     ≤767px                 phones in portrait
+     ≤500px tall            phones in landscape — 768–932px wide on current
+                            handsets, so a width-only rule misses them entirely,
+                            and no viewport that short has room for a 16:9
+                            floating window plus its control strip
+     coarse pointer ≤1199px  touch tablets, which report a wide viewport
+
+   The height clause deliberately does not ask about the pointer: a browser that
+   reports itself as fine-pointer (Android's desktop-site mode, embedded
+   WebViews) is still a phone, and the geometry alone settles it.
+
+   Position is !important so CSS wins over any stale inline PiP geometry left by
+   _applyPipGeometry(); insets come from the --mini-dock-* variables, which each
+   layout sets to clear its own bottom chrome. */
+@media (max-width: 767px),
+       (max-height: 500px) and (max-width: 1199px),
+       (hover: none) and (pointer: coarse) and (max-width: 1199px) {
     .mini-player {
-        left: calc(64px + 12px) !important;
-        right: 12px !important;
+        left: var(--mini-dock-left) !important;
+        right: var(--mini-dock-right) !important;
         top: auto !important;
-        bottom: calc(14px + env(safe-area-inset-bottom, 0px)) !important;
+        bottom: calc(var(--mini-dock-bottom) + env(safe-area-inset-bottom, 0px)) !important;
         width: auto !important;
         display: flex;
         flex-direction: row;
@@ -4281,14 +5011,34 @@ html.safari .video-container.video-active {
         width: var(--mini-player-thumb-width);
         flex: 0 0 auto;
         border-radius: var(--mini-player-thumb-radius);
-        cursor: pointer;
-        touch-action: manipulation;
+        cursor: pointer;                 /* tap to open the channel — drag is desktop-only */
+        touch-action: manipulation;      /* not a scroll dead-zone when docked */
     }
     .mini-player-inner {
         flex: 1 1 auto;
         min-width: 0;
         padding: 0;
     }
-    .mini-player-resize { display: none; }
+    .mini-player-resize { display: none; }   /* nothing to resize when docked */
+    /* Cast lives in the top bar on these layouts; a second button is just noise. */
     #mini-player-cast { display: none; }
+    body.mini-active .content-area {
+        padding-bottom: calc(var(--mini-dock-content-pad) + env(safe-area-inset-bottom, 0px));
+    }
+    body.mini-active .toast-container {
+        bottom: calc(var(--mini-dock-toast-bottom) + env(safe-area-inset-bottom, 0px));
+    }
+}
+
+/* A landscape phone has ~390px of height to spend, so the docked bar has to stay
+   out of the way: keep it to roughly a fifth of the screen. Declared after the
+   dock block so it also trims the tablet sizing above on short viewports. */
+@media (max-height: 500px) {
+    :root {
+        --mini-player-thumb-width: clamp(104px, 15vw, 132px);
+        --mini-player-padding-y: 8px;
+        --mini-player-button-size: 44px;
+        --mini-player-title-size: 13px;
+        --mini-player-channel-size: 11px;
+    }
 }

@@ -46,6 +46,11 @@ type App struct {
 	shutdownCh   chan struct{}
 	shutdownOnce sync.Once
 
+	// dvrKeepers tracks which recordings have a background refresher running, so
+	// a watched broadcast keeps exactly one (see startDVRKeeper).
+	dvrKeepersMu sync.Mutex
+	dvrKeepers   map[string]struct{}
+
 	staticFS     fs.FS
 	staticHashes map[string]string // relative path → content MD5, for ETag revalidation
 	indexHTML    string
@@ -80,6 +85,7 @@ func New(cfg *config.Config, log *slog.Logger, assets fs.FS) (*App, error) {
 		BaseURL:           cfg.KickAPIBaseURL,
 		FeaturedURL:       cfg.KickFeaturedLivestreamsURL,
 		AllLivestreamsURL: cfg.KickAllLivestreamsURL,
+		ChatHistoryURL:    cfg.KickChatHistoryURL,
 		MaxResponseBytes:  int64(cfg.KickMaxResponseBytes),
 		MaxPlaylistBytes:  int64(cfg.KickMaxPlaylistBytes),
 	})
@@ -116,6 +122,7 @@ func New(cfg *config.Config, log *slog.Logger, assets fs.FS) (*App, error) {
 		refreshLimiter: newLimiter(cfg.BackgroundRefreshMaxConcurrency),
 		rateLimiter:    newIPRateLimiter(cfg.RateLimitRequestsPerSecond, cfg.RateLimitBurst),
 		shutdownCh:     make(chan struct{}),
+		dvrKeepers:     make(map[string]struct{}),
 		staticFS:       staticFS,
 		staticHashes:   hashes,
 		indexHTML:      renderIndex(string(tmpl), hashes),
@@ -178,8 +185,15 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /streams/play/{slug}", a.handlePlayStream)
 	mux.HandleFunc("GET /streams/go/{slug}", a.handleGoToLive)
 	mux.HandleFunc("GET /streams/m3u8/{file}", a.handlePlayM3U8)
+	// Live rewind (DVR): info + the proxied in-progress recording playlists.
+	mux.HandleFunc("GET /streams/dvr/{slug}", a.handleDVRInfo)
+	mux.HandleFunc("GET /streams/dvr/{slug}/master.m3u8", a.handleDVRMaster)
+	mux.HandleFunc("GET /streams/dvr/{slug}/{variant}/playlist.m3u8", a.handleDVRMedia)
+	// Chat replay: the messages that were on screen at a given instant.
+	mux.HandleFunc("GET /streams/chat/{slug}/history", a.handleChatHistory)
 	mux.HandleFunc("GET /streams/avatar/{slug}", a.handleAvatar)
 	mux.HandleFunc("GET /streams/clips/{slug}", a.handleClips)
+	mux.HandleFunc("GET /streams/clip/{slug}/{clipID}", a.handlePlayClip)
 	mux.HandleFunc("GET /streams/vods/{slug}", a.handleVODs)
 	mux.HandleFunc("GET /streams/vods/{slug}/{vodID}", a.handlePlayVOD)
 	mux.HandleFunc("GET /streams/featured-livestreams", a.handleFeatured)

@@ -40,6 +40,11 @@ import {
 // (the seekable range only appears once the manifest has been parsed).
 const _EDGE_WAIT_MS = 15000;
 
+// Backstop for resuming playback after a seek, for the case where `seeked` never
+// arrives (source torn down mid-seek). Long enough that a normal seek has settled
+// and the event path has already resumed.
+const _RESUME_FALLBACK_MS = 1500;
+
 // How far below the stream's live point still counts as watching live, rather
 // than as a rewind worth reporting.
 const _EDGE_SLACK_SECONDS = 10;
@@ -88,6 +93,7 @@ const _INFO_TTL_MS = 5 * 60 * 1000;
 let _state = null;      // { slug, dvrUrl, liveUrl, liveData, title }
 let _onKeydown = null;
 let _pendingBehind = 0; // rewind target still waiting on the recording's length
+let _cancelPendingSeek = null; // tears down the outstanding _seekWhenReady, if any
 const _infoCache = new Map();  // slug → { at, promise: Promise<info data|null> }
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -151,6 +157,30 @@ function _streamInfo({ url, type }) {
     };
 }
 
+// _seekAndResume moves the player to `position` and, if it was playing, puts it
+// back into playback once the seek lands.
+//
+// The resume has to wait for `seeked`. Assigning currentTime puts the element into
+// `seeking`, and a play() issued in that same tick has its promise aborted by the
+// seek in flight: the element fires `pause` between `seeking` and `seeked` and
+// stays there — fully buffered (readyState 4) but stopped — until the viewer taps
+// play. It is a race, so it only bites some of the time, which is what made it look
+// intermittent rather than broken.
+function _seekAndResume(video, position) {
+    const wasPlaying = !video.paused;
+    video.currentTime = Math.max(0, position);
+    if (!wasPlaying) return;
+
+    const go = () => video.play?.().catch(() => { /* autoplay may need a gesture */ });
+    video.addEventListener('seeked', go, { once: true });
+    // `seeked` never arrives if the source is torn down mid-seek. Without this a
+    // stopped-but-ready player would sit there indefinitely.
+    setTimeout(() => {
+        video.removeEventListener('seeked', go);
+        if (video.paused) go();
+    }, _RESUME_FALLBACK_MS);
+}
+
 // _seekWhenReady applies a seek as soon as the recording has a seekable range.
 //
 // The range only exists once the manifest is parsed, so a seek issued with the
@@ -162,9 +192,18 @@ function _streamInfo({ url, type }) {
 // either an absolute position or an offset from the end. onAbandon runs if the
 // range never appears, so callers can release whatever state they were holding for
 // the pending seek.
+//
+// Only one of these may be outstanding at a time. A second rewind loads a new
+// source on the same <video>, which fires loadedmetadata/durationchange again —
+// and a still-armed waiter from the previous rewind would consume the new
+// _pendingBehind before the new waiter ever runs. Its own computeTarget would then
+// see 0 and resolve to `edge`, i.e. the live end, so the rewind silently became a
+// Go Live. Hence the cancel-then-arm below.
 function _seekWhenReady(computeTarget, onAbandon = null) {
     const video = getVideoElement();
     if (!video) { onAbandon?.(); return; }
+
+    _cancelPendingSeek?.();
 
     const events = ['loadedmetadata', 'durationchange', 'progress', 'canplay'];
     let timer = null;
@@ -173,21 +212,23 @@ function _seekWhenReady(computeTarget, onAbandon = null) {
         const edge = _edge(video);
         if (!(edge > 0)) return false;
         const target = computeTarget(edge);
-        if (Number.isFinite(target)) {
-            // Never land on the boundary itself: there is nothing buffered past it.
-            video.currentTime = Math.max(0, Math.min(target, Math.max(0, edge - 1)));
-            video.play?.().catch(() => { /* autoplay may need a gesture */ });
-        }
+        // Never land on the boundary itself: there is nothing buffered past it.
+        if (Number.isFinite(target)) _seekAndResume(video, Math.min(target, edge - 1));
         return true;
     };
     const stop = () => {
         events.forEach(e => video.removeEventListener(e, onEvent));
         if (timer) { clearTimeout(timer); timer = null; }
+        if (_cancelPendingSeek === cancel) _cancelPendingSeek = null;
     };
     const onEvent = () => { if (attempt()) stop(); };
+    // Cancelling releases the caller's state the same way a timeout does, so a
+    // superseded rewind can't strand _pendingBehind.
+    const cancel = () => { stop(); onAbandon?.(); };
 
     if (attempt()) return;
     events.forEach(e => video.addEventListener(e, onEvent));
+    _cancelPendingSeek = cancel;
     // Give up quietly: playback continues at the recording's live end, which is
     // still watchable — just not where it was asked to go.
     timer = setTimeout(() => { stop(); onAbandon?.(); }, _EDGE_WAIT_MS);
@@ -255,10 +296,10 @@ function _goLive() {
     // a segment's distance from the boundary, which would otherwise stall until
     // the next segment is published.
     const target = _liveSyncPosition() ?? Math.max(0, _edge(video) - _EDGE_SYNC_SECONDS);
-    if (target > 0) {
-        video.currentTime = target;
-        video.play?.().catch(() => { /* autoplay may need a gesture */ });
-    }
+    // A rewind may still be waiting on the recording's length; it would otherwise
+    // fire after this and drag the viewer back off live.
+    _cancelPendingSeek?.();
+    if (target > 0) _seekAndResume(video, target);
 }
 
 // _seek moves by `delta` seconds (negative rewinds). On the live edge playlist
@@ -626,6 +667,8 @@ export async function mountDvrControls({ slug, liveUrl, liveData, title }) {
 
 export function dispose() {
     if (_onKeydown) { document.removeEventListener('keydown', _onKeydown); _onKeydown = null; }
+    // A waiter left armed here would fire against the next channel's video.
+    _cancelPendingSeek?.();
     _state = null;
     _pendingBehind = 0;
     _startedAtMs = 0;

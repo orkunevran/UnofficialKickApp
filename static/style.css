@@ -381,7 +381,7 @@ body {
     z-index: 90;
     pointer-events: none;
     opacity: var(--grain-opacity);
-    background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAMAAACdt4HsAAAAgVBMVEUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABtFS1lAAAAK3RSTlMWi3QSa1cyDwkGLvDewzobgk3NA+GMZEPT0amTdxXhr1oqJOl5R/a4pทkAAAW5JREFUeF7t1teygzAMBVDbMR1CSCOJ0+7/f+AohJnLzNkS8JL9AOMZWY4BLnscwGMHHoce/v0Aj+CBB/EBHuCBfwBwiEe0AIHX8QEe4IEHgRA+wAM88A8AEvhADCAe0QIIFB7BA+4BAsQXRABigPwEByCAnCAGkBOUATmBCCAnqAJyAhlATrAE5AQMkBOsATkBA+QEW4GcQAaQE5iAnMC+ISeQAeQEMoCcwAwgJzADyAlGgjVATsAAOYF0gJzgJCAnkAHkBAyQE8gAuoHkd2MZgEBOIAeQUQKEPEEORIBpSi48AEKeKEFYAMj/AAJnXFIQ/KOcAul3NKUgXFIQThcUhNPpgoKA3w0UhOuFguBfUBBuNxQE/4qCcL+jIOhXFIRHVhCefh4Fgf4YBSFXFAT8WxSEQlEQ7m9REIoVBaH8oiCUCsI9IwiPsiDclwXhVhaEB6Mg3MqC8## TRUNCATED");
+    background-image: url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABAAgAAAADFsjajAAAES0lEQVR42gFABL/7ACR004/nAcbp+Roiq1ZRxTcA/rQwJduiwWJqqq+IyOqpUABLel8hcxMly/sqEVtjWl1yAMi4nTYWAAvGTTB8dFJw/JgABKNPBnRL44Y1D1RnvjqQiAC8kNFJD6RMjb/tAZ6x9hkyAA6iBl/Y0IC9xN261v2FdzcAvZ6VoiN2hS2DOSjn35L7iwCY6+ahau8FARzkyGXMtQ2NANlLDrv3IA36WEDtWL9HeJwABlqorrh+IPmHGVCBYgoz/gDq9OyrBEHBzSjE5Ao8P8XJAHIceDRiAdl5vj1QFsEhd6kA7g3MZpRbdhAlMySBvqHsTgAOQYDq0GITO2Q9+/fZtHBBAJOjo0XWHC7InbzrfUwwbcAAKm7xQep5Sq1GFKOy5xKOHwCo/a/zvf2jM7yVI9v/7JepAMLk/22gx4TOYbiyjaVLL8gAR6wtKhnzOIWH2HtikQCZrAAVztGGazcDRVBMQ59z3L1wAGhK440h0BMtvJ5hxHQa8MoAKOKAMbge39bmTAO+88g1PwBUBzj3HYAihVxWu/z29VnUAICNR4e2e6iG6VZcWFyfAdQAOyqWTFsaEHz4lJCgrCdfqAD7tbFBveW01VUgirWLp/BCAHYBt4iqwZglhemjKW8pLxwAdAcJOHrucM3LCGyIxjO+XQCBE3fROjVTU5ImOXAf0U+NALvCOJDKPRvLII6N7ZfrimcA/v9DvSAPrQLOmtgIXJncXABZjYFPf0dm1H6WSfZiUZdGAKmEfxS2EYVVsBBDIrD8fN0A+JEJZQYCr5fQA+VdwQoaCQDQXkexnXiWpNvtlrk26MEBAK/XUiltVIuMOcYHs5OUTAgAqJOnRbNFCKpQqG9JibWcDgC30Ss/07GGdyLVOh6r9Vb8AOYVYfZLSFpXn8mS9v+h8BAAIaRVL7guSYbvXzEBRCCiPgBJ8g7WXYoWLNmlCyaiUHAYAK9idbffPmaA9rOTb9EFqRYAH4mZC1L3uOoM525WwrMtdACBI/Z4P+Ry3iL00/2LQ1ktABPq5ZNbHugkvdJDPjX1wSQAs30q3mlxQsYc4UD29fdJqADSTSh9fRJK4EXvvU/kY7EkAFx73g7MydWWGRMS7jZVWkkAqfaz0BUgWdrbRcQwhBxd9QCUJZYvtDhdwCV05XsMmzNIABbg5v5DjEMUMuNRJKdrg3kAbvB5dm2V+fg45BZim49YCgB1vGouSaTEMHT3S0ULcuuAAKmLbO+3Rbpg5lFBw51y6i8APZj9FAqgqOsTGRPld/geWgBOsTNhJQ0V9gxatbGZsNuCAGEYGPaKj+FM6STlIHMEolIAAqAuB6RoNGPEL2dhO4OmaQBSHPsWhXRWNfON8WOkKmjFAEIKjDIarWef1bdBxO083dsAsz4tIiOWO608kneLSmk+ugCnsPnk45ZxMyvCOhgMYK/JAKWaowa+fJ+drLSFzUGqlXg3UfhGpS9IzgAAAABJRU5ErkJggg==");
     background-repeat: repeat;
     background-size: 64px;
     mix-blend-mode: overlay;
@@ -4717,49 +4717,8 @@ html.safari .video-container.video-active {
 
 .cc-volume-slider {
     flex: 1;
-    -webkit-appearance: none;
-    appearance: none;
-    height: 6px;
-    border-radius: 3px;
-    background: rgba(255, 255, 255, 0.1);
-    outline: none;
-    cursor: pointer;
-    transition: background 0.15s;
-}
-
-.cc-volume-slider:hover {
-    background: rgba(255, 255, 255, 0.15);
-}
-
-.cc-volume-slider::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    background: var(--primary-color);
-    cursor: pointer;
-    box-shadow: 0 0 6px rgba(83, 252, 24, 0.4);
-    transition: transform 0.1s;
-}
-
-.cc-volume-slider::-webkit-slider-thumb:hover {
-    transform: scale(1.2);
-}
-
-.cc-volume-slider::-moz-range-thumb {
-    width: 14px;
-    height: 14px;
-    border-radius: 50%;
-    background: var(--primary-color);
-    border: none;
-    cursor: pointer;
-    box-shadow: 0 0 6px rgba(83, 252, 24, 0.4);
-    transition: transform 0.1s;
-}
-
-.cc-volume-slider::-moz-range-thumb:hover {
-    transform: scale(1.2);
+    --cc-rail: 6px;
+    --cc-thumb: 14px;
 }
 
 .cc-volume-percent {
@@ -4808,82 +4767,150 @@ html.safari .video-container.video-active {
 
 .cc-progress-slider {
     flex: 1;
+    --cc-rail: 4px;
+    --cc-thumb: 12px;
+}
+
+/* ── Cast sliders (seek + volume) ────────────────────────────────────────────
+   Both are range inputs styled the same way, differing only in the --cc-rail /
+   --cc-thumb sizes each sets above.
+
+   The rail lives on the track pseudo-element rather than on the input's own
+   background. That is what lets the filled part be drawn at all — a range input
+   has no cross-browser "elapsed" pseudo, so WebKit gets a gradient whose colour
+   stop is --cc-fill (written by paintSliderFill in chromecast.js on every value
+   change, drag and status push alike) and Firefox gets ::-moz-range-progress,
+   which does it natively. Before this the rail was a flat grey with no fill, so
+   dragging moved a bare dot along an unchanging bar.
+
+   It also means the input itself carries no background, so the touch block below
+   can add padding for a taller hit area without needing background-clip to keep
+   the rail thin.
+
+   Thumb centering is explicit: with a track of --cc-rail and a thumb of
+   --cc-thumb, WebKit needs margin-top: (rail - thumb) / 2. The volume slider used
+   to have no margin-top at all while the progress slider had one, so the two sat
+   differently on their rails. */
+.cc-progress-slider,
+.cc-volume-slider {
     -webkit-appearance: none;
     appearance: none;
-    height: 4px;
-    border-radius: 2px;
-    background: rgba(255, 255, 255, 0.1);
+    /* content-box so height is the rail itself and the touch block's padding adds
+       hit area around it rather than eating into it. */
+    box-sizing: content-box;
+    height: var(--cc-rail);
+    background: transparent;
     outline: none;
     cursor: pointer;
-    transition: background 0.25s;
 }
 
-.cc-progress-slider:hover {
-    background: rgba(255, 255, 255, 0.15);
+.cc-progress-slider::-webkit-slider-runnable-track,
+.cc-volume-slider::-webkit-slider-runnable-track {
+    height: var(--cc-rail);
+    border-radius: calc(var(--cc-rail) / 2);
+    cursor: pointer;
+    background: linear-gradient(
+        to right,
+        var(--primary-color) 0 var(--cc-fill, 0%),
+        rgba(255, 255, 255, 0.12) var(--cc-fill, 0%) 100%
+    );
 }
 
-.cc-progress-slider::-webkit-slider-runnable-track {
-    width: 100%;
-    height: 4px;
+.cc-progress-slider::-moz-range-track,
+.cc-volume-slider::-moz-range-track {
+    height: var(--cc-rail);
+    border-radius: calc(var(--cc-rail) / 2);
+    background: rgba(255, 255, 255, 0.12);
     cursor: pointer;
 }
 
-.cc-progress-slider::-webkit-slider-thumb {
+.cc-progress-slider::-moz-range-progress,
+.cc-volume-slider::-moz-range-progress {
+    height: var(--cc-rail);
+    border-radius: calc(var(--cc-rail) / 2);
+    background: var(--primary-color);
+}
+
+.cc-progress-slider::-webkit-slider-thumb,
+.cc-volume-slider::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
-    width: 12px;
-    height: 12px;
+    width: var(--cc-thumb);
+    height: var(--cc-thumb);
     border-radius: 50%;
     background: var(--primary-color);
     box-shadow: 0 0 6px rgba(83, 252, 24, 0.4);
     cursor: pointer;
-    margin-top: -4px;
-    transition: transform 0.1s;
+    margin-top: calc((var(--cc-rail) - var(--cc-thumb)) / 2);
+    /* Only the thumb's own transform animates. Transitioning the track would make
+       the fill visibly trail the thumb on every drag. */
+    transition: transform 0.1s ease;
 }
 
-.cc-progress-slider::-webkit-slider-thumb:hover {
-    transform: scale(1.2);
-}
-
-.cc-progress-slider::-moz-range-thumb {
-    width: 12px;
-    height: 12px;
+.cc-progress-slider::-moz-range-thumb,
+.cc-volume-slider::-moz-range-thumb {
+    width: var(--cc-thumb);
+    height: var(--cc-thumb);
     border-radius: 50%;
     background: var(--primary-color);
     border: none;
     box-shadow: 0 0 6px rgba(83, 252, 24, 0.4);
     cursor: pointer;
-    transition: transform 0.1s;
+    transition: transform 0.1s ease;
 }
 
-.cc-progress-slider::-moz-range-thumb:hover {
-    transform: scale(1.2);
+/* Grow on drag, not on hover. Hovering a thumb is not a state that survives a
+   drag — the thumb chases the pointer, so :hover flickers on and off and the
+   thumb pulses the whole way along. :active holds for as long as the pointer is
+   down, and unlike :hover it also fires on touch, where there was previously no
+   press feedback at all. */
+.cc-progress-slider:active::-webkit-slider-thumb,
+.cc-volume-slider:active::-webkit-slider-thumb {
+    transform: scale(1.25);
+}
+.cc-progress-slider:active::-moz-range-thumb,
+.cc-volume-slider:active::-moz-range-thumb {
+    transform: scale(1.25);
 }
 
-/* Touch devices: enlarge the cast seek/volume thumbs (12–14px is hard to grab)
-   and give the sliders a taller invisible hit area while keeping the rail thin. */
+@media (hover: hover) and (pointer: fine) {
+    .cc-progress-slider:hover::-webkit-slider-thumb,
+    .cc-volume-slider:hover::-webkit-slider-thumb {
+        transform: scale(1.15);
+    }
+    .cc-progress-slider:hover::-moz-range-thumb,
+    .cc-volume-slider:hover::-moz-range-thumb {
+        transform: scale(1.15);
+    }
+}
+
+/* outline: none above removes the only keyboard affordance these had; arrow-key
+   seek and volume are otherwise invisible to anyone not using a pointer. */
+.cc-progress-slider:focus-visible,
+.cc-volume-slider:focus-visible {
+    outline: 2px solid var(--primary-color);
+    outline-offset: 6px;
+    border-radius: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .cc-progress-slider::-webkit-slider-thumb,
+    .cc-volume-slider::-webkit-slider-thumb,
+    .cc-progress-slider::-moz-range-thumb,
+    .cc-volume-slider::-moz-range-thumb {
+        transition: none;
+    }
+}
+
+/* Touch devices: 12-14px thumbs are hard to grab, and the rail alone is a 4px
+   drag target. Bigger thumbs, plus padding for a hit area that clears the 44px
+   guidance the rest of this file follows, without thickening the rail. 20px puts
+   the 4px seek rail at 44 and the 6px volume rail at 46. */
 @media (hover: none), (pointer: coarse) {
     .cc-progress-slider,
     .cc-volume-slider {
-        padding: 16px 0;
-        background-clip: content-box;
-    }
-    /* Thumbs enlarged to 22px; margin-top centers each on its own rail
-       (progress rail 4px → -9px, volume rail 6px → -8px). */
-    .cc-progress-slider::-webkit-slider-thumb {
-        width: 22px;
-        height: 22px;
-        margin-top: -9px;
-    }
-    .cc-volume-slider::-webkit-slider-thumb {
-        width: 22px;
-        height: 22px;
-        margin-top: -8px;
-    }
-    .cc-progress-slider::-moz-range-thumb,
-    .cc-volume-slider::-moz-range-thumb {
-        width: 22px;
-        height: 22px;
+        --cc-thumb: 22px;
+        padding: 20px 0;
     }
 }
 

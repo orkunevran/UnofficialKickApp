@@ -67,6 +67,12 @@ export function initializeChromecast() {
     const playPauseBtn = document.getElementById('cc-play-pause-btn');
     const volumeSlider = document.getElementById('cc-volume-slider');
 
+    // Paint the filled part of every slider that changes, including the ones the
+    // status poll writes to. A range input has no cross-browser "elapsed" pseudo,
+    // so the fill is a gradient stop the CSS reads from --cc-fill.
+    document.getElementById('chromecast-remote-controls')
+        ?.addEventListener('input', (e) => { if (e.target.type === 'range') paintSliderFill(e.target); });
+
     playPauseBtn?.addEventListener('click', handlePlayPauseToggle);
 
     let volumeTimeout = null;
@@ -137,6 +143,7 @@ export function initializeChromecast() {
         if (!slider) return;
         const newPos = Math.max(0, parseFloat(slider.value) - 10);
         slider.value = newPos;
+        paintSliderFill(slider);
         const currentEl = document.getElementById('cc-current-time');
         if (currentEl) currentEl.textContent = formatTime(newPos);
         await sendSeek(newPos, 'Failed to rewind');
@@ -148,6 +155,7 @@ export function initializeChromecast() {
         const maxTime = parseFloat(slider.max) || 0;
         const newPos = Math.min(maxTime, parseFloat(slider.value) + 30);
         slider.value = newPos;
+        paintSliderFill(slider);
         const currentEl = document.getElementById('cc-current-time');
         if (currentEl) currentEl.textContent = formatTime(newPos);
         await sendSeek(newPos, 'Failed to fast forward');
@@ -223,6 +231,18 @@ async function silentFetchDevices() {
     } catch {
         // Silent — don't toast on background fetch failures
     }
+}
+
+// paintSliderFill writes the slider's progress to --cc-fill, which the track
+// gradient in style.css uses as its colour stop. Kept in sync on every write —
+// user drags and status pushes alike — so the rail never disagrees with the thumb.
+function paintSliderFill(slider) {
+    if (!slider) return;
+    const min = parseFloat(slider.min) || 0;
+    const max = parseFloat(slider.max);
+    const span = max - min;
+    const pct = span > 0 ? ((parseFloat(slider.value) - min) / span) * 100 : 0;
+    slider.style.setProperty('--cc-fill', `${Math.max(0, Math.min(100, pct))}%`);
 }
 
 function stopSilentDeviceRefresh() {
@@ -673,6 +693,7 @@ function handleStatusUpdate(data) {
             if (typeof volLevel === 'number') {
                 const volPct = Math.round(volLevel * 100);
                 volumeSlider.value = volPct;
+                paintSliderFill(volumeSlider);
                 const pctEl = document.getElementById('cc-volume-percent');
                 if (pctEl) pctEl.textContent = `${volPct}%`;
             }
@@ -694,6 +715,7 @@ function handleStatusUpdate(data) {
             if (progressSlider && !isUserSeeking) {
                 progressSlider.max = duration;
                 progressSlider.value = currentTime || 0;
+                paintSliderFill(progressSlider);
                 
                 const currentEl = document.getElementById('cc-current-time');
                 if (currentEl) currentEl.textContent = formatTime(currentTime || 0);

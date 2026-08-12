@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/bogdanfinn/fhttp v0.6.8
 	github.com/bogdanfinn/tls-client v1.15.1
-	github.com/klauspost/compress v1.19.1
+	github.com/klauspost/compress v1.19.2
 	github.com/vishen/go-chromecast v0.3.4
 )
 

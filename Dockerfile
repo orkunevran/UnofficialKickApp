@@ -4,7 +4,7 @@
 # Run the compiler on the build host architecture and cross-compile for the
 # requested target platform. Docker/BuildKit supplies these values for plain
 # builds and for --platform/buildx builds.
-FROM --platform=$BUILDPLATFORM golang:1.26.5-bookworm AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27.1-bookworm AS builder
 
 WORKDIR /src
 COPY go.mod go.sum ./

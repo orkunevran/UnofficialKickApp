@@ -3,7 +3,7 @@ module kickapi
 go 1.25.0
 
 require (
-	github.com/bogdanfinn/fhttp v0.6.8
+	github.com/bogdanfinn/fhttp v0.6.9
 	github.com/bogdanfinn/tls-client v1.15.1
 	github.com/klauspost/compress v1.19.1
 	github.com/vishen/go-chromecast v0.3.4
@@ -14,10 +14,11 @@ require (
 	github.com/bdandy/go-errors v1.2.2 // indirect
 	github.com/bdandy/go-socks4 v1.2.3 // indirect
 	github.com/bogdanfinn/quic-go-utls v1.0.9-utls // indirect
-	github.com/bogdanfinn/utls v1.7.7-barnius // indirect
+	github.com/bogdanfinn/utls v1.7.8-barnius // indirect
 	github.com/bogdanfinn/websocket v1.5.5-barnius // indirect
 	github.com/buger/jsonparser v1.1.1 // indirect
 	github.com/cenkalti/backoff v2.2.1+incompatible // indirect
+	github.com/cloudflare/circl v1.6.2 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/grandcat/zeroconf v1.0.0 // indirect
 	github.com/h2non/filetype v1.1.3 // indirect
